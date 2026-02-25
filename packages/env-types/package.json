@@ -1,0 +1,14 @@
+{
+  "name": "@avenire/env-types",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "types": "./index.d.ts",
+  "files": [
+    "index.d.ts",
+    "src/generate-env-types.mjs"
+  ],
+  "scripts": {
+    "generate": "node ./src/generate-env-types.mjs"
+  }
+}

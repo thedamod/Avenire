@@ -1,0 +1,20 @@
+{
+  "name": "avenire",
+  "private": true,
+  "packageManager": "pnpm@9.15.2",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "check-types": "turbo run check-types",
+    "format": "turbo run format",
+    "db:generate": "pnpm --filter @avenire/database db:generate",
+    "db:migrate": "pnpm --filter @avenire/database db:migrate"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "latest",
+    "turbo": "latest",
+    "typescript": "latest",
+    "ultracite": "latest"
+  }
+}

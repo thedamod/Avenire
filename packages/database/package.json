@@ -1,0 +1,31 @@
+{
+  "name": "@avenire/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts",
+    "./auth-schema": "./src/auth-schema.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "format": "biome format --write .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "drizzle-orm": "latest",
+    "pg": "latest"
+  },
+  "devDependencies": {
+    "@avenire/env-types": "workspace:*",
+    "@avenire/typescript-config": "workspace:*",
+    "@types/pg": "latest",
+    "dotenv": "latest",
+    "drizzle-kit": "latest",
+    "typescript": "latest"
+  }
+}

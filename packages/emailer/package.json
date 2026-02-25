@@ -1,0 +1,27 @@
+{
+  "name": "@avenire/emailer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@avenire/emails": "workspace:*",
+    "@react-email/components": "latest",
+    "react": "latest",
+    "resend": "latest"
+  },
+  "devDependencies": {
+    "@avenire/env-types": "workspace:*",
+    "@avenire/typescript-config": "workspace:*",
+    "@types/react": "latest",
+    "typescript": "latest"
+  }
+}

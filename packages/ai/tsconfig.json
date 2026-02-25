@@ -1,0 +1,4 @@
+{
+  "extends": "@avenire/typescript-config/base.json",
+  "include": ["*.ts", "models/**/*.ts", "prompts/**/*.ts", "tools/**/*.ts"]
+}

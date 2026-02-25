@@ -1,0 +1,26 @@
+{
+  "name": "@avenire/storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./client": "./client.ts",
+    "./ssr": "./ssr.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@uploadthing/react": "latest",
+    "uploadthing": "latest"
+  },
+  "devDependencies": {
+    "@avenire/env-types": "workspace:*",
+    "@avenire/typescript-config": "workspace:*",
+    "typescript": "latest"
+  }
+}

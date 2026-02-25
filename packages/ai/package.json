@@ -1,0 +1,29 @@
+{
+  "name": "@avenire/ai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./models": "./models/index.ts",
+    "./prompts": "./prompts/index.ts",
+    "./tools": "./tools/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ai-sdk/google": "latest",
+    "@ai-sdk/groq": "latest",
+    "@openrouter/ai-sdk-provider": "latest",
+    "ai": "latest"
+  },
+  "devDependencies": {
+    "@avenire/env-types": "workspace:*",
+    "@avenire/typescript-config": "workspace:*",
+    "typescript": "latest"
+  }
+}

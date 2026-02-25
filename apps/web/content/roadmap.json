@@ -1,0 +1,72 @@
+[
+  {
+    "id": "ai-workspace",
+    "title": "AI Reasoning Workspace",
+    "description": "A persistent, interactive workspace for deep research and multi-step AI reasoning.",
+    "status": "in-progress",
+    "category": "Core Product"
+  },
+  {
+    "id": "collaborative-sessions",
+    "title": "Collaborative Research Sessions",
+    "description": "Share your reasoning sessions with teammates for real-time collaborative thinking.",
+    "status": "in-progress",
+    "category": "Collaboration"
+  },
+  {
+    "id": "knowledge-graph",
+    "title": "Knowledge Graph View",
+    "description": "Visualize connections between ideas and past research sessions.",
+    "status": "planned",
+    "category": "Core Product"
+  },
+  {
+    "id": "citation-engine",
+    "title": "Citation & Source Engine",
+    "description": "Automatic citation tracking with linked evidence for every claim in a session.",
+    "status": "planned",
+    "category": "Research"
+  },
+  {
+    "id": "pdf-uploads",
+    "title": "PDF & Document Upload",
+    "description": "Upload PDFs, papers, and documents to ground AI reasoning in your own sources.",
+    "status": "in-progress",
+    "category": "Research"
+  },
+  {
+    "id": "reasoning-history",
+    "title": "Reasoning History & Versioning",
+    "description": "Browse and restore previous reasoning states like version control for your thinking.",
+    "status": "planned",
+    "category": "Core Product"
+  },
+  {
+    "id": "custom-models",
+    "title": "Bring Your Own Model",
+    "description": "Connect your own LLM API keys (OpenAI, Anthropic, Gemini) for flexible usage.",
+    "status": "planned",
+    "category": "Integrations"
+  },
+  {
+    "id": "web-search",
+    "title": "Live Web Search Grounding",
+    "description": "Augment AI reasoning with live, cited web results for up-to-date information.",
+    "status": "shipped",
+    "category": "Research"
+  },
+  {
+    "id": "markdown-export",
+    "title": "Markdown & PDF Export",
+    "description": "Export your reasoning sessions as clean, structured Markdown or PDF documents.",
+    "status": "shipped",
+    "category": "Core Product"
+  },
+  {
+    "id": "mobile-app",
+    "title": "Mobile App",
+    "description": "A native mobile experience for reviewing and continuing sessions on the go.",
+    "status": "planned",
+    "category": "Platform"
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "name": "@avenire/linting",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./biome": "./src/biome.base.json"
+  },
+  "scripts": {
+    "lint": "ultracite check .",
+    "format": "ultracite format .",
+    "biome:check": "biome check .",
+    "biome:format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@avenire/env-types": "workspace:*",
+    "@biomejs/biome": "latest",
+    "ultracite": "latest"
+  }
+}

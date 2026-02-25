@@ -1,0 +1,39 @@
+{
+  "name": "@avenire/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./styles.css": "./src/styles.css",
+    "./lib/utils": "./src/lib/utils.ts",
+    "./components/button": "./src/components/button.tsx",
+    "./components/input": "./src/components/input.tsx",
+    "./components/*": "./src/components/*.tsx",
+    "./components/ui/button": "./src/components/button.tsx",
+    "./components/ui/card": "./src/components/card.tsx",
+    "./components/ui/input": "./src/components/input.tsx"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.2.0",
+    "class-variance-authority": "latest",
+    "clsx": "latest",
+    "lucide-react": "^0.575.0",
+    "react": "latest",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "latest",
+    "three": "^0.183.1"
+  },
+  "devDependencies": {
+    "@avenire/env-types": "workspace:*",
+    "@avenire/typescript-config": "workspace:*",
+    "@types/react": "latest",
+    "@types/three": "^0.183.1",
+    "typescript": "latest"
+  }
+}

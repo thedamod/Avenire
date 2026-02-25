@@ -1,0 +1,44 @@
+{
+  "name": "@avenire/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./client": "./client.ts",
+    "./server": "./server.ts",
+    "./components/login": "./components/login.tsx",
+    "./components/register": "./components/register.tsx",
+    "./components/icons": "./components/icons.tsx",
+    "./types": "./types.ts",
+    "./error_messages": "./error_messages.ts",
+    "./middleware": "./middleware.ts",
+    "./parse-user-agent": "./parse-user-agent.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "biome check .",
+    "check-types": "tsc --noEmit",
+    "format": "biome format --write .",
+    "auth:generate": "better-auth generate --config ./server.ts --output ../database/src/auth-schema.ts --yes"
+  },
+  "dependencies": {
+    "@avenire/database": "workspace:*",
+    "@avenire/emailer": "workspace:*",
+    "@avenire/ui": "workspace:*",
+    "@better-auth/passkey": "^1.4.19",
+    "better-auth": "latest",
+    "lucide-react": "^0.575.0",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "sonner": "^2.0.7",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@avenire/env-types": "workspace:*",
+    "@avenire/typescript-config": "workspace:*",
+    "@better-auth/cli": "latest",
+    "@types/react": "latest",
+    "typescript": "latest"
+  }
+}

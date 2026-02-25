@@ -1,0 +1,10 @@
+.agents
+node_modules
+.pnpm-store
+.next
+.turbo
+dist
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
