@@ -16,7 +16,7 @@ const columns = [
     links: [
       { label: "About", href: "/about" },
       { label: "Privacy", href: "/privacy" },
-      { label: "Contact", href: "mailto:hello@avenire.ai", external: true },
+      { label: "Contact", href: "mailto:support@avenire.space", external: true },
     ],
   },
 ] as const;
@@ -24,7 +24,7 @@ const columns = [
 const socialLinks = [
   { label: "Discord", href: "https://discord.gg/avenire", icon: MessageCircle },
   { label: "GitHub", href: "https://github.com/aether6430", icon: Github },
-  { label: "Email", href: "mailto:hello@avenire.ai", icon: Mail },
+  { label: "Email", href: "mailto:support@avenire.space", icon: Mail },
 ] as const;
 
 export function Footer() {

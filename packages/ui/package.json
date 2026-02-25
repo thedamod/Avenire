@@ -23,11 +23,19 @@
     "@base-ui/react": "^1.2.0",
     "class-variance-authority": "latest",
     "clsx": "latest",
+    "cmdk": "^1.1.1",
+    "embla-carousel-react": "^8.5.2",
+    "input-otp": "^1.4.2",
     "lucide-react": "^0.575.0",
+    "next-themes": "^0.4.6",
     "react": "latest",
+    "react-day-picker": "^9.6.3",
+    "react-resizable-panels": "^3.0.2",
+    "recharts": "^2.15.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "latest",
-    "three": "^0.183.1"
+    "three": "^0.183.1",
+    "vaul": "^1.1.2"
   },
   "devDependencies": {
     "@avenire/env-types": "workspace:*",
