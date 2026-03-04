@@ -89,7 +89,7 @@ const fallbackExtract = async (
 };
 
 export const ingestLink = async (inputUrl: string): Promise<CanonicalResource> => {
-  const safeUrl = await assertSafeUrl(inputUrl);
+  const safeUrl = assertSafeUrl(inputUrl);
   const providerExtraction = await extractFromSupportedProvider(safeUrl.toString());
 
   if (providerExtraction) {

@@ -10,11 +10,7 @@ import {
   softDeleteFileAsset,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
-import {
-  enqueueIngestionJob,
-  hasSuccessfulIngestionForFile,
-} from "@/lib/ingestion-data";
-import { listWorkspaceMembers } from "@/lib/file-data";
+import { enqueueIngestionJob, hasSuccessfulIngestionForFile } from "@/lib/ingestion-data";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 const fileSchema = z.object({
@@ -50,10 +46,7 @@ type RegisterResult = {
   } | null;
 };
 
-async function deleteUploadThingFile(
-  storageKey: string | null | undefined,
-  context?: Record<string, unknown>
-) {
+async function deleteUploadThingFile(storageKey: string | null | undefined) {
   if (!(storageKey && process.env.UPLOADTHING_TOKEN)) {
     return;
   }
@@ -61,12 +54,8 @@ async function deleteUploadThingFile(
   try {
     const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
     await utapi.deleteFiles([storageKey]);
-  } catch (error) {
-    console.warn("Failed to delete UploadThing file", {
-      storageKey,
-      ...context,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  } catch {
+    // Best effort cleanup.
   }
 }
 
@@ -89,15 +78,8 @@ export async function POST(
   if (!canAccess) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const members = await listWorkspaceMembers(workspaceUuid);
-  const currentMember = members.find((member) => member.userId === user.id);
-  if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
-  const parsed = requestSchema.safeParse(
-    await request.json().catch(() => ({}))
-  );
+  const parsed = requestSchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
@@ -106,7 +88,6 @@ export async function POST(
   const dedupeMode = parsed.data.dedupeMode ?? "allow";
 
   for (const fileInput of parsed.data.files) {
-    let file: Awaited<ReturnType<typeof registerFileAsset>> | null = null;
     try {
       if (isSharedFilesVirtualFolderId(fileInput.folderId, workspaceUuid)) {
         results.push({
@@ -122,22 +103,10 @@ export async function POST(
         const existingByHash = normalizedHash
           ? await getFileAssetByContentHash(workspaceUuid, normalizedHash)
           : null;
-        const verifiedExistingByHash =
-          existingByHash?.hashVerificationStatus === "verified"
-            ? existingByHash
-            : null;
         const existing =
-          verifiedExistingByHash ??
+          existingByHash ??
           (await getFileAssetByStorageKey(workspaceUuid, fileInput.storageKey));
         if (existing) {
-          if (verifiedExistingByHash) {
-            await deleteUploadThingFile(fileInput.storageKey, {
-              workspaceUuid,
-              existingFileId: existing.id,
-              reason: "hash-dedupe",
-            });
-          }
-
           const hasSucceeded = await hasSuccessfulIngestionForFile(
             workspaceUuid,
             existing.id
@@ -159,7 +128,7 @@ export async function POST(
         }
       }
 
-      file = await registerFileAsset(workspaceUuid, user.id, {
+      const file = await registerFileAsset(workspaceUuid, user.id, {
         folderId: fileInput.folderId,
         storageKey: fileInput.storageKey,
         storageUrl: fileInput.storageUrl,
@@ -168,21 +137,14 @@ export async function POST(
         sizeBytes: fileInput.sizeBytes,
         metadata: fileInput.metadata,
         contentHashSha256: normalizedHash,
-        hashComputedBy: normalizedHash
-          ? (fileInput.hashComputedBy ?? "client")
-          : null,
+        hashComputedBy: normalizedHash ? fileInput.hashComputedBy ?? "client" : null,
         hashVerificationStatus: normalizedHash ? "pending" : null,
       });
 
       const usage = await consumeUploadUnits(user.id, 1);
       if (!usage.ok) {
-        await deleteUploadThingFile(fileInput.storageKey, {
-          workspaceUuid,
-          fileId: file.id,
-          reason: "usage-limit",
-        });
+        await deleteUploadThingFile(fileInput.storageKey);
         await softDeleteFileAsset(workspaceUuid, file.id);
-        file = null;
 
         results.push({
           clientUploadId: fileInput.clientUploadId,
@@ -210,43 +172,6 @@ export async function POST(
         ingestionJob,
       });
     } catch (error) {
-      if (file) {
-        try {
-          await deleteUploadThingFile(fileInput.storageKey, {
-            workspaceUuid,
-            fileId: file.id,
-            reason: "registration-error",
-          });
-        } catch (cleanupError) {
-          console.warn(
-            "Failed to delete uploaded blob after registration error",
-            {
-              workspaceUuid,
-              fileId: file.id,
-              storageKey: fileInput.storageKey,
-              error:
-                cleanupError instanceof Error
-                  ? cleanupError.message
-                  : String(cleanupError),
-            }
-          );
-        }
-
-        try {
-          await softDeleteFileAsset(workspaceUuid, file.id);
-        } catch (cleanupError) {
-          console.warn("Failed to soft-delete file after registration error", {
-            workspaceUuid,
-            fileId: file.id,
-            storageKey: fileInput.storageKey,
-            error:
-              cleanupError instanceof Error
-                ? cleanupError.message
-                : String(cleanupError),
-          });
-        }
-      }
-
       results.push({
         clientUploadId: fileInput.clientUploadId,
         status: "failed",
@@ -257,38 +182,24 @@ export async function POST(
 
   const successfulRows = parsed.data.files.filter((item) =>
     results.some(
-      (result) =>
-        result.clientUploadId === item.clientUploadId && result.status === "ok"
+      (result) => result.clientUploadId === item.clientUploadId && result.status === "ok"
     )
   );
 
   if (successfulRows.length > 0) {
     const folderIds = new Set(successfulRows.map((row) => row.folderId));
-    await Promise.allSettled(
+    await Promise.all(
       Array.from(folderIds).map((folderId) =>
         publishFilesInvalidationEvent({
           workspaceUuid,
           folderId,
           reason: "file.created",
-        }).catch((error) => {
-          console.warn("Failed to publish folder file invalidation", {
-            workspaceUuid,
-            folderId,
-            reason: "file.created",
-            error: error instanceof Error ? error.message : String(error),
-          });
         })
       )
     );
     await publishFilesInvalidationEvent({
       workspaceUuid,
       reason: "tree.changed",
-    }).catch((error) => {
-      console.warn("Failed to publish tree invalidation", {
-        workspaceUuid,
-        reason: "tree.changed",
-        error: error instanceof Error ? error.message : String(error),
-      });
     });
   }
 

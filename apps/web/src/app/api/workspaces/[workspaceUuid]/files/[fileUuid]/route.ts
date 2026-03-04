@@ -4,10 +4,10 @@ import {
   softDeleteFileAsset,
   updateFileAsset,
 } from "@/lib/file-data";
-import { UTApi } from "@avenire/storage";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { listWorkspaceMembers } from "@/lib/file-data";
 import { NextResponse } from "next/server";
+import { UTApi } from "@avenire/storage";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 export async function PATCH(
@@ -80,20 +80,20 @@ export async function DELETE(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const existingFile = await getFileAssetById(workspaceUuid, fileUuid);
-  if (!existingFile) {
+  const existing = await getFileAssetById(workspaceUuid, fileUuid);
+  if (!existing) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
-  const deletedFile = await softDeleteFileAsset(workspaceUuid, fileUuid, user.id);
-  if (!deletedFile) {
+  const ok = await softDeleteFileAsset(workspaceUuid, fileUuid);
+  if (!ok) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
-  if (process.env.UPLOADTHING_TOKEN && existingFile.storageKey) {
+  if (process.env.UPLOADTHING_TOKEN && existing.storageKey) {
     try {
       const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-      await utapi.deleteFiles([existingFile.storageKey]);
+      await utapi.deleteFiles([existing.storageKey]);
     } catch {
       // Best effort physical cleanup; logical delete has already succeeded.
     }

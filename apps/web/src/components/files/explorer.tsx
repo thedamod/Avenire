@@ -1,18 +1,61 @@
 "use client";
 
+import { Badge } from "@avenire/ui/components/badge";
+import { Button } from "@avenire/ui/components/button";
+import { Calendar } from "@avenire/ui/components/calendar";
 import {
-  type TouchEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@avenire/ui/components/card";
+import { Checkbox } from "@avenire/ui/components/checkbox";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@avenire/ui/components/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@avenire/ui/components/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@avenire/ui/components/dropdown-menu";
+import { Input } from "@avenire/ui/components/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@avenire/ui/components/popover";
+import {
+  Progress,
+  ProgressLabel,
+  ProgressValue,
+} from "@avenire/ui/components/progress";
+import { SidebarTrigger } from "@avenire/ui/components/sidebar";
+import { Skeleton } from "@avenire/ui/components/skeleton";
+import { Spinner } from "@avenire/ui/components/spinner";
+import { FileMediaPlayer } from "@avenire/ui/media";
 import {
   AlertCircle,
   ArrowLeft,
-  ArrowUpDown,
   ArrowUp,
+  ArrowUpDown,
   CalendarDays,
   CheckCircle2,
   FileArchive,
@@ -30,6 +73,17 @@ import {
   UserRoundSearch,
   XCircle,
 } from "lucide-react";
+import type { Route } from "next";
+import dynamic from "next/dynamic";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import {
+  type TouchEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   FileCard,
   PdfThumbnail,
@@ -38,61 +92,9 @@ import {
 import {
   StylizedSearchBar,
   type WorkspaceSearchItem,
+  type WorkspaceSearchResult,
 } from "@/components/files/stylized-search-bar";
-import type { Route } from "next";
-import dynamic from "next/dynamic";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Badge } from "@avenire/ui/components/badge";
-import { Button } from "@avenire/ui/components/button";
-import { Checkbox } from "@avenire/ui/components/checkbox";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@avenire/ui/components/card";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@avenire/ui/components/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
-import { Input } from "@avenire/ui/components/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@avenire/ui/components/popover";
-import {
-  Progress,
-  ProgressLabel,
-  ProgressValue,
-} from "@avenire/ui/components/progress";
-import { Calendar } from "@avenire/ui/components/calendar";
-import { Skeleton } from "@avenire/ui/components/skeleton";
-import { SidebarTrigger } from "@avenire/ui/components/sidebar";
-import { Spinner } from "@avenire/ui/components/spinner";
-import { FileMediaPlayer } from "@avenire/ui/media";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@avenire/ui/components/context-menu";
+import { useFileSelection } from "@/hooks/use-file-selection";
 import {
   DASHBOARD_FILES_FOCUS_SEARCH_EVENT,
   DASHBOARD_FILES_NEW_NOTE_EVENT,
@@ -105,7 +107,6 @@ import {
   primeFilePreview,
   releasePreviewPrime,
 } from "@/lib/file-preview-cache";
-import { useFileSelection } from "@/hooks/use-file-selection";
 import { useUploadThing } from "@/lib/uploadthing";
 import type { ShareSuggestion } from "@/types/share";
 import { cn } from "@/lib/utils";
@@ -119,7 +120,12 @@ const PDFViewer = dynamic(() => import("@/components/files/pdf-viewer"), {
   ssr: false,
 });
 
-type UploadStatus = "failed" | "queued" | "uploaded" | "uploading";
+type UploadStatus =
+  | "failed"
+  | "ingesting"
+  | "queued"
+  | "uploaded"
+  | "uploading";
 type CalendarDateRange = { from: Date | undefined; to?: Date };
 type FileKind =
   | "archive"
@@ -131,46 +137,102 @@ type FileKind =
   | "sheet"
   | "video";
 const FILE_EXPLORER_VIEW_MODE_KEY = "file-explorer-view-mode";
+const FILE_RETRIEVAL_CONTEXT_KEY = "file-explorer-retrieval-context-v1";
 
 interface FolderRecord {
+  createdAt?: string;
+  createdBy?: string;
   id: string;
+  isShared?: boolean;
   name: string;
   parentId: string | null;
-  createdBy?: string;
-  updatedBy?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-  isShared?: boolean;
   readOnly?: boolean;
+  updatedAt?: string;
+  updatedBy?: string | null;
 }
 
 interface FileRecord {
-  id: string;
-  folderId: string;
-  name: string;
-  storageUrl: string;
-  mimeType: string | null;
-  sizeBytes: number;
-  uploadedBy?: string;
-  updatedBy?: string | null;
   createdAt: string;
+  folderId: string;
+  id: string;
+  isIngested?: boolean;
   isShared?: boolean;
+  mimeType: string | null;
+  name: string;
   readOnly?: boolean;
+  sizeBytes: number;
   sourceWorkspaceId?: string;
+  storageUrl: string;
   updatedAt?: string;
+  updatedBy?: string | null;
+  uploadedBy?: string;
 }
 
 interface UploadQueueItem {
+  contentHashSha256?: string;
   error?: string;
+  failureCount?: number;
+  fileId?: string;
   id: string;
+  ingestionJobId?: string;
   name: string;
   sizeLabel: string;
   status: UploadStatus;
+  storageKey?: string;
 }
 
 interface UploadCandidate {
   file: File;
   relativePath?: string;
+}
+
+type BulkItemKind = "file" | "folder";
+
+interface BulkMutationResult {
+  error?: string;
+  id: string;
+  kind: BulkItemKind;
+  status: "failed" | "ok";
+}
+
+interface BulkMutationResponse {
+  results?: BulkMutationResult[];
+  summary?: {
+    failed?: number;
+    succeeded?: number;
+    total?: number;
+  };
+}
+
+interface UploadResultLike {
+  contentType?: string;
+  key?: string;
+  name?: string;
+  size?: number;
+  ufsUrl?: string;
+}
+
+interface BulkRegisterResponse {
+  results?: Array<{
+    clientUploadId: string;
+    error?: string;
+    file?: { id?: string };
+    ingestionJob?: { id?: string } | null;
+    status: "failed" | "ok";
+  }>;
+  summary?: {
+    failed?: number;
+    succeeded?: number;
+    total?: number;
+  };
+}
+
+interface DedupeLookupResponse {
+  results?: Array<{
+    clientUploadId: string;
+    deduped: boolean;
+    file?: { id?: string };
+  }>;
 }
 
 interface WebkitFileSystemEntry {
@@ -233,6 +295,83 @@ function toUpdatedLabel(isoDate: string): string {
 function getExtension(name: string) {
   const index = name.lastIndexOf(".");
   return index >= 0 ? name.slice(index).toLowerCase() : "";
+}
+
+function chunkArray<T>(values: T[], chunkSize: number): T[][] {
+  const out: T[][] = [];
+  const safeChunkSize = Math.max(1, Math.floor(chunkSize));
+
+  for (let index = 0; index < values.length; index += safeChunkSize) {
+    out.push(values.slice(index, index + safeChunkSize));
+  }
+
+  return out;
+}
+
+function normalizeRelativePath(relativePath: string | undefined, file: File): string {
+  const raw = (relativePath && relativePath.trim().length > 0 ? relativePath : file.name).trim();
+  return raw
+    .replaceAll("\\", "/")
+    .replace(/^\.\/+/, "")
+    .replace(/\/+/g, "/");
+}
+
+function isSkippableUploadArtifact(pathLike: string): boolean {
+  const normalized = pathLike.trim().replaceAll("\\", "/");
+  const baseName = normalized.split("/").pop()?.toLowerCase() ?? "";
+  if (!baseName) {
+    return true;
+  }
+
+  if (baseName === ".ds_store" || baseName === "thumbs.db") {
+    return true;
+  }
+  if (baseName === "zone.identifier" || baseName.endsWith(":zone.identifier")) {
+    return true;
+  }
+
+  return false;
+}
+
+function sanitizeUploadCandidates(candidates: UploadCandidate[]): UploadCandidate[] {
+  const seen = new Set<string>();
+  const out: UploadCandidate[] = [];
+
+  for (const candidate of candidates) {
+    const normalizedPath = normalizeRelativePath(candidate.relativePath, candidate.file);
+    if (isSkippableUploadArtifact(normalizedPath)) {
+      continue;
+    }
+
+    const dedupeKey = `${normalizedPath.toLowerCase()}::${candidate.file.size}::${candidate.file.lastModified}`;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+
+    out.push({
+      file: candidate.file,
+      relativePath: normalizedPath,
+    });
+  }
+
+  return out;
+}
+
+async function computeSha256Hex(file: File): Promise<string | null> {
+  if (!(globalThis.crypto?.subtle && typeof file.arrayBuffer === "function")) {
+    return null;
+  }
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(digest))
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return null;
+  }
 }
 
 function detectPreviewKind(file: FileRecord) {
@@ -380,6 +519,12 @@ function statusMeta(status: UploadStatus) {
         label: "Uploaded",
         progress: 100,
       };
+    case "ingesting":
+      return {
+        icon: <Spinner className="size-3.5" />,
+        label: "Ingesting",
+        progress: 80,
+      };
     case "failed":
       return {
         icon: <XCircle className="size-3.5 text-destructive" />,
@@ -409,6 +554,9 @@ export function FileExplorer() {
   const queueFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sseRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ingestionSseRetryTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
 
   const workspaceUuid = params.workspaceUuid;
   const currentFolderId = params.folderUuid;
@@ -428,6 +576,12 @@ export function FileExplorer() {
   const [actorFilter, setActorFilter] = useState<Set<string>>(new Set());
   const [vectorFilteredIds, setVectorFilteredIds] =
     useState<Set<string> | null>(null);
+  const [retrievalResults, setRetrievalResults] = useState<
+    WorkspaceSearchResult[]
+  >([]);
+  const [activeRetrievalChunkId, setActiveRetrievalChunkId] = useState<
+    string | null
+  >(null);
   const [allFolders, setAllFolders] = useState<FolderRecord[]>([]);
   const [allFiles, setAllFiles] = useState<FileRecord[]>([]);
   const [folders, setFolders] = useState<FolderRecord[]>([]);
@@ -491,12 +645,13 @@ export function FileExplorer() {
   const selection = useFileSelection({ gridRef, itemRefs });
 
   const selectedFileParam = searchParams.get("file");
+  const selectedRetrievalChunkParam = searchParams.get("retrievalChunk");
   const activeFile = useMemo(
     () => files.find((file) => file.id === selectedFileParam) ?? null,
     [files, selectedFileParam]
   );
   const activeMediaStreamUrl = useMemo(() => {
-    if (!activeFile || !workspaceUuid) {
+    if (!(activeFile && workspaceUuid)) {
       return null;
     }
     return `/api/workspaces/${workspaceUuid}/files/${activeFile.id}/stream`;
@@ -510,11 +665,44 @@ export function FileExplorer() {
     }
     return activeMediaStreamUrl;
   }, [activeFile, activeMediaStreamUrl, mediaStreamFailed]);
+  const activeVideoCaptionsSrc = useMemo(() => {
+    if (!(activeFile && workspaceUuid)) {
+      return undefined;
+    }
+    const isVideo = (activeFile.mimeType ?? "")
+      .toLowerCase()
+      .startsWith("video/");
+    if (!isVideo) {
+      return undefined;
+    }
+    return `/api/workspaces/${workspaceUuid}/files/${activeFile.id}/captions.vtt`;
+  }, [activeFile, workspaceUuid]);
   const currentFolder = useMemo(
     () => breadcrumbs[breadcrumbs.length - 1] ?? null,
     [breadcrumbs]
   );
   const isCurrentFolderReadOnly = Boolean(currentFolder?.readOnly);
+  const activeFileRetrievalResults = useMemo(() => {
+    if (!activeFile) {
+      return [];
+    }
+    return retrievalResults.filter(
+      (result) => (result.fileId ?? result.id) === activeFile.id
+    );
+  }, [activeFile, retrievalResults]);
+  const activeRetrievalResult = useMemo(() => {
+    if (activeFileRetrievalResults.length === 0) {
+      return null;
+    }
+    if (activeRetrievalChunkId) {
+      return (
+        activeFileRetrievalResults.find(
+          (result) => result.chunkId === activeRetrievalChunkId
+        ) ?? activeFileRetrievalResults[0]
+      );
+    }
+    return activeFileRetrievalResults[0] ?? null;
+  }, [activeFileRetrievalResults, activeRetrievalChunkId]);
 
   const ensureDragPreviewPixel = useCallback(() => {
     if (dragPreviewPixelRef.current) {
@@ -537,14 +725,14 @@ export function FileExplorer() {
 
   const searchableItems = useMemo<WorkspaceSearchItem[]>(
     () => [
-      ...folders.map((folder) => ({
+      ...allFolders.map((folder) => ({
         id: folder.id,
         type: "folder" as const,
         title: folder.name,
         description: "Folder",
-        snippet: `Folder in ${breadcrumbs[breadcrumbs.length - 1]?.name ?? "workspace"}`,
+        snippet: "Folder in workspace",
       })),
-      ...files.map((file) => ({
+      ...allFiles.map((file) => ({
         id: file.id,
         type: "file" as const,
         title: file.name,
@@ -552,7 +740,7 @@ export function FileExplorer() {
         snippet: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown type"}`,
       })),
     ],
-    [breadcrumbs, files, folders]
+    [allFiles, allFolders]
   );
 
   const availableFileTypes = useMemo(() => {
@@ -658,17 +846,16 @@ export function FileExplorer() {
 
   const filteredFolders = useMemo(() => {
     const term = query.trim().toLowerCase();
-    const textFiltered =
-      term && !vectorFilteredIds
+    const activeVectorIds =
+      vectorFilteredIds && vectorFilteredIds.size > 0 ? vectorFilteredIds : null;
+    const baseFiltered = activeVectorIds
+      ? folders.filter((folder) => activeVectorIds.has(folder.id))
+      : term
         ? folders.filter((folder) => folder.name.toLowerCase().includes(term))
         : folders;
 
-    const vectorFiltered = vectorFilteredIds
-      ? textFiltered.filter((folder) => vectorFilteredIds.has(folder.id))
-      : textFiltered;
-
-    const dateFiltered = vectorFiltered.filter((folder) => {
-      if (!createdDateRange?.from && !createdDateRange?.to) {
+    const dateFiltered = baseFiltered.filter((folder) => {
+      if (!(createdDateRange?.from || createdDateRange?.to)) {
         return true;
       }
       if (!folder.createdAt) {
@@ -714,19 +901,18 @@ export function FileExplorer() {
 
   const filteredFiles = useMemo(() => {
     const term = query.trim().toLowerCase();
-    const textFiltered =
-      term && !vectorFilteredIds
+    const activeVectorIds =
+      vectorFilteredIds && vectorFilteredIds.size > 0 ? vectorFilteredIds : null;
+    const baseFiltered = activeVectorIds
+      ? files.filter((file) => activeVectorIds.has(file.id))
+      : term
         ? files.filter((file) => file.name.toLowerCase().includes(term))
         : files;
 
-    const vectorFiltered = vectorFilteredIds
-      ? textFiltered.filter((file) => vectorFilteredIds.has(file.id))
-      : textFiltered;
-
     const typeFiltered =
       fileTypeFilter.size === 0
-        ? vectorFiltered
-        : vectorFiltered.filter((file) => {
+        ? baseFiltered
+        : baseFiltered.filter((file) => {
             const ext = getExtension(file.name).replace(".", "").toUpperCase();
             if (ext && fileTypeFilter.has(ext)) {
               return true;
@@ -736,7 +922,7 @@ export function FileExplorer() {
           });
 
     const dateFiltered = typeFiltered.filter((file) => {
-      if (!createdDateRange?.from && !createdDateRange?.to) {
+      if (!(createdDateRange?.from || createdDateRange?.to)) {
         return true;
       }
       const createdAt = new Date(file.createdAt).getTime();
@@ -827,7 +1013,10 @@ export function FileExplorer() {
   );
 
   const uploadCount = uploadQueue.filter(
-    (item) => item.status === "queued" || item.status === "uploading"
+    (item) =>
+      item.status === "queued" ||
+      item.status === "uploading" ||
+      item.status === "ingesting"
   ).length;
   const failedCount = uploadQueue.filter(
     (item) => item.status === "failed"
@@ -851,6 +1040,53 @@ export function FileExplorer() {
     }
     return map;
   }, [allFiles]);
+
+  const filePathById = useMemo(() => {
+    const folderById = new Map(allFolders.map((folder) => [folder.id, folder]));
+    const folderPathCache = new Map<string, string>();
+
+    const resolveFolderPath = (folderId: string | null): string => {
+      if (!folderId) {
+        return "";
+      }
+      const cached = folderPathCache.get(folderId);
+      if (cached !== undefined) {
+        return cached;
+      }
+
+      const segments: string[] = [];
+      const seen = new Set<string>();
+      let cursor = folderId;
+      while (cursor) {
+        if (seen.has(cursor)) {
+          break;
+        }
+        seen.add(cursor);
+        const folder = folderById.get(cursor);
+        if (!folder) {
+          break;
+        }
+        if (folder.parentId === null) {
+          break;
+        }
+        segments.push(folder.name);
+        cursor = folder.parentId;
+      }
+
+      const resolved = segments.reverse().join("/");
+      folderPathCache.set(folderId, resolved);
+      return resolved;
+    };
+
+    const map = new Map<string, string>();
+    for (const file of allFiles) {
+      const folderPath = resolveFolderPath(file.folderId);
+      const fullPath = folderPath ? `${folderPath}/${file.name}` : file.name;
+      map.set(file.id, fullPath);
+    }
+
+    return map;
+  }, [allFiles, allFolders]);
 
   const folderCardPreviewItems = useMemo(() => {
     type FolderCardPreviewItem =
@@ -911,7 +1147,7 @@ export function FileExplorer() {
 
   const loadFolder = useCallback(
     async (options?: { silent?: boolean }) => {
-      if (!workspaceUuid || !currentFolderId) {
+      if (!(workspaceUuid && currentFolderId)) {
         return;
       }
       const silent = options?.silent ?? false;
@@ -1005,7 +1241,7 @@ export function FileExplorer() {
   }, [loadTree]);
 
   useEffect(() => {
-    if (!workspaceUuid || !currentFolderId) {
+    if (!(workspaceUuid && currentFolderId)) {
       return;
     }
 
@@ -1132,6 +1368,124 @@ export function FileExplorer() {
   }, [refreshDataDebounced, workspaceUuid]);
 
   useEffect(() => {
+    if (!workspaceUuid) {
+      return;
+    }
+
+    let closed = false;
+    let eventSource: EventSource | null = null;
+
+    const cleanupCurrent = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (closed) {
+        return;
+      }
+
+      if (ingestionSseRetryTimerRef.current) {
+        clearTimeout(ingestionSseRetryTimerRef.current);
+      }
+
+      ingestionSseRetryTimerRef.current = setTimeout(() => {
+        void connect();
+      }, 3000);
+    };
+
+    const connect = async () => {
+      if (closed) {
+        return;
+      }
+
+      try {
+        cleanupCurrent();
+        const url = new URL(
+          "/api/ai/ingestion/jobs/events",
+          window.location.origin
+        );
+        url.searchParams.set("workspaceUuid", workspaceUuid);
+
+        eventSource = new EventSource(url.toString());
+        eventSource.onerror = () => {
+          cleanupCurrent();
+          scheduleReconnect();
+        };
+
+        eventSource.addEventListener("ingestion.job", (event) => {
+          const payload = JSON.parse((event as MessageEvent).data) as {
+            jobId: string;
+            eventType: string;
+            payload?: Record<string, unknown>;
+          };
+
+          setUploadQueue((previous) =>
+            previous.map((item) => {
+              if (
+                !item.ingestionJobId ||
+                item.ingestionJobId !== payload.jobId
+              ) {
+                return item;
+              }
+
+              if (payload.eventType === "job.failed") {
+                const nextFailureCount = (item.failureCount ?? 0) + 1;
+                return {
+                  ...item,
+                  status: "failed",
+                  failureCount: nextFailureCount,
+                  error:
+                    typeof payload.payload?.error === "string"
+                      ? `Ingestion failed for this file: ${payload.payload.error}`
+                      : "Ingestion failed",
+                };
+              }
+
+              if (payload.eventType === "job.succeeded") {
+                return {
+                  ...item,
+                  status: "uploaded",
+                  error: undefined,
+                  failureCount: 0,
+                };
+              }
+
+              return {
+                ...item,
+                status: "ingesting",
+                error: undefined,
+              };
+            })
+          );
+
+          if (
+            payload.eventType === "job.succeeded" ||
+            payload.eventType === "job.failed"
+          ) {
+            refreshDataDebounced();
+          }
+        });
+      } catch {
+        scheduleReconnect();
+      }
+    };
+
+    void connect();
+
+    return () => {
+      closed = true;
+      cleanupCurrent();
+      if (ingestionSseRetryTimerRef.current) {
+        clearTimeout(ingestionSseRetryTimerRef.current);
+        ingestionSseRetryTimerRef.current = null;
+      }
+    };
+  }, [workspaceUuid]);
+
+  useEffect(() => {
     setVideoLoadFailed(false);
     setAudioLoadFailed(false);
     setMediaStreamFailed(false);
@@ -1142,13 +1496,68 @@ export function FileExplorer() {
   }, [viewMode]);
 
   useEffect(() => {
+    if (!workspaceUuid) {
+      return;
+    }
+    try {
+      const raw = window.sessionStorage.getItem(
+        `${FILE_RETRIEVAL_CONTEXT_KEY}:${workspaceUuid}`
+      );
+      if (!raw) {
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        activeChunkId?: string | null;
+        query?: string;
+        results?: WorkspaceSearchResult[];
+      };
+      if (typeof parsed.query === "string") {
+        setQuery(parsed.query);
+      }
+      if (Array.isArray(parsed.results)) {
+        setRetrievalResults(parsed.results);
+        setVectorFilteredIds(
+          parsed.results.length > 0
+            ? new Set(parsed.results.map((item) => item.id))
+            : null
+        );
+      }
+      if (typeof parsed.activeChunkId === "string" || parsed.activeChunkId === null) {
+        setActiveRetrievalChunkId(parsed.activeChunkId ?? null);
+      }
+    } catch {
+      // Ignore malformed client cache.
+    }
+  }, [workspaceUuid]);
+
+  useEffect(() => {
+    if (!workspaceUuid) {
+      return;
+    }
+    window.sessionStorage.setItem(
+      `${FILE_RETRIEVAL_CONTEXT_KEY}:${workspaceUuid}`,
+      JSON.stringify({
+        activeChunkId: activeRetrievalChunkId,
+        query,
+        results: retrievalResults,
+      })
+    );
+  }, [activeRetrievalChunkId, query, retrievalResults, workspaceUuid]);
+
+  useEffect(() => {
+    if (selectedRetrievalChunkParam) {
+      setActiveRetrievalChunkId(selectedRetrievalChunkParam);
+    }
+  }, [selectedRetrievalChunkParam]);
+
+  useEffect(() => {
     if (!activeFile) {
       return;
     }
 
     markFileOpened(activeFile.id);
     const { isAudio, isVideo } = detectPreviewKind(activeFile);
-    if (!isAudio && !isVideo) {
+    if (!(isAudio || isVideo)) {
       return;
     }
 
@@ -1202,7 +1611,10 @@ export function FileExplorer() {
     }
 
     const hasActiveUploads = uploadQueue.some(
-      (item) => item.status === "queued" || item.status === "uploading"
+      (item) =>
+        item.status === "queued" ||
+        item.status === "uploading" ||
+        item.status === "ingesting"
     );
 
     setIsQueueVisible(true);
@@ -1236,8 +1648,8 @@ export function FileExplorer() {
   );
 
   const selectFile = useCallback(
-    (fileId: string | null) => {
-      if (!workspaceUuid || !currentFolderId) {
+    (fileId: string | null, options?: { retrievalChunkId?: string | null }) => {
+      if (!(workspaceUuid && currentFolderId)) {
         return;
       }
 
@@ -1246,6 +1658,11 @@ export function FileExplorer() {
         params.set("file", fileId);
       } else {
         params.delete("file");
+      }
+      if (options?.retrievalChunkId) {
+        params.set("retrievalChunk", options.retrievalChunkId);
+      } else if (options?.retrievalChunkId === null) {
+        params.delete("retrievalChunk");
       }
 
       const query = params.toString();
@@ -1258,9 +1675,50 @@ export function FileExplorer() {
     [currentFolderId, router, searchParams, workspaceUuid]
   );
 
+  const openSearchResult = useCallback(
+    (result: WorkspaceSearchResult) => {
+      if (!(workspaceUuid && currentFolderId)) {
+        return;
+      }
+
+      const targetFileId = result.fileId ?? result.id;
+      const targetFile = allFiles.find((file) => file.id === targetFileId);
+      const targetFolderId = targetFile?.folderId ?? currentFolderId;
+
+      const params = new URLSearchParams();
+      params.set("file", targetFileId);
+      if (result.chunkId) {
+        params.set("retrievalChunk", result.chunkId);
+      }
+
+      router.push(
+        `/dashboard/files/${workspaceUuid}/folder/${targetFolderId}?${params.toString()}` as Route
+      );
+    },
+    [allFiles, currentFolderId, router, workspaceUuid]
+  );
+
+  const openFileById = useCallback(
+    (fileId: string) => {
+      if (!workspaceUuid) {
+        return;
+      }
+      const targetFile = allFiles.find((file) => file.id === fileId);
+      if (!targetFile) {
+        return;
+      }
+      const params = new URLSearchParams();
+      params.set("file", fileId);
+      router.push(
+        `/dashboard/files/${workspaceUuid}/folder/${targetFile.folderId}?${params.toString()}` as Route
+      );
+    },
+    [allFiles, router, workspaceUuid]
+  );
+
   const handlePreviewIntentStart = useCallback((file: FileRecord) => {
     const { isAudio, isVideo } = detectPreviewKind(file);
-    if (!isAudio && !isVideo) {
+    if (!(isAudio || isVideo)) {
       return;
     }
 
@@ -1271,7 +1729,7 @@ export function FileExplorer() {
 
   const handlePreviewIntentEnd = useCallback((file: FileRecord) => {
     const { isAudio, isVideo } = detectPreviewKind(file);
-    if (!isAudio && !isVideo) {
+    if (!(isAudio || isVideo)) {
       return;
     }
 
@@ -1303,10 +1761,7 @@ export function FileExplorer() {
             break;
           }
           const chunk = await new Promise<WebkitFileSystemEntry[]>((resolve) =>
-            reader.readEntries(resolve, (error) => {
-              console.warn("Unable to read dropped directory entries", error);
-              resolve([]);
-            })
+            reader.readEntries(resolve, () => resolve([]))
           );
           if (chunk.length === 0) {
             break;
@@ -1323,13 +1778,7 @@ export function FileExplorer() {
         if (entry.isFile) {
           const fileEntry = entry as WebkitFileSystemFileEntry;
           const file = await new Promise<File | null>((resolve) =>
-            fileEntry.file(resolve, (error) => {
-              console.warn(
-                `Unable to read dropped file entry: ${entry.name}`,
-                error
-              );
-              resolve(null);
-            })
+            fileEntry.file(resolve, () => resolve(null))
           );
           if (!file) {
             return;
@@ -1388,22 +1837,25 @@ export function FileExplorer() {
 
   const queueUploads = useCallback(
     (incomingCandidates: UploadCandidate[]) => {
+      const normalizedCandidates = sanitizeUploadCandidates(incomingCandidates);
       if (
-        !workspaceUuid ||
-        !currentFolderId ||
-        incomingCandidates.length === 0 ||
+        !(workspaceUuid && currentFolderId) ||
+        normalizedCandidates.length === 0 ||
         isCurrentFolderReadOnly
       ) {
         return;
       }
 
-      const queueEntries = incomingCandidates.map(({ file, relativePath }) => ({
+      const queueEntries = normalizedCandidates.map(({ file, relativePath }) => ({
         id: crypto.randomUUID(),
         name:
           relativePath && relativePath !== file.name ? relativePath : file.name,
         sizeLabel: formatBytes(file.size),
         status: "queued" as const,
       }));
+      const isFolderUploadBatch = normalizedCandidates.some((entry) =>
+        (entry.relativePath ?? entry.file.name).includes("/")
+      );
 
       setUploadQueue((previous) => [...queueEntries, ...previous]);
 
@@ -1434,9 +1886,8 @@ export function FileExplorer() {
         };
 
         const ensureFolderPath = async (relativePath?: string) => {
-          const createdFolders: CreatedFolder[] = [];
-          if (!relativePath || !workspaceUuid) {
-            return { createdFolders, parentId: currentFolderId };
+          if (!(relativePath && workspaceUuid)) {
+            return currentFolderId;
           }
           const normalized = relativePath.replaceAll("\\", "/");
           const segments = normalized.split("/").filter(Boolean);
@@ -1454,80 +1905,303 @@ export function FileExplorer() {
                 continue;
               }
 
-              const response = await fetch(
-                `/api/workspaces/${workspaceUuid}/folders`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ parentId, name: segment }),
-                }
-              );
-              if (!response.ok) {
-                throw new Error(`Unable to create folder "${segment}"`);
+            const response = await fetch(
+              `/api/workspaces/${workspaceUuid}/folders`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ parentId, name: segment }),
               }
-              const payload = (await response.json()) as {
-                folder?: { id?: string };
-              };
-              const createdId = payload.folder?.id;
-              if (!createdId) {
-                throw new Error(`Folder "${segment}" could not be created`);
-              }
-              folderLookup.set(key, createdId);
-              createdFolders.push({ id: createdId, key });
-              parentId = createdId;
+            );
+            if (!response.ok) {
+              throw new Error(`Unable to create folder "${segment}"`);
             }
-          } catch (error) {
-            await rollbackCreatedFolders(createdFolders);
-            throw error;
+            const payload = (await response.json()) as {
+              folder?: { id?: string };
+            };
+            const createdId = payload.folder?.id;
+            if (!createdId) {
+              throw new Error(`Folder "${segment}" could not be created`);
+            }
+            folderLookup.set(key, createdId);
+            parentId = createdId;
           }
 
           return { createdFolders, parentId };
         };
 
-        let hasSuccessfulUpload = false;
-        for (const [index, candidate] of incomingCandidates.entries()) {
-          const file = candidate.file;
-          const queueItemId = queueEntries[index]?.id;
-          if (!queueItemId) {
-            continue;
+        const maxParallelHashing = 3;
+        const maxParallelUploads = 4;
+        const dedupeLookupChunkSize = 100;
+        const registerChunkSize = 40;
+        type UploadPrepared = {
+          candidate: UploadCandidate;
+          contentHashSha256?: string;
+          file: File;
+          queueItemId: string;
+          targetFolderId: string;
+          uploaded: UploadResultLike;
+        };
+        const preparedForRegister: UploadPrepared[] = [];
+        let successCount = 0;
+        let uploadCursor = 0;
+        const folderPathInflight = new Map<string, Promise<string>>();
+
+        const indexedCandidates = normalizedCandidates.map((candidate, index) => ({
+          candidate,
+          index,
+          queueItemId: queueEntries[index]?.id ?? "",
+        }));
+        const hashByQueueId = new Map<string, string>();
+        const dedupeHitByQueueId = new Map<string, { fileId?: string }>();
+        if (!isFolderUploadBatch) {
+          let hashCursor = 0;
+          const runHashWorker = async () => {
+            while (true) {
+              const index = hashCursor;
+              hashCursor += 1;
+              if (index >= indexedCandidates.length) {
+                return;
+              }
+              const entry = indexedCandidates[index];
+              if (!(entry && entry.queueItemId)) {
+                continue;
+              }
+
+              const hash = await computeSha256Hex(entry.candidate.file);
+              if (!hash) {
+                continue;
+              }
+
+              hashByQueueId.set(entry.queueItemId, hash);
+              setUploadQueue((previous) =>
+                previous.map((item) =>
+                  item.id === entry.queueItemId
+                    ? { ...item, contentHashSha256: hash }
+                    : item
+                )
+              );
+            }
+          };
+
+          await Promise.all(
+            Array.from(
+              {
+                length: Math.min(
+                  Math.max(1, indexedCandidates.length),
+                  maxParallelHashing
+                ),
+              },
+              () => runHashWorker()
+            )
+          );
+
+          const dedupeLookupInput: Array<{
+            clientUploadId: string;
+            hashSha256: string;
+            mimeType: string | null;
+            name: string;
+            sizeBytes: number;
+          }> = [];
+          for (const entry of indexedCandidates) {
+            const hashSha256 = hashByQueueId.get(entry.queueItemId);
+            if (!(entry.queueItemId && hashSha256)) {
+              continue;
+            }
+            dedupeLookupInput.push({
+              clientUploadId: entry.queueItemId,
+              hashSha256,
+              mimeType: entry.candidate.file.type || null,
+              name: entry.candidate.file.name,
+              sizeBytes: entry.candidate.file.size,
+            });
+          }
+
+          const dedupeChunks = chunkArray(dedupeLookupInput, dedupeLookupChunkSize);
+          for (const dedupeChunk of dedupeChunks) {
+            if (dedupeChunk.length === 0) {
+              continue;
+            }
+
+            try {
+              const response = await fetch(
+                `/api/workspaces/${workspaceUuid}/files/dedupe/lookup`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    files: dedupeChunk.map((entry) => ({
+                      clientUploadId: entry.clientUploadId,
+                      folderId: currentFolderId,
+                      hashSha256: entry.hashSha256,
+                      mimeType: entry.mimeType,
+                      name: entry.name,
+                      sizeBytes: entry.sizeBytes,
+                    })),
+                  }),
+                }
+              );
+
+              if (!response.ok) {
+                continue;
+              }
+
+              const payload = (await response.json()) as DedupeLookupResponse;
+              for (const result of payload.results ?? []) {
+                if (!result.deduped) {
+                  continue;
+                }
+                dedupeHitByQueueId.set(result.clientUploadId, {
+                  fileId: result.file?.id,
+                });
+              }
+            } catch {
+              // Best effort. Fallback is normal upload path.
+            }
+          }
+        }
+
+        if (dedupeHitByQueueId.size > 0) {
+          successCount += dedupeHitByQueueId.size;
+          setUploadQueue((previous) =>
+            previous.map((item) => {
+              const hit = dedupeHitByQueueId.get(item.id);
+              if (!hit) {
+                return item;
+              }
+              return {
+                ...item,
+                fileId: hit.fileId,
+                status: "uploaded",
+                failureCount: 0,
+                error: undefined,
+              };
+            })
+          );
+        }
+
+        const uploadTargets = indexedCandidates.filter(
+          (entry) => !dedupeHitByQueueId.has(entry.queueItemId)
+        );
+
+        const processOneUpload = async (
+          entry: (typeof uploadTargets)[number]
+        ) => {
+          if (!entry.queueItemId) {
+            return;
           }
 
           setUploadQueue((previous) =>
             previous.map((item) =>
-              item.id === queueItemId ? { ...item, status: "uploading" } : item
+              item.id === entry.queueItemId
+                ? { ...item, status: "uploading", error: undefined }
+                : item
             )
           );
 
           let createdFoldersForCandidate: CreatedFolder[] = [];
           try {
-            const uploaded = (await startUpload([file]))?.[0] as
-              | {
-                  key?: string;
-                  ufsUrl?: string;
-                  name?: string;
-                  size?: number;
-                  contentType?: string;
-                }
-              | undefined;
-
-            if (!uploaded?.key || !uploaded.ufsUrl) {
+            const uploaded = ((await startUpload([entry.candidate.file])) ??
+              [])[0] as UploadResultLike | undefined;
+            if (!(uploaded?.key && uploaded.ufsUrl)) {
               throw new Error("Upload returned no file metadata");
             }
-            const folderPath = await ensureFolderPath(candidate.relativePath);
-            createdFoldersForCandidate = folderPath.createdFolders;
 
+            const normalizedPath = normalizeRelativePath(
+              entry.candidate.relativePath,
+              entry.candidate.file
+            );
+            const lastSeparator = normalizedPath.lastIndexOf("/");
+            const folderPathKey =
+              lastSeparator >= 0
+                ? normalizedPath.slice(0, lastSeparator)
+                : "__root__";
+            const targetFolderId = await (folderPathInflight.get(folderPathKey) ??
+              (() => {
+                const task = ensureFolderPath(entry.candidate.relativePath);
+                folderPathInflight.set(folderPathKey, task);
+                return task;
+              })());
+
+            preparedForRegister.push({
+              candidate: entry.candidate,
+              contentHashSha256: hashByQueueId.get(entry.queueItemId),
+              file: entry.candidate.file,
+              queueItemId: entry.queueItemId,
+              targetFolderId,
+              uploaded,
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : "Unable to upload file";
+            setUploadQueue((previous) =>
+              previous.map((item) =>
+                item.id === entry.queueItemId
+                  ? {
+                      ...item,
+                      status: "failed",
+                      failureCount: (item.failureCount ?? 0) + 1,
+                      error: message,
+                    }
+                  : item
+              )
+            );
+          }
+        };
+
+        const runUploadWorker = async () => {
+          while (true) {
+            const index = uploadCursor;
+            uploadCursor += 1;
+            if (index >= uploadTargets.length) {
+              return;
+            }
+
+            const entry = uploadTargets[index];
+            if (!entry) {
+              return;
+            }
+            await processOneUpload(entry);
+          }
+        };
+
+        await Promise.all(
+          Array.from(
+            {
+              length: Math.min(
+                Math.max(1, uploadTargets.length),
+                maxParallelUploads
+              ),
+            },
+            () => runUploadWorker()
+          )
+        );
+
+        const registerChunks = chunkArray(preparedForRegister, registerChunkSize);
+        for (const registerChunk of registerChunks) {
+          if (registerChunk.length === 0) {
+            continue;
+          }
+
+          try {
             const registerResponse = await fetch(
-              `/api/workspaces/${workspaceUuid}/files/register`,
+              `/api/workspaces/${workspaceUuid}/files/register/bulk`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  folderId: folderPath.parentId,
-                  storageKey: uploaded.key,
-                  storageUrl: uploaded.ufsUrl,
-                  name: uploaded.name ?? file.name,
-                  mimeType: uploaded.contentType ?? file.type,
-                  sizeBytes: uploaded.size ?? file.size,
+                  dedupeMode: isFolderUploadBatch ? "skip" : "allow",
+                  files: registerChunk.map((entry) => ({
+                    clientUploadId: entry.queueItemId,
+                    contentHashSha256: entry.contentHashSha256,
+                    folderId: entry.targetFolderId,
+                    hashComputedBy: entry.contentHashSha256 ? "client" : undefined,
+                    storageKey: entry.uploaded.key,
+                    storageUrl: entry.uploaded.ufsUrl,
+                    name: entry.uploaded.name ?? entry.file.name,
+                    mimeType: entry.uploaded.contentType ?? entry.file.type,
+                    sizeBytes: entry.uploaded.size ?? entry.file.size,
+                  })),
                 }),
               }
             );
@@ -1536,24 +2210,58 @@ export function FileExplorer() {
               throw new Error("File metadata registration failed");
             }
 
-            setUploadQueue((previous) =>
-              previous.map((item) =>
-                item.id === queueItemId ? { ...item, status: "uploaded" } : item
-              )
+            const payload = (await registerResponse.json()) as BulkRegisterResponse;
+            const resultMap = new Map(
+              (payload.results ?? []).map((result) => [
+                result.clientUploadId,
+                result,
+              ])
             );
-            hasSuccessfulUpload = true;
+            const chunkSucceeded = (payload.results ?? []).filter(
+              (result) => result.status === "ok"
+            ).length;
+            successCount += chunkSucceeded;
+
+            setUploadQueue((previous) =>
+              previous.map((item) => {
+                const result = resultMap.get(item.id);
+                if (!result) {
+                  return item;
+                }
+
+                if (result.status === "ok") {
+                  return {
+                    ...item,
+                    fileId: result.file?.id,
+                    ingestionJobId: result.ingestionJob?.id,
+                    status: result.ingestionJob?.id ? "ingesting" : "uploaded",
+                    failureCount: 0,
+                    error: undefined,
+                  };
+                }
+
+                return {
+                  ...item,
+                  status: "failed",
+                  failureCount: (item.failureCount ?? 0) + 1,
+                  error: result.error ?? "File metadata registration failed",
+                };
+              })
+            );
           } catch (error) {
-            await rollbackCreatedFolders(createdFoldersForCandidate);
+            const message =
+              error instanceof Error
+                ? error.message
+                : "File metadata registration failed";
+            const queueItemIds = registerChunk.map((entry) => entry.queueItemId);
             setUploadQueue((previous) =>
               previous.map((item) =>
-                item.id === queueItemId
+                queueItemIds.includes(item.id)
                   ? {
                       ...item,
                       status: "failed",
-                      error:
-                        error instanceof Error
-                          ? error.message
-                          : "Unable to upload file",
+                      failureCount: (item.failureCount ?? 0) + 1,
+                      error: message,
                     }
                   : item
               )
@@ -1561,7 +2269,7 @@ export function FileExplorer() {
           }
         }
 
-        if (hasSuccessfulUpload) {
+        if (successCount > 0) {
           await Promise.all([loadFolder(), loadTree()]);
           emitSync();
         }
@@ -1619,7 +2327,7 @@ export function FileExplorer() {
             return (
               <div className="rounded-md border p-2" key={item.id}>
                 <div className="mb-1 flex items-center justify-between gap-2">
-                  <p className="truncate text-xs font-medium">{item.name}</p>
+                  <p className="truncate font-medium text-xs">{item.name}</p>
                   <span>{meta.icon}</span>
                 </div>
                 <Progress value={meta.progress}>
@@ -1634,6 +2342,9 @@ export function FileExplorer() {
                 {item.error ? (
                   <p className="mt-1 text-[11px] text-destructive">
                     {item.error}
+                    {item.failureCount && item.failureCount > 1
+                      ? ` (repeated ${item.failureCount}x)`
+                      : ""}
                   </p>
                 ) : null}
               </div>
@@ -1773,40 +2484,101 @@ export function FileExplorer() {
     [allFolders, emitSync, files, loadFolder, workspaceUuid]
   );
 
-  const deleteFolder = useCallback(
-    async (folderId: string) => {
-      if (!workspaceUuid) {
-        return;
+  const resolveItemKind = useCallback(
+    (itemId: string): BulkItemKind | null => {
+      if (allFolders.some((folder) => folder.id === itemId)) {
+        return "folder";
       }
-      const folder = allFolders.find((entry) => entry.id === folderId);
-      if (folder?.readOnly) {
-        return;
+      if (allFiles.some((file) => file.id === itemId)) {
+        return "file";
       }
-      await fetch(`/api/workspaces/${workspaceUuid}/folders/${folderId}`, {
-        method: "DELETE",
-      });
-      await Promise.all([loadFolder(), loadTree()]);
-      emitSync();
+      return null;
     },
-    [allFolders, emitSync, loadFolder, loadTree, workspaceUuid]
+    [allFiles, allFolders]
   );
 
-  const deleteFile = useCallback(
-    async (fileId: string) => {
-      if (!workspaceUuid) {
-        return;
-      }
-      const file = files.find((entry) => entry.id === fileId);
-      if (file?.readOnly) {
-        return;
-      }
-      await fetch(`/api/workspaces/${workspaceUuid}/files/${fileId}`, {
-        method: "DELETE",
-      });
-      await loadFolder();
-      emitSync();
+  const resolveContextActionItems = useCallback(
+    (itemId: string, fallbackKind: BulkItemKind) => {
+      const actionIds = selection.selectedIds.has(itemId)
+        ? Array.from(selection.selectedIds)
+        : [itemId];
+
+      return actionIds
+        .map((id) => ({
+          id,
+          kind: resolveItemKind(id) ?? (id === itemId ? fallbackKind : null),
+        }))
+        .filter(
+          (
+            item
+          ): item is {
+            id: string;
+            kind: BulkItemKind;
+          } => Boolean(item.kind)
+        );
     },
-    [emitSync, files, loadFolder, workspaceUuid]
+    [resolveItemKind, selection.selectedIds]
+  );
+
+  const runBulkMutation = useCallback(
+    async (payload: {
+      items: Array<{ id: string; kind: BulkItemKind }>;
+      operation: "delete" | "move";
+      targetFolderId?: string;
+    }) => {
+      if (!(workspaceUuid && payload.items.length > 0)) {
+        return null;
+      }
+
+      const response = await fetch(
+        `/api/workspaces/${workspaceUuid}/items/bulk`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Bulk operation failed");
+      }
+
+      return (await response.json()) as BulkMutationResponse;
+    },
+    [workspaceUuid]
+  );
+
+  const deleteSelectionItems = useCallback(
+    async (items: Array<{ id: string; kind: BulkItemKind }>) => {
+      const writableItems = items.filter((item) => {
+        if (item.kind === "folder") {
+          const folder = allFolders.find((entry) => entry.id === item.id);
+          return !folder?.readOnly;
+        }
+        const file = allFiles.find((entry) => entry.id === item.id);
+        return !file?.readOnly;
+      });
+
+      if (writableItems.length === 0) {
+        return;
+      }
+
+      const result = await runBulkMutation({
+        operation: "delete",
+        items: writableItems,
+      });
+
+      if (result?.summary?.failed) {
+        const failedCount = result.summary.failed;
+        const total = result.summary.total ?? writableItems.length;
+        window.alert(`Deleted ${total - failedCount} of ${total} item(s).`);
+      }
+
+      await Promise.all([loadFolder(), loadTree()]);
+      emitSync();
+      selection.clearSelection();
+    },
+    [allFiles, allFolders, emitSync, loadFolder, loadTree, runBulkMutation, selection]
   );
 
   const moveItemsToFolder = useCallback(
@@ -1822,31 +2594,60 @@ export function FileExplorer() {
         return;
       }
 
-      const folderIds = new Set(folders.map((folder) => folder.id));
-      const fileIds = new Set(files.map((file) => file.id));
+      const items = itemIds
+        .filter((itemId) => itemId !== targetFolderId)
+        .map((itemId) => {
+          const kind = resolveItemKind(itemId);
+          if (!kind) {
+            return null;
+          }
 
-      await Promise.all(
-        itemIds.map(async (itemId) => {
-          if (folderIds.has(itemId) && itemId !== targetFolderId) {
-            const folder = folders.find((entry) => entry.id === itemId);
+          if (kind === "folder") {
+            const folder = allFolders.find((entry) => entry.id === itemId);
             if (folder?.readOnly) {
-              return;
+              return null;
             }
-            await moveFolder(itemId, targetFolderId);
-            return;
-          }
-          if (fileIds.has(itemId)) {
-            const file = files.find((entry) => entry.id === itemId);
+          } else {
+            const file = allFiles.find((entry) => entry.id === itemId);
             if (file?.readOnly) {
-              return;
+              return null;
             }
-            await moveFile(itemId, targetFolderId);
           }
+
+          return { id: itemId, kind };
         })
-      );
+        .filter(
+          (
+            item
+          ): item is {
+            id: string;
+            kind: BulkItemKind;
+          } => Boolean(item)
+        );
+
+      if (items.length === 0) {
+        return;
+      }
+
+      await runBulkMutation({
+        operation: "move",
+        targetFolderId,
+        items,
+      });
+      await Promise.all([loadFolder(), loadTree()]);
+      emitSync();
       selection.clearSelection();
     },
-    [allFolders, files, folders, moveFile, moveFolder, selection]
+    [
+      allFiles,
+      allFolders,
+      emitSync,
+      loadFolder,
+      loadTree,
+      resolveItemKind,
+      runBulkMutation,
+      selection,
+    ]
   );
 
   const updateTouchDropTarget = useCallback(
@@ -1982,9 +2783,7 @@ export function FileExplorer() {
 
   const shareActiveFileWithEmail = async () => {
     if (
-      !activeFile ||
-      !workspaceUuid ||
-      !shareEmail.trim() ||
+      !(activeFile && workspaceUuid && shareEmail.trim()) ||
       activeFile.readOnly
     ) {
       return;
@@ -2013,7 +2812,7 @@ export function FileExplorer() {
   };
 
   const generateActiveFileShareLink = async () => {
-    if (!activeFile || !workspaceUuid || activeFile.readOnly) {
+    if (!(activeFile && workspaceUuid) || activeFile.readOnly) {
       return;
     }
     setShareBusy(true);
@@ -2038,7 +2837,7 @@ export function FileExplorer() {
   };
 
   const shareWorkspaceWithEmail = async () => {
-    if (!workspaceUuid || !workspaceShareEmail.trim()) {
+    if (!(workspaceUuid && workspaceShareEmail.trim())) {
       return;
     }
     setWorkspaceShareBusy(true);
@@ -2105,7 +2904,7 @@ export function FileExplorer() {
 
     return (
       <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <div className="flex h-12 items-center justify-between gap-2 border-b border-border/70 bg-card/40 px-3">
+        <div className="flex h-12 items-center justify-between gap-2 border-border/70 border-b bg-card/40 px-3">
           <div className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs">
             <Button
               className="size-5"
@@ -2123,7 +2922,7 @@ export function FileExplorer() {
               Edited{" "}
               {toUpdatedLabel(activeFile.updatedAt ?? activeFile.createdAt)} ago
             </span>
-            {!activeFile.readOnly ? (
+            {activeFile.readOnly ? null : (
               <Dialog>
                 <DialogTrigger
                   render={
@@ -2233,7 +3032,7 @@ export function FileExplorer() {
                   ) : null}
                 </DialogContent>
               </Dialog>
-            ) : null}
+            )}
             <Button
               className="size-5"
               onClick={() =>
@@ -2257,19 +3056,32 @@ export function FileExplorer() {
             <div className="h-full p-3">
               <PDFViewer
                 className="h-[calc(100svh-7.5rem)] max-h-none rounded-xl border border-border/70"
+                fallbackHighlightText={query}
+                highlightPage={activeRetrievalResult?.page ?? null}
+                highlightText={
+                  activeRetrievalResult?.highlightText ??
+                  activeRetrievalResult?.snippet ??
+                  query
+                }
                 source={activeFile.storageUrl}
               />
             </div>
           ) : isVideo && !videoLoadFailed ? (
             <div className="mx-auto flex h-full max-w-[1200px] items-center justify-center p-4">
               <FileMediaPlayer
+                activeRangeIndex={
+                  activeFileRetrievalResults.findIndex(
+                    (item) => item.chunkId === activeRetrievalChunkId
+                  ) >= 0
+                    ? activeFileRetrievalResults.findIndex(
+                        (item) => item.chunkId === activeRetrievalChunkId
+                      )
+                    : null
+                }
+                captionsSrc={activeVideoCaptionsSrc}
                 kind="video"
                 mimeType={activeFile.mimeType}
                 name={activeFile.name}
-                openedCached={
-                  isOpenedCached ||
-                  getWarmState(activeFile.storageUrl) === "warm"
-                }
                 onError={() => {
                   if (!mediaStreamFailed && activeMediaStreamUrl) {
                     setMediaStreamFailed(true);
@@ -2277,6 +3089,21 @@ export function FileExplorer() {
                   }
                   setVideoLoadFailed(true);
                 }}
+                openedCached={
+                  isOpenedCached ||
+                  getWarmState(activeFile.storageUrl) === "warm"
+                }
+                retrievalRanges={activeFileRetrievalResults
+                  .filter(
+                    (item) =>
+                      typeof item.startMs === "number" &&
+                      Number.isFinite(item.startMs)
+                  )
+                  .map((item) => ({
+                    startMs: item.startMs as number,
+                    endMs: item.endMs,
+                  }))}
+                seekToMs={activeRetrievalResult?.startMs ?? null}
                 src={activeMediaSrc ?? activeFile.storageUrl}
               />
             </div>
@@ -2286,10 +3113,6 @@ export function FileExplorer() {
                 kind="audio"
                 mimeType={activeFile.mimeType}
                 name={activeFile.name}
-                openedCached={
-                  isOpenedCached ||
-                  getWarmState(activeFile.storageUrl) === "warm"
-                }
                 onError={() => {
                   if (!mediaStreamFailed && activeMediaStreamUrl) {
                     setMediaStreamFailed(true);
@@ -2297,6 +3120,10 @@ export function FileExplorer() {
                   }
                   setAudioLoadFailed(true);
                 }}
+                openedCached={
+                  isOpenedCached ||
+                  getWarmState(activeFile.storageUrl) === "warm"
+                }
                 src={activeMediaSrc ?? activeFile.storageUrl}
               />
             </div>
@@ -2340,7 +3167,7 @@ export function FileExplorer() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/70 px-3">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-border/70 border-b px-3">
         <SidebarTrigger className="h-8 w-8 rounded-md" />
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -2396,18 +3223,34 @@ export function FileExplorer() {
         </div>
       </div>
 
-      <div className="border-b border-border/70 px-3 py-3">
+      <div className="border-border/70 border-b px-3 py-3">
         <StylizedSearchBar
+          filePathById={filePathById}
           focusSignal={focusSearchSignal}
+          initialQuery={query}
+          initialResults={retrievalResults}
           items={searchableItems}
           maxWidth="max-w-none"
+          onOpenFileById={openFileById}
           onApplyWorkspaceFilter={(itemIds) => {
-            setVectorFilteredIds(itemIds ? new Set(itemIds) : null);
+            setVectorFilteredIds(
+              itemIds && itemIds.length > 0 ? new Set(itemIds) : null
+            );
           }}
-          onSearch={(searchQuery) => {
+          onSearch={(searchQuery, results) => {
             setQuery(searchQuery);
+            setRetrievalResults(results);
+            if (results.length === 0) {
+              setActiveRetrievalChunkId(null);
+            }
+          }}
+          onSelectResult={(result) => {
+            setActiveRetrievalChunkId(result.chunkId ?? null);
+            openSearchResult(result);
           }}
           placeholder="Search anything..."
+          selectedResultChunkId={activeRetrievalChunkId}
+          workspaceUuid={workspaceUuid}
         />
       </div>
 
@@ -2424,6 +3267,7 @@ export function FileExplorer() {
       />
       <input
         className="sr-only"
+        {...({ directory: "", webkitdirectory: "" } as Record<string, string>)}
         multiple
         onChange={(event) => {
           const incoming = Array.from(event.target.files ?? []).map((file) => {
@@ -2601,9 +3445,9 @@ export function FileExplorer() {
             <PopoverContent align="start" className="w-auto p-0">
               <Calendar
                 mode="range"
+                numberOfMonths={2}
                 onSelect={setCreatedDateRange}
                 selected={createdDateRange}
-                numberOfMonths={2}
               />
               <div className="border-t p-2">
                 <Button
@@ -2881,8 +3725,8 @@ export function FileExplorer() {
                                   dropTargetId === folder.id &&
                                     "bg-emerald-500/10 ring-2 ring-emerald-400/70"
                                 )}
-                                data-select-item="true"
                                 data-drop-folder-id={folder.id}
+                                data-select-item="true"
                                 draggable={!folder.readOnly}
                                 onClick={(event) => {
                                   selection.handleItemClick(
@@ -2936,8 +3780,9 @@ export function FileExplorer() {
                                     sourceIds.join(",")
                                   );
                                 }}
-                                onDrop={async (event) => {
+                                onDrop={(event) => {
                                   event.preventDefault();
+                                  event.stopPropagation();
                                   if (folder.readOnly) {
                                     canvasDragDepthRef.current = 0;
                                     setCanvasDropActive(false);
@@ -2949,54 +3794,10 @@ export function FileExplorer() {
                                     draggingIds.length > 0
                                       ? draggingIds
                                       : Array.from(selection.selectedIds);
-                                  if (sourceIds.length === 0) {
-                                    const uploadCandidates =
-                                      await getDropUploadCandidates(event);
-                                    if (uploadCandidates.length > 0) {
-                                      queueUploads(uploadCandidates);
-                                    }
-                                    canvasDragDepthRef.current = 0;
-                                    setCanvasDropActive(false);
-                                    setDropTargetId(null);
-                                    setDraggingIds([]);
-                                    return;
-                                  }
-                                  const folderById = new Map(
-                                    allFolders.map((entry) => [entry.id, entry])
-                                  );
-                                  const hasInvalidMove = sourceIds.some(
-                                    (id) => {
-                                      if (id === folder.id) {
-                                        return true;
-                                      }
-                                      const sourceFolder = folderById.get(id);
-                                      if (!sourceFolder) {
-                                        return false;
-                                      }
-                                      let cursor = folderById.get(folder.id);
-                                      while (cursor?.parentId) {
-                                        if (
-                                          cursor.parentId === sourceFolder.id
-                                        ) {
-                                          return true;
-                                        }
-                                        cursor = folderById.get(
-                                          cursor.parentId
-                                        );
-                                      }
-                                      return false;
-                                    }
-                                  );
                                   canvasDragDepthRef.current = 0;
                                   setCanvasDropActive(false);
                                   setDropTargetId(null);
-                                  if (!hasInvalidMove) {
-                                    event.stopPropagation();
-                                    void moveItemsToFolder(
-                                      sourceIds,
-                                      folder.id
-                                    );
-                                  }
+                                  void moveItemsToFolder(sourceIds, folder.id);
                                   setDraggingIds([]);
                                 }}
                                 onTouchEnd={endTouchDrag}
@@ -3018,7 +3819,6 @@ export function FileExplorer() {
                               >
                                 <div className="absolute top-2 left-2 z-[90]">
                                   <Checkbox
-                                    aria-label={`Select folder ${folder.name}`}
                                     checked={selection.selectedIds.has(
                                       folder.id
                                     )}
@@ -3087,7 +3887,7 @@ export function FileExplorer() {
                               >
                                 Open
                               </ContextMenuItem>
-                              {!folder.readOnly ? (
+                              {folder.readOnly ? null : (
                                 <>
                                   <ContextMenuItem
                                     onClick={() =>
@@ -3131,7 +3931,7 @@ export function FileExplorer() {
                                     </ContextMenuSubContent>
                                   </ContextMenuSub>
                                 </>
-                              ) : null}
+                              )}
                               <ContextMenuItem
                                 onClick={() => {
                                   setPropertiesItem({
@@ -3145,16 +3945,20 @@ export function FileExplorer() {
                               >
                                 Properties
                               </ContextMenuItem>
-                              {!folder.readOnly ? (
+                              {folder.readOnly ? null : (
                                 <ContextMenuItem
                                   onClick={() => {
-                                    void deleteFolder(folder.id);
+                                    const items = resolveContextActionItems(
+                                      folder.id,
+                                      "folder"
+                                    );
+                                    void deleteSelectionItems(items);
                                   }}
                                   variant="destructive"
                                 >
                                   Delete
                                 </ContextMenuItem>
-                              ) : null}
+                              )}
                             </ContextMenuContent>
                           </ContextMenu>
                         );
@@ -3180,15 +3984,7 @@ export function FileExplorer() {
                                 )}
                                 data-select-item="true"
                                 draggable={!file.readOnly}
-                                tabIndex={0}
-                                onTouchEnd={endTouchDrag}
-                                onTouchMove={moveTouchDrag}
-                                onTouchStart={() => {
-                                  if (file.readOnly) {
-                                    return;
-                                  }
-                                  beginTouchDrag(file.id);
-                                }}
+                                onBlur={() => handlePreviewIntentEnd(file)}
                                 onClick={(event) => {
                                   selection.handleItemClick(
                                     event,
@@ -3199,14 +3995,6 @@ export function FileExplorer() {
                                     selectFile(file.id)
                                   );
                                 }}
-                                onFocus={() => handlePreviewIntentStart(file)}
-                                onBlur={() => handlePreviewIntentEnd(file)}
-                                onMouseEnter={() =>
-                                  handlePreviewIntentStart(file)
-                                }
-                                onMouseLeave={() =>
-                                  handlePreviewIntentEnd(file)
-                                }
                                 onDragEnd={() => {
                                   canvasDragDepthRef.current = 0;
                                   setCanvasDropActive(false);
@@ -3229,6 +4017,21 @@ export function FileExplorer() {
                                     sourceIds.join(",")
                                   );
                                 }}
+                                onFocus={() => handlePreviewIntentStart(file)}
+                                onMouseEnter={() =>
+                                  handlePreviewIntentStart(file)
+                                }
+                                onMouseLeave={() =>
+                                  handlePreviewIntentEnd(file)
+                                }
+                                onTouchEnd={endTouchDrag}
+                                onTouchMove={moveTouchDrag}
+                                onTouchStart={() => {
+                                  if (file.readOnly) {
+                                    return;
+                                  }
+                                  beginTouchDrag(file.id);
+                                }}
                                 ref={(node: HTMLDivElement | null) => {
                                   if (!node) {
                                     itemRefs.current.delete(file.id);
@@ -3237,6 +4040,7 @@ export function FileExplorer() {
                                   itemRefs.current.set(file.id, node);
                                 }}
                                 style={{ width: 160 }}
+                                tabIndex={0}
                               >
                                 <div className="absolute top-2 left-2 z-10">
                                   <Checkbox
@@ -3247,6 +4051,18 @@ export function FileExplorer() {
                                     }
                                     onClick={(event) => event.stopPropagation()}
                                   />
+                                </div>
+                                <div className="absolute top-2 right-2 z-10">
+                                  <span
+                                    className={cn(
+                                      "rounded-full px-1.5 py-0.5 font-medium text-[10px]",
+                                      file.isIngested
+                                        ? "bg-emerald-500/15 text-emerald-700"
+                                        : "bg-muted text-muted-foreground"
+                                    )}
+                                  >
+                                    {file.isIngested ? "Ingested" : "Pending"}
+                                  </span>
                                 </div>
                                 <CardContent className="pt-0">
                                   <FileCard
@@ -3292,7 +4108,7 @@ export function FileExplorer() {
                               >
                                 Open
                               </ContextMenuItem>
-                              {!file.readOnly ? (
+                              {file.readOnly ? null : (
                                 <>
                                   <ContextMenuItem
                                     onClick={() => openRenameFileDialog(file)}
@@ -3320,7 +4136,7 @@ export function FileExplorer() {
                                     </ContextMenuSubContent>
                                   </ContextMenuSub>
                                 </>
-                              ) : null}
+                              )}
                               <ContextMenuItem
                                 onClick={() => {
                                   setPropertiesItem({
@@ -3334,16 +4150,20 @@ export function FileExplorer() {
                               >
                                 Properties
                               </ContextMenuItem>
-                              {!file.readOnly ? (
+                              {file.readOnly ? null : (
                                 <ContextMenuItem
                                   onClick={() => {
-                                    void deleteFile(file.id);
+                                    const items = resolveContextActionItems(
+                                      file.id,
+                                      "file"
+                                    );
+                                    void deleteSelectionItems(items);
                                   }}
                                   variant="destructive"
                                 >
                                   Delete
                                 </ContextMenuItem>
-                              ) : null}
+                              )}
                             </ContextMenuContent>
                           </ContextMenu>
                         );
@@ -3352,403 +4172,227 @@ export function FileExplorer() {
                     {viewMode === "list" ? (
                       <div className="divide-y divide-border/70 rounded-md border border-border/70">
                         {sortedFolders.map((folder) => (
-                          <ContextMenu key={folder.id}>
-                            <ContextMenuTrigger>
-                              <div
-                                className={cn(
-                                  "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
-                                  selection.selectedIds.has(folder.id) &&
-                                    "bg-emerald-500/10",
-                                  dropTargetId === folder.id &&
-                                    "bg-emerald-500/15 outline outline-2 outline-emerald-400/70"
-                                )}
-                                data-drop-folder-id={folder.id}
-                                data-select-item="true"
-                                draggable={!folder.readOnly}
-                                onClick={(event) => {
-                                  selection.handleItemClick(
-                                    event,
-                                    folder.id,
-                                    visibleItemIds
-                                  );
-                                  handleOpenOnDoubleClick(event, () =>
-                                    navigateToFolder(folder.id)
-                                  );
-                                }}
-                                onDragEnd={() => {
-                                  canvasDragDepthRef.current = 0;
-                                  setCanvasDropActive(false);
-                                  setDraggingIds([]);
-                                  setDropTargetId(null);
-                                }}
-                                onDragEnter={(event) => {
-                                  if (folder.readOnly) {
-                                    return;
-                                  }
-                                  event.preventDefault();
-                                  setDropTargetId(folder.id);
-                                }}
-                                onDragLeave={() => {
-                                  setDropTargetId((current) =>
-                                    current === folder.id ? null : current
-                                  );
-                                }}
-                                onDragOver={(event) => {
-                                  if (folder.readOnly) {
-                                    return;
-                                  }
-                                  event.preventDefault();
-                                  event.dataTransfer.dropEffect = "move";
-                                  setDropTargetId(folder.id);
-                                }}
-                                onDragStart={(event) => {
-                                  if (folder.readOnly) {
-                                    event.preventDefault();
-                                    return;
-                                  }
-                                  const sourceIds = selection.prepareDrag(
-                                    folder.id
-                                  );
-                                  setDraggingIds(sourceIds);
-                                  event.dataTransfer.effectAllowed = "move";
-                                  configureDragPreview(event);
-                                  event.dataTransfer.setData(
-                                    "text/plain",
-                                    sourceIds.join(",")
-                                  );
-                                }}
-                                onDrop={async (event) => {
-                                  event.preventDefault();
-                                  if (folder.readOnly) {
-                                    canvasDragDepthRef.current = 0;
-                                    setCanvasDropActive(false);
-                                    setDropTargetId(null);
-                                    setDraggingIds([]);
-                                    return;
-                                  }
-                                  const sourceIds =
-                                    draggingIds.length > 0
-                                      ? draggingIds
-                                      : Array.from(selection.selectedIds);
-                                  if (sourceIds.length === 0) {
-                                    const uploadCandidates =
-                                      await getDropUploadCandidates(event);
-                                    if (uploadCandidates.length > 0) {
-                                      queueUploads(uploadCandidates);
-                                    }
-                                    canvasDragDepthRef.current = 0;
-                                    setCanvasDropActive(false);
-                                    setDropTargetId(null);
-                                    setDraggingIds([]);
-                                    return;
-                                  }
-                                  const folderById = new Map(
-                                    allFolders.map((entry) => [entry.id, entry])
-                                  );
-                                  const hasInvalidMove = sourceIds.some(
-                                    (id) => {
-                                      if (id === folder.id) {
-                                        return true;
-                                      }
-                                      const sourceFolder = folderById.get(id);
-                                      if (!sourceFolder) {
-                                        return false;
-                                      }
-                                      let cursor = folderById.get(folder.id);
-                                      while (cursor?.parentId) {
-                                        if (
-                                          cursor.parentId === sourceFolder.id
-                                        ) {
-                                          return true;
-                                        }
-                                        cursor = folderById.get(
-                                          cursor.parentId
-                                        );
-                                      }
-                                      return false;
-                                    }
-                                  );
-                                  canvasDragDepthRef.current = 0;
-                                  setCanvasDropActive(false);
-                                  setDropTargetId(null);
-                                  if (!hasInvalidMove) {
-                                    event.stopPropagation();
-                                    void moveItemsToFolder(
-                                      sourceIds,
-                                      folder.id
-                                    );
-                                  }
-                                  setDraggingIds([]);
-                                }}
-                                onTouchEnd={endTouchDrag}
-                                onTouchMove={moveTouchDrag}
-                                onTouchStart={() => {
-                                  if (folder.readOnly) {
-                                    return;
-                                  }
-                                  beginTouchDrag(folder.id);
-                                }}
-                                ref={(node: HTMLDivElement | null) => {
-                                  if (!node) {
-                                    itemRefs.current.delete(folder.id);
-                                    return;
-                                  }
-                                  itemRefs.current.set(folder.id, node);
-                                }}
-                              >
-                                <Checkbox
-                                  aria-label={`Select folder ${folder.name}`}
-                                  checked={selection.selectedIds.has(folder.id)}
-                                  onCheckedChange={() =>
-                                    selection.toggleSelection(folder.id)
-                                  }
-                                  onClick={(event) => event.stopPropagation()}
-                                />
-                                <Folder className="size-4 shrink-0 text-emerald-600" />
-                                <p className="min-w-0 flex-1 truncate font-medium text-sm">
-                                  {folder.name}
-                                </p>
-                                <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
-                                  <span className="min-w-[110px] text-right tabular-nums">
-                                    {folderSubfolderCount.get(folder.id) ?? 0}{" "}
-                                    folders •{" "}
-                                    {folderFileCount.get(folder.id) ?? 0} files
-                                  </span>
-                                  <span className="min-w-[72px] text-right tabular-nums">
-                                    {folder.updatedAt
-                                      ? toUpdatedLabel(folder.updatedAt)
-                                      : "—"}
-                                  </span>
-                                </div>
-                              </div>
-                            </ContextMenuTrigger>
-                            <ContextMenuContent>
-                              <ContextMenuItem
-                                onClick={() => navigateToFolder(folder.id)}
-                              >
-                                Open
-                              </ContextMenuItem>
-                              {!folder.readOnly ? (
-                                <>
-                                  <ContextMenuItem
-                                    onClick={() =>
-                                      openRenameFolderDialog(folder)
-                                    }
-                                  >
-                                    Rename
-                                  </ContextMenuItem>
-                                  <ContextMenuItem
-                                    onClick={() =>
-                                      openCreateFolderDialog(folder.id)
-                                    }
-                                  >
-                                    New folder here
-                                  </ContextMenuItem>
-                                  <ContextMenuSub>
-                                    <ContextMenuSubTrigger>
-                                      Move to
-                                    </ContextMenuSubTrigger>
-                                    <ContextMenuSubContent>
-                                      {allFolders
-                                        .filter(
-                                          (target) =>
-                                            target.id !== folder.id &&
-                                            !target.readOnly
-                                        )
-                                        .slice(0, 20)
-                                        .map((target) => (
-                                          <ContextMenuItem
-                                            key={target.id}
-                                            onClick={() => {
-                                              void moveFolder(
-                                                folder.id,
-                                                target.id
-                                              );
-                                            }}
-                                          >
-                                            {target.name}
-                                          </ContextMenuItem>
-                                        ))}
-                                    </ContextMenuSubContent>
-                                  </ContextMenuSub>
-                                </>
-                              ) : null}
-                              <ContextMenuItem
-                                onClick={() => {
-                                  setPropertiesItem({
-                                    kind: "folder",
-                                    id: folder.id,
-                                    name: folder.name,
-                                    detail: "Folder",
-                                  });
-                                  setPropertiesOpen(true);
-                                }}
-                              >
-                                Properties
-                              </ContextMenuItem>
-                              {!folder.readOnly ? (
-                                <ContextMenuItem
-                                  onClick={() => {
-                                    void deleteFolder(folder.id);
-                                  }}
-                                  variant="destructive"
-                                >
-                                  Delete
-                                </ContextMenuItem>
-                              ) : null}
-                            </ContextMenuContent>
-                          </ContextMenu>
+                          <div
+                            className={cn(
+                              "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
+                              selection.selectedIds.has(folder.id) &&
+                                "bg-emerald-500/10",
+                              dropTargetId === folder.id &&
+                                "bg-emerald-500/15 outline outline-2 outline-emerald-400/70"
+                            )}
+                            data-drop-folder-id={folder.id}
+                            data-select-item="true"
+                            draggable={!folder.readOnly}
+                            key={folder.id}
+                            onClick={(event) => {
+                              selection.handleItemClick(
+                                event,
+                                folder.id,
+                                visibleItemIds
+                              );
+                              handleOpenOnDoubleClick(event, () =>
+                                navigateToFolder(folder.id)
+                              );
+                            }}
+                            onDragEnd={() => {
+                              canvasDragDepthRef.current = 0;
+                              setCanvasDropActive(false);
+                              setDraggingIds([]);
+                              setDropTargetId(null);
+                            }}
+                            onDragEnter={(event) => {
+                              if (folder.readOnly) {
+                                return;
+                              }
+                              event.preventDefault();
+                              setDropTargetId(folder.id);
+                            }}
+                            onDragLeave={() => {
+                              setDropTargetId((current) =>
+                                current === folder.id ? null : current
+                              );
+                            }}
+                            onDragOver={(event) => {
+                              if (folder.readOnly) {
+                                return;
+                              }
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "move";
+                              setDropTargetId(folder.id);
+                            }}
+                            onDragStart={(event) => {
+                              if (folder.readOnly) {
+                                event.preventDefault();
+                                return;
+                              }
+                              const sourceIds = selection.prepareDrag(
+                                folder.id
+                              );
+                              setDraggingIds(sourceIds);
+                              event.dataTransfer.effectAllowed = "move";
+                              configureDragPreview(event);
+                              event.dataTransfer.setData(
+                                "text/plain",
+                                sourceIds.join(",")
+                              );
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              if (folder.readOnly) {
+                                canvasDragDepthRef.current = 0;
+                                setCanvasDropActive(false);
+                                setDropTargetId(null);
+                                setDraggingIds([]);
+                                return;
+                              }
+                              const sourceIds =
+                                draggingIds.length > 0
+                                  ? draggingIds
+                                  : Array.from(selection.selectedIds);
+                              canvasDragDepthRef.current = 0;
+                              setCanvasDropActive(false);
+                              setDropTargetId(null);
+                              void moveItemsToFolder(sourceIds, folder.id);
+                              setDraggingIds([]);
+                            }}
+                            onTouchEnd={endTouchDrag}
+                            onTouchMove={moveTouchDrag}
+                            onTouchStart={() => {
+                              if (folder.readOnly) {
+                                return;
+                              }
+                              beginTouchDrag(folder.id);
+                            }}
+                            ref={(node: HTMLDivElement | null) => {
+                              if (!node) {
+                                itemRefs.current.delete(folder.id);
+                                return;
+                              }
+                              itemRefs.current.set(folder.id, node);
+                            }}
+                          >
+                            <Checkbox
+                              checked={selection.selectedIds.has(folder.id)}
+                              onCheckedChange={() =>
+                                selection.toggleSelection(folder.id)
+                              }
+                              onClick={(event) => event.stopPropagation()}
+                            />
+                            <Folder className="size-4 shrink-0 text-emerald-600" />
+                            <p className="min-w-0 flex-1 truncate font-medium text-sm">
+                              {folder.name}
+                            </p>
+                            <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
+                              <span className="min-w-[110px] text-right tabular-nums">
+                                {folderSubfolderCount.get(folder.id) ?? 0}{" "}
+                                folders • {folderFileCount.get(folder.id) ?? 0}{" "}
+                                files
+                              </span>
+                              <span className="min-w-[72px] text-right tabular-nums">
+                                {folder.updatedAt
+                                  ? toUpdatedLabel(folder.updatedAt)
+                                  : "—"}
+                              </span>
+                            </div>
+                          </div>
                         ))}
                         {sortedFiles.map((file) => {
                           const fileKind = detectFileKind(file);
                           return (
-                            <ContextMenu key={file.id}>
-                              <ContextMenuTrigger>
-                                <div
+                            <div
+                              className={cn(
+                                "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
+                                selection.selectedIds.has(file.id) &&
+                                  "bg-emerald-500/10"
+                              )}
+                              data-select-item="true"
+                              draggable={!file.readOnly}
+                              key={file.id}
+                              onClick={(event) => {
+                                selection.handleItemClick(
+                                  event,
+                                  file.id,
+                                  visibleItemIds
+                                );
+                                handleOpenOnDoubleClick(event, () =>
+                                  selectFile(file.id)
+                                );
+                              }}
+                              onDragEnd={() => {
+                                canvasDragDepthRef.current = 0;
+                                setCanvasDropActive(false);
+                                setDraggingIds([]);
+                                setDropTargetId(null);
+                              }}
+                              onDragStart={(event) => {
+                                if (file.readOnly) {
+                                  event.preventDefault();
+                                  return;
+                                }
+                                const sourceIds = selection.prepareDrag(
+                                  file.id
+                                );
+                                setDraggingIds(sourceIds);
+                                event.dataTransfer.effectAllowed = "move";
+                                configureDragPreview(event);
+                                event.dataTransfer.setData(
+                                  "text/plain",
+                                  sourceIds.join(",")
+                                );
+                              }}
+                              onTouchEnd={endTouchDrag}
+                              onTouchMove={moveTouchDrag}
+                              onTouchStart={() => {
+                                if (file.readOnly) {
+                                  return;
+                                }
+                                beginTouchDrag(file.id);
+                              }}
+                              ref={(node: HTMLDivElement | null) => {
+                                if (!node) {
+                                  itemRefs.current.delete(file.id);
+                                  return;
+                                }
+                                itemRefs.current.set(file.id, node);
+                              }}
+                            >
+                              <Checkbox
+                                checked={selection.selectedIds.has(file.id)}
+                                onCheckedChange={() =>
+                                  selection.toggleSelection(file.id)
+                                }
+                                onClick={(event) => event.stopPropagation()}
+                              />
+                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted/60">
+                                {getFileTypeIcon(fileKind)}
+                              </div>
+                              <div className="min-w-0 flex flex-1 items-center gap-2">
+                                <p className="min-w-0 flex-1 truncate font-medium text-sm">
+                                  {file.name}
+                                </p>
+                                <span
                                   className={cn(
-                                    "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
-                                    selection.selectedIds.has(file.id) &&
-                                      "bg-emerald-500/10"
+                                    "rounded-full px-1.5 py-0.5 font-medium text-[10px]",
+                                    file.isIngested
+                                      ? "bg-emerald-500/15 text-emerald-700"
+                                      : "bg-muted text-muted-foreground"
                                   )}
-                                  data-select-item="true"
-                                  draggable={!file.readOnly}
-                                  onClick={(event) => {
-                                    selection.handleItemClick(
-                                      event,
-                                      file.id,
-                                      visibleItemIds
-                                    );
-                                    handleOpenOnDoubleClick(event, () =>
-                                      selectFile(file.id)
-                                    );
-                                  }}
-                                  onDragEnd={() => {
-                                    canvasDragDepthRef.current = 0;
-                                    setCanvasDropActive(false);
-                                    setDraggingIds([]);
-                                    setDropTargetId(null);
-                                  }}
-                                  onDragStart={(event) => {
-                                    if (file.readOnly) {
-                                      event.preventDefault();
-                                      return;
-                                    }
-                                    const sourceIds = selection.prepareDrag(
-                                      file.id
-                                    );
-                                    setDraggingIds(sourceIds);
-                                    event.dataTransfer.effectAllowed = "move";
-                                    configureDragPreview(event);
-                                    event.dataTransfer.setData(
-                                      "text/plain",
-                                      sourceIds.join(",")
-                                    );
-                                  }}
-                                  onTouchEnd={endTouchDrag}
-                                  onTouchMove={moveTouchDrag}
-                                  onTouchStart={() => {
-                                    if (file.readOnly) {
-                                      return;
-                                    }
-                                    beginTouchDrag(file.id);
-                                  }}
-                                  ref={(node: HTMLDivElement | null) => {
-                                    if (!node) {
-                                      itemRefs.current.delete(file.id);
-                                      return;
-                                    }
-                                    itemRefs.current.set(file.id, node);
-                                  }}
                                 >
-                                  <Checkbox
-                                    aria-label={`Select file ${file.name}`}
-                                    checked={selection.selectedIds.has(file.id)}
-                                    onCheckedChange={() =>
-                                      selection.toggleSelection(file.id)
-                                    }
-                                    onClick={(event) => event.stopPropagation()}
-                                  />
-                                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted/60">
-                                    {getFileTypeIcon(fileKind)}
-                                  </div>
-                                  <p className="min-w-0 flex-1 truncate font-medium text-sm">
-                                    {file.name}
-                                  </p>
-                                  <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
-                                    <span className="min-w-[110px] text-right tabular-nums">
-                                      {formatBytes(file.sizeBytes)}
-                                    </span>
-                                    <span className="min-w-[72px] text-right tabular-nums">
-                                      {toUpdatedLabel(
-                                        file.updatedAt ?? file.createdAt
-                                      )}
-                                    </span>
-                                  </div>
-                                </div>
-                              </ContextMenuTrigger>
-                              <ContextMenuContent>
-                                <ContextMenuItem
-                                  onClick={() => selectFile(file.id)}
-                                >
-                                  Open
-                                </ContextMenuItem>
-                                {!file.readOnly ? (
-                                  <>
-                                    <ContextMenuItem
-                                      onClick={() => openRenameFileDialog(file)}
-                                    >
-                                      Rename
-                                    </ContextMenuItem>
-                                    <ContextMenuSub>
-                                      <ContextMenuSubTrigger>
-                                        Move to
-                                      </ContextMenuSubTrigger>
-                                      <ContextMenuSubContent>
-                                        {allFolders
-                                          .filter((target) => !target.readOnly)
-                                          .slice(0, 20)
-                                          .map((target) => (
-                                            <ContextMenuItem
-                                              key={target.id}
-                                              onClick={() => {
-                                                void moveFile(
-                                                  file.id,
-                                                  target.id
-                                                );
-                                              }}
-                                            >
-                                              {target.name}
-                                            </ContextMenuItem>
-                                          ))}
-                                      </ContextMenuSubContent>
-                                    </ContextMenuSub>
-                                  </>
-                                ) : null}
-                                <ContextMenuItem
-                                  onClick={() => {
-                                    setPropertiesItem({
-                                      kind: "file",
-                                      id: file.id,
-                                      name: file.name,
-                                      detail: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown"}`,
-                                    });
-                                    setPropertiesOpen(true);
-                                  }}
-                                >
-                                  Properties
-                                </ContextMenuItem>
-                                {!file.readOnly ? (
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      void deleteFile(file.id);
-                                    }}
-                                    variant="destructive"
-                                  >
-                                    Delete
-                                  </ContextMenuItem>
-                                ) : null}
-                              </ContextMenuContent>
-                            </ContextMenu>
+                                  {file.isIngested ? "Ingested" : "Pending"}
+                                </span>
+                              </div>
+                              <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
+                                <span className="min-w-[110px] text-right tabular-nums">
+                                  {formatBytes(file.sizeBytes)}
+                                </span>
+                                <span className="min-w-[72px] text-right tabular-nums">
+                                  {toUpdatedLabel(
+                                    file.updatedAt ?? file.createdAt
+                                  )}
+                                </span>
+                              </div>
+                            </div>
                           );
                         })}
                       </div>

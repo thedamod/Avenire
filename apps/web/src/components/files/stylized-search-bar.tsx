@@ -1,100 +1,232 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 export interface WorkspaceSearchItem {
-  id: string;
-  type: "file" | "folder";
-  title: string;
   description: string;
+  id: string;
   snippet: string;
+  title: string;
+  type: "file" | "folder";
 }
 
 export interface WorkspaceSearchResult {
-  id: string;
-  title: string;
+  chunkId?: string;
   description: string;
-  snippet: string;
-  type: "file" | "folder";
+  endMs?: number | null;
+  fileId?: string | null;
+  highlightText?: string;
+  id: string;
+  page?: number | null;
   score: number;
+  sourceType?:
+    | "file"
+    | "folder"
+    | "pdf"
+    | "video"
+    | "audio"
+    | "image"
+    | "markdown"
+    | "link";
+  startMs?: number | null;
+  snippet: string;
+  title: string;
+  type: "file" | "folder";
+}
+
+function toUniqueFileMatches(results: WorkspaceSearchResult[]): WorkspaceSearchResult[] {
+  const byFile = new Map<string, WorkspaceSearchResult>();
+  for (const result of results) {
+    const key = result.fileId ?? result.id;
+    const existing = byFile.get(key);
+    if (!existing || result.score > existing.score) {
+      byFile.set(key, result);
+    }
+  }
+  return Array.from(byFile.values()).sort(
+    (a, b) => b.score - a.score || a.title.localeCompare(b.title)
+  );
 }
 
 interface StylizedSearchBarProps {
-  items: WorkspaceSearchItem[];
-  onSearch?: (query: string, results: WorkspaceSearchResult[]) => void;
-  onApplyWorkspaceFilter?: (itemIds: string[] | null) => void;
+  filePathById?: Map<string, string>;
   focusSignal?: number;
-  placeholder?: string;
+  initialQuery?: string;
+  initialResults?: WorkspaceSearchResult[];
+  items: WorkspaceSearchItem[];
   maxWidth?: string;
+  onOpenFileById?: (fileId: string) => void;
+  onApplyWorkspaceFilter?: (itemIds: string[] | null) => void;
+  onSelectResult?: (result: WorkspaceSearchResult) => void;
+  onSearch?: (query: string, results: WorkspaceSearchResult[]) => void;
+  placeholder?: string;
+  selectedResultChunkId?: string | null;
+  workspaceUuid: string;
 }
 
-async function runWorkspaceVectorSearchStub(
-  searchQuery: string,
-  items: WorkspaceSearchItem[],
-): Promise<WorkspaceSearchResult[]> {
-  // TODO(vector-search): replace with workspace embedding/vector search API.
-  const query = searchQuery.trim().toLowerCase();
+const sanitizeSnippet = (value: string): string => {
+  const cleaned = value
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
+  if (!cleaned) {
+    return "";
+  }
+
+  return cleaned.length > 420 ? `${cleaned.slice(0, 420)}...` : cleaned;
+};
+
+async function runWorkspaceVectorSearchApi(
+  searchQuery: string,
+  workspaceUuid: string,
+  items: WorkspaceSearchItem[]
+): Promise<WorkspaceSearchResult[]> {
+  const query = searchQuery.trim();
   if (!query) {
     return [];
   }
 
-  const scored = items
-    .map((item) => {
-      const title = item.title.toLowerCase();
-      const description = item.description.toLowerCase();
-      const snippet = item.snippet.toLowerCase();
+  const response = await fetch("/api/ai/retrieval/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      workspaceUuid,
+      query,
+      limit: 8,
+    }),
+  });
 
-      let score = 0;
-      if (title.includes(query)) {
-        score += 5;
-      }
-      if (description.includes(query)) {
-        score += 3;
-      }
-      if (snippet.includes(query)) {
-        score += 2;
-      }
+  if (!response.ok) {
+    return [];
+  }
 
-      return {
-        id: item.id,
-        title: item.title,
-        description: item.description,
-        snippet: item.snippet,
-        type: item.type,
-        score,
-      };
-    })
-    .filter((item) => item.score > 0)
+  const payload = (await response.json()) as {
+    query?: string;
+    results?: Array<{
+      chunkId?: string;
+      fileId?: string | null;
+      content: string;
+      endMs?: number | null;
+      page?: number | null;
+      sourceType?: "pdf" | "image" | "video" | "audio" | "markdown" | "link";
+      startMs?: number | null;
+      title?: string | null;
+      rerankScore?: number;
+      score?: number;
+    }>;
+  };
+
+  const filesById = new Map(
+    items.filter((item) => item.type === "file").map((item) => [item.id, item])
+  );
+
+  const mapped: WorkspaceSearchResult[] = [];
+  for (const result of payload.results ?? []) {
+    const fileId = result.fileId ?? null;
+    if (!fileId) {
+      continue;
+    }
+    const item = filesById.get(fileId);
+    if (!item) {
+      continue;
+    }
+
+    const snippet = sanitizeSnippet(result.content || item.snippet);
+    if (!snippet) {
+      continue;
+    }
+
+    mapped.push({
+      chunkId: result.chunkId,
+      id: item.id,
+      fileId,
+      highlightText: (result.content || "").trim(),
+      page: result.page ?? null,
+      startMs: result.startMs ?? null,
+      endMs: result.endMs ?? null,
+      sourceType: result.sourceType,
+      title: item.title,
+      description: item.description,
+      snippet,
+      type: "file",
+      score: result.rerankScore ?? result.score ?? 0,
+    });
+  }
+
+  return mapped
     .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
     .slice(0, 8);
+}
 
-  return scored;
+async function runRetrievalSummaryApi(
+  workspaceUuid: string,
+  query: string,
+  vectorResults: WorkspaceSearchResult[]
+): Promise<string | null> {
+  const fileIds = Array.from(
+    new Set(vectorResults.map((result) => result.fileId ?? result.id))
+  );
+  if (fileIds.length === 0) {
+    return null;
+  }
+
+  const matches = vectorResults.slice(0, 12).map((result) => ({
+    fileId: result.fileId ?? result.id,
+    sourceType: result.sourceType === "file" || result.sourceType === "folder"
+      ? undefined
+      : result.sourceType,
+    snippet: result.snippet,
+    title: result.title,
+  }));
+
+  const response = await fetch("/api/ai/retrieval/summary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      workspaceUuid,
+      query,
+      fileIds: fileIds.slice(0, 6),
+      matches,
+    }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as { summary?: string };
+  return payload.summary?.trim() || null;
 }
 
 export function StylizedSearchBar({
   items,
+  workspaceUuid,
+  filePathById,
+  initialQuery = "",
+  initialResults = [],
   onSearch,
+  onOpenFileById,
   onApplyWorkspaceFilter,
+  onSelectResult,
+  selectedResultChunkId,
   focusSignal,
   placeholder = "Search anything...",
   maxWidth = "max-w-2xl",
 }: StylizedSearchBarProps) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [isLoading, setIsLoading] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [results, setResults] = useState<WorkspaceSearchResult[]>([]);
+  const [showResults, setShowResults] = useState(
+    initialQuery.trim().length > 0 && initialResults.length > 0
+  );
+  const [matchedFiles, setMatchedFiles] = useState<WorkspaceSearchResult[]>(
+    toUniqueFileMatches(initialResults)
+  );
   const [aiSnippet, setAiSnippet] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const onSearchRef = useRef(onSearch);
-  const onApplyWorkspaceFilterRef = useRef(onApplyWorkspaceFilter);
-
-  useEffect(() => {
-    onSearchRef.current = onSearch;
-    onApplyWorkspaceFilterRef.current = onApplyWorkspaceFilter;
-  }, [onApplyWorkspaceFilter, onSearch]);
+  const latestSearchRequestRef = useRef(0);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -123,46 +255,75 @@ export function StylizedSearchBar({
     if (query.trim().length > 0) {
       return;
     }
+    if (!showResults && !aiSnippet) {
+      return;
+    }
     setShowResults(false);
-    setResults([]);
     setAiSnippet("");
-    onApplyWorkspaceFilterRef.current?.(null);
-    onSearchRef.current?.("", []);
-  }, [query]);
+    setMatchedFiles([]);
+    onApplyWorkspaceFilter?.(null);
+    onSearch?.("", []);
+  }, [aiSnippet, onApplyWorkspaceFilter, onSearch, query, showResults]);
 
   const handleSearch = async (searchQuery: string) => {
     const trimmed = searchQuery.trim();
     if (!trimmed) {
+      latestSearchRequestRef.current += 1;
       setShowResults(false);
-      setResults([]);
       setAiSnippet("");
+      setMatchedFiles([]);
       onApplyWorkspaceFilter?.(null);
+      onSearch?.("", []);
       return;
     }
 
+    const requestId = latestSearchRequestRef.current + 1;
+    latestSearchRequestRef.current = requestId;
     setIsLoading(true);
     setShowResults(false);
 
-    // Keeps current UI behavior while backend search is not wired.
-    await new Promise((resolve) => setTimeout(resolve, 650));
-
-    const vectorResults = await runWorkspaceVectorSearchStub(trimmed, items);
-    const resultIds = vectorResults.map((result) => result.id);
-
-    const summary =
+    const vectorResults = await runWorkspaceVectorSearchApi(
+      trimmed,
+      workspaceUuid,
+      items
+    );
+    const resultIds = Array.from(new Set(vectorResults.map((result) => result.id)));
+    const fallbackSummary =
       vectorResults.length > 0
         ? `Found ${vectorResults.length} relevant workspace item${
             vectorResults.length === 1 ? "" : "s"
-          } for “${trimmed}”. This preview is currently backed by a local vector-search stub and will be switched to real embeddings.`
-        : `No direct matches found for “${trimmed}”. Try broader keywords while vector search wiring is in progress.`;
+          } for “${trimmed}” via workspace ingestion retrieval.`
+        : `No relevant ingested file content found for “${trimmed}”.`;
 
-    setResults(vectorResults);
-    setAiSnippet(summary);
+    if (requestId !== latestSearchRequestRef.current) {
+      return;
+    }
+
+    setAiSnippet(fallbackSummary);
+    setMatchedFiles(toUniqueFileMatches(vectorResults));
     setIsLoading(false);
     setShowResults(true);
 
-    onApplyWorkspaceFilter?.(resultIds);
+    onApplyWorkspaceFilter?.(resultIds.length > 0 ? resultIds : null);
     onSearch?.(trimmed, vectorResults);
+
+    if (vectorResults.length === 0) {
+      return;
+    }
+
+    void runRetrievalSummaryApi(workspaceUuid, trimmed, vectorResults)
+      .then((modelSummary) => {
+        if (
+          requestId !== latestSearchRequestRef.current ||
+          !modelSummary
+        ) {
+          return;
+        }
+        setAiSnippet(modelSummary);
+      })
+      .catch(() => {
+        // Keep fallback summary if model synthesis fails.
+      });
   };
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -171,23 +332,23 @@ export function StylizedSearchBar({
   };
 
   const handleClear = () => {
+    latestSearchRequestRef.current += 1;
     setQuery("");
     setShowResults(false);
-    setResults([]);
     setAiSnippet("");
+    setMatchedFiles([]);
     onApplyWorkspaceFilter?.(null);
     onSearch?.("", []);
   };
 
   return (
     <div className="flex w-full items-center justify-center px-4 py-8">
-      <div ref={containerRef} className={`w-full ${maxWidth}`}>
+      <div className={`w-full ${maxWidth}`} ref={containerRef}>
         <form onSubmit={handleSubmit}>
           <div
-            className={`
-              relative overflow-hidden rounded-3xl
-              transition-all duration-300 ease-out
-            `}
+            className={
+              "relative overflow-hidden rounded-3xl transition-all duration-300 ease-out"
+            }
           >
             {isLoading && (
               <div
@@ -201,41 +362,32 @@ export function StylizedSearchBar({
             )}
 
             <div
-              className={`
-                relative rounded-3xl border border-border bg-background
-                transition-all duration-300 ease-out
-              `}
+              className={
+                "relative rounded-3xl border border-border bg-background transition-all duration-300 ease-out"
+              }
             >
               <div className="flex items-center gap-3 px-5 py-4">
                 <Search
-                  size={16}
-                  className={`
-                    flex-shrink-0 transition-colors duration-300
-                    ${isLoading ? "text-muted-foreground" : "text-foreground"}
+                  className={`flex-shrink-0 transition-colors duration-300 ${isLoading ? "text-muted-foreground" : "text-foreground"}
                   `}
+                  size={16}
                 />
 
                 <input
-                  className={`
-                    flex-1 bg-transparent text-sm text-foreground outline-none
-                    placeholder:text-muted-foreground
-                    disabled:cursor-not-allowed disabled:opacity-50
-                    transition-opacity duration-300
-                  `}
+                  className={
+                    "flex-1 bg-transparent text-foreground text-sm outline-none transition-opacity duration-300 placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  }
                   disabled={isLoading}
-                  ref={inputRef}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder={placeholder}
+                  ref={inputRef}
                   type="text"
                   value={query}
                 />
 
                 {query && !isLoading && (
                   <button
-                    className="
-                      flex-shrink-0 rounded-lg p-1 text-muted-foreground
-                      transition-colors duration-200 hover:bg-muted hover:text-foreground
-                    "
+                    className="flex-shrink-0 rounded-lg p-1 text-muted-foreground transition-colors duration-200 hover:bg-muted hover:text-foreground"
                     onClick={handleClear}
                     type="button"
                   >
@@ -256,52 +408,77 @@ export function StylizedSearchBar({
         </form>
 
         <div
-          className={`
-            overflow-hidden transition-all duration-500 ease-out
-            ${showResults ? "mt-4 max-h-96 opacity-100" : "max-h-0 opacity-0"}
+          className={`overflow-hidden transition-all duration-500 ease-out ${showResults ? "mt-4 max-h-96 opacity-100" : "max-h-0 opacity-0"}
           `}
         >
-          <div className="animate-in slide-in-from-top-2 fade-in space-y-3 duration-500">
+          <div className="slide-in-from-top-2 fade-in animate-in max-h-[28rem] space-y-3 overflow-y-auto pr-1 duration-500 [scrollbar-color:color-mix(in_oklab,var(--color-border),transparent_30%)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2">
             <div
-              className={`
-                rounded-2xl border border-border bg-card p-4
-                backdrop-blur-sm transition-all duration-500 ease-out motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2
-              `}
+              className={
+                "rounded-2xl border border-border bg-card p-4 backdrop-blur-sm transition-all duration-500 ease-out"
+              }
+              style={{
+                animation: showResults
+                  ? "slideInAndFade 0.5s ease-out 0.1s both"
+                  : "none",
+              }}
             >
               <div className="flex items-start gap-3">
                 <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                  <span className="text-sm font-semibold text-primary">✨</span>
+                  <span className="font-semibold text-primary text-sm">✨</span>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <h3 className="mb-1 text-sm font-semibold text-foreground">
+                  <h3 className="mb-1 font-semibold text-foreground text-sm">
                     AI Insight
                   </h3>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
+                  <div className="text-muted-foreground text-sm leading-relaxed">
                     {aiSnippet}
-                  </p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {results.length > 0 && (
-              <div className="space-y-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2">
-                {results.map((result, index) => (
-                  <div
-                    className="
-                      rounded-2xl border border-border bg-card p-3
-                      transition-colors duration-200 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2
-                    "
-                    key={result.id}
-                    style={{ animationDelay: `${index * 60}ms` }}
-                  >
-                    <h4 className="text-sm font-medium text-foreground transition-colors duration-200">
-                      {result.title}
-                    </h4>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {result.snippet}
-                    </p>
+            {matchedFiles.length > 0 && (
+              <div
+                className="space-y-2"
+                style={{
+                  animation: showResults
+                    ? "slideInAndFade 0.5s ease-out 0.2s both"
+                    : "none",
+                }}
+              >
+                <div className="rounded-2xl border border-border bg-card p-3">
+                  <p className="mb-2 font-medium text-foreground text-xs uppercase tracking-wide">
+                    Matched files
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {matchedFiles.slice(0, 8).map((result) => {
+                      const fileId = result.fileId ?? result.id;
+                      const isActive = Boolean(
+                        selectedResultChunkId &&
+                          result.chunkId &&
+                          selectedResultChunkId === result.chunkId
+                      );
+                      return (
+                        <button
+                          className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+                            isActive
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border bg-background hover:border-foreground/20"
+                          }`}
+                          key={`${fileId}-${result.chunkId ?? "file"}`}
+                          onClick={() => {
+                            onSelectResult?.(result);
+                            onOpenFileById?.(fileId);
+                          }}
+                          title={filePathById?.get(fileId) ?? result.title}
+                          type="button"
+                        >
+                          {result.title}
+                        </button>
+                      );
+                    })}
                   </div>
-                ))}
+                </div>
               </div>
             )}
           </div>

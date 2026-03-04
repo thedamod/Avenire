@@ -76,9 +76,9 @@ const getPreferredSourceTypes = (intent: {
 const tokenize = (value: string): string[] =>
   value
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .split(/\s+/u)
-    .filter((token) => token.length > 2);
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(token => token.length > 2);
 
 const lexicalOverlapScore = (query: string, content: string): number => {
   const queryTokens = tokenize(query);
@@ -114,7 +114,7 @@ const isLikelyNoisyText = (content: string): boolean => {
     return true;
   }
 
-  const printable = normalized.replace(/\p{C}/gu, "");
+  const printable = normalized.replace(/[^\x20-\x7E]/g, "");
   const printableRatio = printable.length / normalized.length;
   return printableRatio < 0.8;
 };
@@ -295,10 +295,9 @@ export const retrieveRelevantChunks = async (
         ]
       : sortedCandidates;
 
-  const rerankCandidateCount = Math.min(
-    config.retrievalRerankCandidateLimit,
+  const rerankCandidateCount = Math.max(
     limit * 2,
-    candidateLimit,
+    Math.min(config.retrievalRerankCandidateLimit, candidateLimit),
   );
   const rerankCandidates = sortedByModalityPreference.slice(0, rerankCandidateCount);
 

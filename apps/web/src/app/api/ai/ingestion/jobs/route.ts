@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getFileAssetById } from "@/lib/file-data";
 import { enqueueIngestionJob } from "@/lib/ingestion-data";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
@@ -31,17 +30,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const file = await getFileAssetById(
-    parsed.data.workspaceUuid,
-    parsed.data.fileUuid
-  );
-  if (!file) {
-    return NextResponse.json({ error: "File not found" }, { status: 404 });
-  }
-
   const job = await enqueueIngestionJob({
     workspaceId: parsed.data.workspaceUuid,
-    fileId: file.id,
+    fileId: parsed.data.fileUuid,
     sourceType: parsed.data.sourceType,
   });
 

@@ -26,6 +26,7 @@ export interface ExplorerFolderRecord {
 
 export interface ExplorerFileRecord {
   contentHashSha256?: string | null;
+  isIngested?: boolean;
   id: string;
   workspaceId: string;
   folderId: string;
@@ -34,8 +35,8 @@ export interface ExplorerFileRecord {
   name: string;
   mimeType: string | null;
   sizeBytes: number;
-  uploadedBy?: string;
-  updatedBy?: string | null;
+  uploadedBy: string;
+  updatedBy: string | null;
   hashComputedBy?: string | null;
   hashVerificationStatus?: string | null;
   hashVerifiedAt?: string | null;
@@ -1131,12 +1132,20 @@ export async function createFolder(
     return null;
   }
 
-  const parentValidation = await validateFolderParentId({
-    workspaceId,
-    parentId,
-  });
-  if (parentValidation.status !== "valid") {
-    return null;
+  const [existing] = await db
+    .select()
+    .from(fileFolder)
+    .where(
+      and(
+        eq(fileFolder.workspaceId, workspaceId),
+        eq(fileFolder.parentId, parentId),
+        isNull(fileFolder.deletedAt),
+        sql`LOWER(${fileFolder.name}) = ${trimmedName.toLowerCase()}`,
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    return mapFolder(existing);
   }
 
   const now = new Date();
@@ -1469,8 +1478,8 @@ export async function getFileAssetByContentHash(
       and(
         eq(fileAsset.workspaceId, workspaceId),
         eq(fileAsset.contentHashSha256, normalizedHash),
-        isNull(fileAsset.deletedAt)
-      )
+        isNull(fileAsset.deletedAt),
+      ),
     )
     .orderBy(desc(fileAsset.updatedAt))
     .limit(1);
@@ -1478,12 +1487,7 @@ export async function getFileAssetByContentHash(
   return record ? mapFile(record) : null;
 }
 
-export async function softDeleteFileAsset(
-  workspaceId: string,
-  fileId: string,
-  userId?: string
-) {
-  const now = new Date();
+export async function softDeleteFileAsset(workspaceId: string, fileId: string) {
   const [record] = await db
     .update(fileAsset)
     .set({

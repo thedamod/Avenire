@@ -85,11 +85,13 @@ async function processClaimedJob(
     });
 
     stage = "persist-transcript";
-    await replaceFileTranscriptCues({
-      workspaceId: job.workspaceId,
-      fileId: job.fileId,
-      cues: result.transcriptCues,
-    });
+    if (result.transcriptCues.length > 0) {
+      await replaceFileTranscriptCues({
+        workspaceId: job.workspaceId,
+        fileId: job.fileId,
+        cues: result.transcriptCues,
+      });
+    }
 
     stage = "mark-success";
     const chunkCount = result.resources.reduce(
@@ -134,27 +136,14 @@ async function processClaimedJob(
       stack: error instanceof Error ? error.stack : undefined,
     });
 
-    let markError: unknown = null;
-    for (let attempt = 1; attempt <= 4; attempt += 1) {
-      try {
-        await markIngestionJobFailed({
-          workspaceId: job.workspaceId,
-          jobId: job.id,
-          error: enrichedMessage,
-        });
-        markError = null;
-        break;
-      } catch (error) {
-        markError = error;
-        if (attempt < 4) {
-          const backoffMs = 250 * Math.pow(2, attempt - 1);
-          await new Promise((resolve) => setTimeout(resolve, backoffMs));
-        }
-      }
-    }
-
-    if (markError) {
-      throw markError;
+    try {
+      await markIngestionJobFailed({
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        error: enrichedMessage,
+      });
+    } catch (error){
+    console.error(error)
     }
   } finally {
     activeJobs = Math.max(0, activeJobs - 1);

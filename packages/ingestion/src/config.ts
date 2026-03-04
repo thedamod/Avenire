@@ -14,10 +14,6 @@ export const config = {
   mistralOcrModel: process.env.MISTRAL_OCR_MODEL ?? "mistral-ocr-latest",
   mistralImageDescriptionModel:
     process.env.MISTRAL_IMAGE_DESCRIPTION_MODEL ?? "pixtral-12b-latest",
-  mistralTimeoutMs: Number.parseInt(
-    process.env.MISTRAL_TIMEOUT_MS ?? "5000",
-    10
-  ),
   groqApiKey: normalizeSecret(process.env.GROQ_API_KEY),
   groqTranscriptionModel:
     process.env.GROQ_TRANSCRIPTION_MODEL ?? "whisper-large-v3-turbo",
@@ -51,15 +47,8 @@ export const config = {
       "1200",
     10
   ),
-  cohereRequestTimeoutMs: Number.parseInt(
-    process.env.COHERE_REQUEST_TIMEOUT_MS ??
-      process.env.VOYAGE_REQUEST_TIMEOUT_MS ??
-      "15000",
-    10
-  ),
   cohereTestSafeMode:
-    (
-      process.env.COHERE_TEST_SAFE_MODE ??
+    (process.env.COHERE_TEST_SAFE_MODE ??
       (process.env.NODE_ENV === "production" ? "false" : "true")
     ).toLowerCase() === "true",
   cohereTestTpmTargetRatio: Number.parseFloat(
@@ -87,8 +76,7 @@ export const config = {
   ),
   cohereTokenEstimateSafetyFactor: Number.parseFloat(
     process.env.COHERE_TOKEN_ESTIMATE_SAFETY_FACTOR ??
-      ((
-        process.env.COHERE_TEST_SAFE_MODE ??
+      ((process.env.COHERE_TEST_SAFE_MODE ??
         (process.env.NODE_ENV === "production" ? "false" : "true")
       ).toLowerCase() === "true"
         ? "1.4"
@@ -107,8 +95,7 @@ export const config = {
   ),
   ingestionEmbedConcurrency: Number.parseInt(
     process.env.INGESTION_EMBED_CONCURRENCY ??
-      ((
-        process.env.COHERE_TEST_SAFE_MODE ??
+      ((process.env.COHERE_TEST_SAFE_MODE ??
         (process.env.NODE_ENV === "production" ? "false" : "true")
       ).toLowerCase() === "true"
         ? "1"
@@ -129,22 +116,6 @@ export const config = {
   firecrawlApiKey: process.env.FIRECRAWL_API_KEY ?? "",
   maxInlineBytes: Number.parseInt(
     process.env.INGESTION_MAX_INLINE_BYTES ?? "10485760",
-    10
-  ),
-  maxAudioBytes: Number.parseInt(
-    process.env.INGESTION_MAX_AUDIO_BYTES ?? "26214400",
-    10
-  ),
-  maxAudioDurationSeconds: Number.parseInt(
-    process.env.INGESTION_MAX_AUDIO_DURATION_SECONDS ?? "3600",
-    10
-  ),
-  ffmpegTimeoutMs: Number.parseInt(
-    process.env.FFMPEG_TIMEOUT_MS ?? "30000",
-    10
-  ),
-  ffmpegMaxStderrBytes: Number.parseInt(
-    process.env.FFMPEG_MAX_STDERR_BYTES ?? "65536",
     10
   ),
   imageEnrichmentEnabled:

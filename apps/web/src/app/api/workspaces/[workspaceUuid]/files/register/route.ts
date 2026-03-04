@@ -1,3 +1,6 @@
+import { NextResponse } from "next/server";
+import { UTApi } from "@avenire/storage";
+import { consumeUploadUnits } from "@/lib/billing";
 import {
   getFileAssetByContentHash,
   getFileAssetByStorageKey,
@@ -9,23 +12,45 @@ import {
 } from "@/lib/file-data";
 import { UTApi } from "@avenire/storage";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
-import { NextResponse } from "next/server";
-import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
-import { consumeUploadUnits } from "@/lib/billing";
+import { enqueueIngestionJob, hasSuccessfulIngestionForFile } from "@/lib/ingestion-data";
 import { createApiLogger } from "@/lib/observability";
 import { enqueueIngestionJob, hasSuccessfulIngestionForFile } from "@/lib/ingestion-data";
 import { optimizeAndReuploadVideo } from "@/lib/video-optimization";
+import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
+
+async function deleteUploadThingFile(storageKey: string | null | undefined) {
+  if (!(storageKey && process.env.UPLOADTHING_TOKEN)) {
+    return;
+  }
+
+  try {
+    const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+    await utapi.deleteFiles([storageKey]);
+  } catch {
+    // Best effort cleanup.
+  }
+}
 
 function classifyStoredFileType(mimeType: string | null) {
   if (!mimeType) {
     return "unknown";
   }
 
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("video/")) return "video";
-  if (mimeType === "application/pdf") return "pdf";
-  if (mimeType.startsWith("text/")) return "text";
-  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+  if (mimeType === "application/pdf") {
+    return "pdf";
+  }
+  if (mimeType.startsWith("text/")) {
+    return "text";
+  }
+  if (mimeType.startsWith("audio/")) {
+    return "audio";
+  }
   return "other";
 }
 
@@ -77,10 +102,7 @@ export async function POST(
   };
 
   if (
-    !body.folderId ||
-    !body.storageKey ||
-    !body.storageUrl ||
-    !body.name ||
+    !(body.folderId && body.storageKey && body.storageUrl && body.name) ||
     typeof body.sizeBytes !== "number"
   ) {
     void apiLogger.requestFailed(400, "Missing file metadata", {
@@ -102,13 +124,9 @@ export async function POST(
   }
 
   const normalizedHash = normalizeSha256(body.contentHashSha256);
-  const existingByHashRaw = normalizedHash
+  const existingByHash = normalizedHash
     ? await getFileAssetByContentHash(workspaceUuid, normalizedHash)
     : null;
-  const existingByHash =
-    existingByHashRaw?.hashVerificationStatus === "verified"
-      ? existingByHashRaw
-      : null;
   const existing =
     existingByHash ??
     (await getFileAssetByStorageKey(workspaceUuid, body.storageKey));
@@ -134,27 +152,23 @@ export async function POST(
     );
   }
 
-  let file;
-  try {
-    file = await registerFileAsset(workspaceUuid, user.id, {
-      folderId: body.folderId,
-      storageKey: body.storageKey,
-      storageUrl: body.storageUrl,
-      name: body.name,
-      mimeType: body.mimeType,
-      sizeBytes: body.sizeBytes,
-      metadata: body.metadata,
-      contentHashSha256: normalizedHash,
-      hashComputedBy: normalizedHash ? body.hashComputedBy ?? "client" : null,
-      hashVerificationStatus: normalizedHash ? "pending" : null,
-    });
-  } catch {
-    return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
-  }
+  const file = await registerFileAsset(workspaceUuid, user.id, {
+    folderId: body.folderId,
+    storageKey: body.storageKey,
+    storageUrl: body.storageUrl,
+    name: body.name,
+    mimeType: body.mimeType,
+    sizeBytes: body.sizeBytes,
+    metadata: body.metadata,
+    contentHashSha256: normalizedHash,
+    hashComputedBy: normalizedHash ? body.hashComputedBy ?? "client" : null,
+    hashVerificationStatus: normalizedHash ? "pending" : null,
+  });
 
   const usage = await consumeUploadUnits(user.id, 1);
   if (!usage.ok) {
-    await softDeleteFileAsset(workspaceUuid, file.id, user.id);
+    await deleteUploadThingFile(body.storageKey);
+    await softDeleteFileAsset(workspaceUuid, file.id);
     const retryAfter = usage.retryAfter?.toISOString() ?? null;
     void apiLogger.rateLimited("upload", retryAfter, {
       workspaceUuid,
@@ -169,57 +183,7 @@ export async function POST(
     );
   }
 
-  let storedFile = file;
-  if (storedFile.mimeType?.startsWith("video/")) {
-    const originalStorageKey = storedFile.storageKey;
-    const optimized = await optimizeAndReuploadVideo({
-      sourceUrl: storedFile.storageUrl,
-      sourceName: storedFile.name,
-    }).catch(() => null);
-
-    if (optimized) {
-      try {
-        const updated = await updateFileAssetStorageMetadata(
-          workspaceUuid,
-          storedFile.id,
-          user.id,
-          {
-            optimizedStorageKey: optimized.storageKey,
-            optimizedStorageUrl: optimized.storageUrl,
-            optimizedName: optimized.name,
-            optimizedMimeType: optimized.mimeType,
-            optimizedSizeBytes: optimized.sizeBytes,
-          }
-        );
-
-        if (updated) {
-          storedFile = updated;
-          if (
-            process.env.UPLOADTHING_TOKEN &&
-            originalStorageKey &&
-            originalStorageKey !== optimized.storageKey
-          ) {
-            const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-            await utapi.deleteFiles(originalStorageKey).catch(() => undefined);
-          }
-        } else if (process.env.UPLOADTHING_TOKEN) {
-          const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-          await utapi.deleteFiles(optimized.storageKey).catch(() => undefined);
-        }
-      } catch (error) {
-        if (process.env.UPLOADTHING_TOKEN) {
-          const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-          await utapi.deleteFiles(optimized.storageKey).catch(() => undefined);
-        }
-        void apiLogger.error("files.video_optimization.failed", {
-          workspaceUuid,
-          fileId: storedFile.id,
-          optimizedStorageKey: optimized.storageKey,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
+  const storedFile = file;
 
   await publishFilesInvalidationEvent({
     workspaceUuid,
@@ -248,6 +212,61 @@ export async function POST(
         });
         return null;
       });
+
+  const enableAsyncMediaOptimization =
+    (process.env.ENABLE_ASYNC_MEDIA_OPTIMIZATION ?? "false").toLowerCase() !==
+    "false";
+  if (enableAsyncMediaOptimization && storedFile.mimeType?.startsWith("video/")) {
+    void optimizeAndReuploadVideo({
+      sourceUrl: storedFile.storageUrl,
+      sourceName: storedFile.name,
+    })
+      .then(async (optimized) => {
+        if (!optimized) {
+          return;
+        }
+
+        const previousStorageKey = storedFile.storageKey;
+        const updated = await updateFileAsset(
+          workspaceUuid,
+          storedFile.id,
+          user.id,
+          {
+            storageKey: optimized.storageKey,
+            storageUrl: optimized.storageUrl,
+            name: optimized.name,
+            mimeType: optimized.mimeType,
+            sizeBytes: optimized.sizeBytes,
+          }
+        );
+
+        if (!updated) {
+          await deleteUploadThingFile(optimized.storageKey);
+          return;
+        }
+
+        if (optimized.storageKey !== previousStorageKey) {
+          await deleteUploadThingFile(previousStorageKey);
+        }
+
+        await publishFilesInvalidationEvent({
+          workspaceUuid,
+          folderId: body.folderId,
+          reason: "file.updated",
+        });
+        await publishFilesInvalidationEvent({
+          workspaceUuid,
+          reason: "tree.changed",
+        });
+      })
+      .catch((error) => {
+        console.warn("Async video optimization skipped", {
+          workspaceUuid,
+          fileId: storedFile.id,
+          error,
+        });
+      });
+  }
 
   void apiLogger.meter("meter.upload.filesystem.registered", {
     workspaceUuid,
