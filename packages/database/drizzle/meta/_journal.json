@@ -36,6 +36,13 @@
       "when": 1772460765001,
       "tag": "0004_amusing_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1772475000000,
+      "tag": "0005_auth_team_fk_integrity",
+      "breakpoints": true
     }
   ]
 }

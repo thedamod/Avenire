@@ -15,7 +15,6 @@ export {
   listFolderContents,
   listFolderContentsForUser,
   listWorkspacesForUser,
-  listWorkspaceMembers,
   listWorkspaceFolders,
   listWorkspaceFiles,
   createWorkspaceForUser,

@@ -3,6 +3,7 @@ import {
   createSudoChallenge as createSudoChallengeRecord,
   consumeSudoChallenge,
   getLatestActiveSudoChallenge,
+  invalidateSudoChallenge as invalidateSudoChallengeRecord,
 } from "../../../../packages/database/src";
 
 export const SUDO_COOKIE_NAME = "avenire_sudo";
@@ -51,16 +52,21 @@ export async function createSudoChallenge(userId: string) {
   const expiresAt = new Date(Date.now() + SUDO_CHALLENGE_TTL_SECONDS * 1000);
   const codeHash = hashSudoCode(code);
 
-  await createSudoChallengeRecord({
+  const challenge = await createSudoChallengeRecord({
     userId,
     codeHash,
     expiresAt,
   });
 
   return {
+    id: challenge.id,
     code,
     expiresAt,
   };
+}
+
+export async function invalidateSudoChallenge(challengeId: string) {
+  await invalidateSudoChallengeRecord(challengeId);
 }
 
 export async function verifySudoCode(input: { userId: string; code: string }) {
@@ -136,4 +142,41 @@ export function validateSudoCookie(input: { userId: string; cookieValue?: string
   }
 
   return true;
+}
+
+export function getSudoCookieExpiresAt(input: { userId: string; cookieValue?: string | null }) {
+  if (!input.cookieValue) {
+    return null;
+  }
+
+  const [encodedPayload, signature] = input.cookieValue.split(".");
+  if (!encodedPayload || !signature) {
+    return null;
+  }
+
+  const expectedSignature = createHmac("sha256", getSudoSecret())
+    .update(encodedPayload)
+    .digest("base64url");
+  if (!safeCompare(expectedSignature, signature)) {
+    return null;
+  }
+
+  let payload: { userId?: string; exp?: number };
+  try {
+    payload = JSON.parse(fromBase64Url(encodedPayload).toString("utf8")) as {
+      userId?: string;
+      exp?: number;
+    };
+  } catch {
+    return null;
+  }
+
+  if (!payload.userId || typeof payload.exp !== "number") {
+    return null;
+  }
+  if (payload.userId !== input.userId) {
+    return null;
+  }
+
+  return new Date(payload.exp);
 }

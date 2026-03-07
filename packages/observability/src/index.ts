@@ -41,6 +41,14 @@ const REDACTED_KEYS = new Set([
   "token",
 ]);
 
+function normalizeRedactedKey(key: string) {
+  return key.toLowerCase();
+}
+
+function isRedactedKey(key: string) {
+  return REDACTED_KEYS.has(normalizeRedactedKey(key));
+}
+
 function shouldEnableObservability() {
   const envValue = process.env.OBSERVABILITY_ENABLED;
   if (envValue === "false") {
@@ -79,7 +87,7 @@ function redactValue(value: unknown): unknown {
   const record = value as Record<string, unknown>;
   const redacted: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(record)) {
-    if (REDACTED_KEYS.has(key)) {
+    if (isRedactedKey(key)) {
       redacted[key] = "[REDACTED]";
       continue;
     }
@@ -93,17 +101,32 @@ function redactObject(value: Record<string, unknown>) {
   return redactValue(value) as Record<string, unknown>;
 }
 
+function redactErrorText(input?: string) {
+  if (!input) {
+    return undefined;
+  }
+
+  let result = input;
+  for (const key of REDACTED_KEYS) {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(${escapedKey}\\s*[:=]\\s*)([^\\s,;]+)`, "gi");
+    result = result.replace(pattern, "$1[REDACTED]");
+  }
+
+  return result;
+}
+
 export function safeError(error: unknown) {
   if (error instanceof Error) {
     return {
       name: error.name,
-      message: error.message,
-      stack: error.stack,
+      message: redactErrorText(error.message),
+      stack: redactErrorText(error.stack),
     };
   }
 
   if (typeof error === "string") {
-    return { message: error };
+    return { message: redactErrorText(error) };
   }
 
   return { message: "Unknown error", value: redactValue(error) };

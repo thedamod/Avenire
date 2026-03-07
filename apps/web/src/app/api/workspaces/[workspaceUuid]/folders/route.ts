@@ -1,6 +1,9 @@
-import { createFolder, isSharedFilesVirtualFolderId } from "@/lib/file-data";
+import {
+  createFolder,
+  isSharedFilesVirtualFolderId,
+  listWorkspaceMembers,
+} from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
-import { listWorkspaceMembers } from "@/lib/file-data";
 import { NextResponse } from "next/server";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
@@ -32,7 +35,7 @@ export async function POST(
   if (typeof body.parentId === "undefined" || !body.name) {
     return NextResponse.json({ error: "Missing parentId or name" }, { status: 400 });
   }
-  if (isSharedFilesVirtualFolderId(body.parentId, workspaceUuid)) {
+  if (body.parentId && isSharedFilesVirtualFolderId(body.parentId, workspaceUuid)) {
     return NextResponse.json({ error: "Cannot create items in Shared Files" }, { status: 400 });
   }
 
@@ -43,7 +46,7 @@ export async function POST(
 
   await publishFilesInvalidationEvent({
     workspaceUuid,
-    folderId: body.parentId,
+    folderId: body.parentId ?? undefined,
     reason: "folder.created",
   });
   await publishFilesInvalidationEvent({

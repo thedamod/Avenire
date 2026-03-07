@@ -1356,6 +1356,24 @@ export async function grantAllChatsFromUserToUser(input: {
     return 0;
   }
 
+  const [workspaceMembership] = await db
+    .select({ organizationId: workspace.organizationId })
+    .from(workspace)
+    .innerJoin(member, eq(member.organizationId, workspace.organizationId))
+    .where(
+      and(
+        eq(workspace.id, input.workspaceId),
+        eq(member.userId, input.ownerUserId),
+      ),
+    )
+    .limit(1);
+
+  if (!workspaceMembership) {
+    return 0;
+  }
+
+  // Chats are currently user-scoped (chat_thread has no workspace_id).
+  // We scope by owner membership in the target workspace before fan-out.
   const chats = await db
     .select({ slug: chatThread.slug })
     .from(chatThread)

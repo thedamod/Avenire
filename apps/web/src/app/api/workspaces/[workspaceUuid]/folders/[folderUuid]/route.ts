@@ -55,6 +55,7 @@ export async function PATCH(
   }
   if (isSharedFilesVirtualFolderId(folderUuid, workspaceUuid)) {
     return NextResponse.json({ error: "Shared Files is read-only" }, { status: 400 });
+  }
   const members = await listWorkspaceMembers(workspaceUuid);
   const currentMember = members.find((member) => member.userId === user.id);
   if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {
@@ -68,6 +69,12 @@ export async function PATCH(
   if (body.parentId && isSharedFilesVirtualFolderId(body.parentId, workspaceUuid)) {
     return NextResponse.json({ error: "Cannot move items into Shared Files" }, { status: 400 });
   }
+
+  const existing = await getFolderWithAncestors(workspaceUuid, folderUuid, user.id);
+  if (!existing) {
+    return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+  }
+  const oldParentId = existing.folder.parentId;
 
   const folder = await updateFolder(workspaceUuid, folderUuid, {
     name: body.name,
@@ -83,11 +90,22 @@ export async function PATCH(
     folderId: folder.id,
     reason: "folder.updated",
   });
-  await publishFilesInvalidationEvent({
-    workspaceUuid,
-    folderId: folder.parentId ?? undefined,
-    reason: "tree.changed",
-  });
+  const parentIds = new Set<string>();
+  if (oldParentId) {
+    parentIds.add(oldParentId);
+  }
+  if (folder.parentId) {
+    parentIds.add(folder.parentId);
+  }
+  await Promise.all(
+    [...parentIds].map((parentId) =>
+      publishFilesInvalidationEvent({
+        workspaceUuid,
+        folderId: parentId,
+        reason: "tree.changed",
+      }),
+    ),
+  );
 
   return NextResponse.json({ folder });
 }
@@ -108,6 +126,7 @@ export async function DELETE(
   }
   if (isSharedFilesVirtualFolderId(folderUuid, workspaceUuid)) {
     return NextResponse.json({ error: "Shared Files is read-only" }, { status: 400 });
+  }
   const members = await listWorkspaceMembers(workspaceUuid);
   const currentMember = members.find((member) => member.userId === user.id);
   if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {

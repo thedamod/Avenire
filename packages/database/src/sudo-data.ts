@@ -76,3 +76,10 @@ export async function consumeSudoChallenge(input: {
     })
     .where(eq(sudoChallenge.id, input.challengeId));
 }
+
+export async function invalidateSudoChallenge(challengeId: string) {
+  await db
+    .update(sudoChallenge)
+    .set({ usedAt: new Date() })
+    .where(eq(sudoChallenge.id, challengeId));
+}
