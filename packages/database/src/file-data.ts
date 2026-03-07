@@ -693,14 +693,9 @@ export async function ensureWorkspaceForOrganization(organizationId: string) {
   });
 }
 
-export async function ensureWorkspaceRootFolder(
-  workspaceId: string,
-  userId: string
-) {
+export async function ensureWorkspaceRootFolder(workspaceId: string, userId: string) {
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`
-    );
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
 
     const [existing] = await tx
       .select()
@@ -709,8 +704,8 @@ export async function ensureWorkspaceRootFolder(
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt)
-        )
+          isNull(fileFolder.deletedAt),
+        ),
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -743,8 +738,8 @@ export async function ensureWorkspaceRootFolder(
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt)
-        )
+          isNull(fileFolder.deletedAt),
+        ),
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);

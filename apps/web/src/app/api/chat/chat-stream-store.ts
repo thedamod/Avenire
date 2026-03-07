@@ -84,16 +84,11 @@ export async function clearActiveStreamId(chatId: string, streamId: string) {
   try {
     const client = await getRedisClient();
     const key = `${ACTIVE_STREAM_KEY_PREFIX}${chatId}`;
-    await client.eval(
-      `if redis.call("GET", KEYS[1]) == ARGV[1] then
-         return redis.call("DEL", KEYS[1])
-       end
-       return 0`,
-      {
-        keys: [key],
-        arguments: [streamId],
-      },
-    );
+    const current = await client.get(key);
+    if (current !== streamId) {
+      return;
+    }
+    await client.del(key);
   } catch (error) {
     console.error("Failed to clear active stream id", { chatId, streamId, error });
   }
