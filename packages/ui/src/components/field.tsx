@@ -4,9 +4,17 @@ import { useMemo } from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "../lib/utils"
-import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
+import { Label } from "./label"
+import { Separator } from "./separator"
 
+/**
+ * Renders a `fieldset` element with layout and spacing utilities and a `data-slot="field-set"` marker.
+ *
+ * The component composes default gap and flex classes (including conditional gaps for nested checkbox or radio groups),
+ * merges any provided `className`, and forwards all other props to the underlying `fieldset`.
+ *
+ * @returns A React `fieldset` element with the computed `className`, `data-slot="field-set"`, and forwarded props.
+ */
 function FieldSet({ className, ...props }: React.ComponentProps<"fieldset">) {
   return (
     <fieldset

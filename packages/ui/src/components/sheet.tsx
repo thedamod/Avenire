@@ -4,9 +4,15 @@ import * as React from "react"
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "../lib/utils"
-import { Button } from "@/components/ui/button"
+import { Button } from "./button"
 import { XIcon } from "lucide-react"
 
+/**
+ * Renders the Sheet root element and forwards all props to the underlying primitive.
+ *
+ * @param props - Props forwarded to the underlying SheetPrimitive.Root
+ * @returns The rendered Sheet root element with `data-slot="sheet"`
+ */
 function Sheet({ ...props }: SheetPrimitive.Root.Props) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
 }

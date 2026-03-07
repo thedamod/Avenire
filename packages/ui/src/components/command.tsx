@@ -10,13 +10,18 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
+} from "./dialog"
 import {
   InputGroup,
   InputGroupAddon,
-} from "@/components/ui/input-group"
+} from "./input-group"
 import { SearchIcon, CheckIcon } from "lucide-react"
 
+/**
+ * Renders a styled wrapper around cmdk's CommandPrimitive used as the command palette container.
+ *
+ * @returns A CommandPrimitive element with the component's default command-container styles applied.
+ */
 function Command({
   className,
   ...props

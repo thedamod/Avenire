@@ -4,10 +4,18 @@ import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "../lib/utils"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Button } from "./button"
+import { Input } from "./input"
+import { Textarea } from "./textarea"
 
+/**
+ * Container for grouping inputs and related addon/button/text elements.
+ *
+ * Renders a div with role="group" and `data-slot="input-group"`, merging the provided `className` with internal layout and accessibility styles and forwarding all other div props.
+ *
+ * @param props - Standard div props; `className` will be appended to the component's internal classes.
+ * @returns The input group wrapper element.
+ */
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div

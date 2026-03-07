@@ -1,7 +1,15 @@
 import { auth } from "@avenire/auth/server";
+import type { Route } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { getOrCreateLatestChatForUser } from "@/lib/chat-data";
 
+/**
+ * Redirects the visitor to the authenticated user's latest chat or to the login page when not authenticated.
+ *
+ * If a user session exists, obtains (or creates) that user's latest chat and navigates to its chat route.
+ * If no authenticated user is present, navigates to the login page.
+ */
 export default async function DashboardPage() {
   const session = await auth.api.getSession({ headers: await headers() });
 
@@ -9,10 +17,6 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  return (
-    <main className="mx-auto max-w-4xl p-8">
-      <h1 className="text-2xl font-semibold">Dashboard</h1>
-      <p className="text-sm opacity-80">You are logged in as {session.user.email}.</p>
-    </main>
-  );
+  const latestChat = await getOrCreateLatestChatForUser(session.user.id);
+  redirect(`/dashboard/chats/${latestChat.slug}` as Route);
 }
