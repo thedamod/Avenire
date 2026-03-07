@@ -2,7 +2,7 @@ import { createResourceShareLink, resolveWorkspaceForUser } from "@/lib/file-dat
 import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { getChatBySlugForUser, isChatOwnerForUser } from "@/lib/chat-data";
+import { getChatBySlugForUser } from "@/lib/chat-data";
 import { createApiLogger } from "@/lib/observability";
 import { resolveAppBaseUrl } from "@/lib/app-base-url";
 
@@ -25,15 +25,10 @@ export async function POST(
   }
 
   const { slug } = await context.params;
-  const isOwner = await isChatOwnerForUser(session.user.id, slug);
-  if (!isOwner) {
-    void apiLogger.requestFailed(403, "Read-only chat", { slug });
-    return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
-  }
   const chat = await getChatBySlugForUser(session.user.id, slug);
-  if (!chat) {
-    void apiLogger.requestFailed(404, "Chat not found", { slug });
-    return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+  if (!chat || chat.ownerUserId !== session.user.id) {
+    void apiLogger.requestFailed(403, "Chat not found", { slug });
+    return NextResponse.json({ error: "Chat not found" }, { status: 403 });
   }
 
   const activeOrganizationId =

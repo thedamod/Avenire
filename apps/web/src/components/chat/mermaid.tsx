@@ -3,6 +3,7 @@
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderMermaidSVG } from "beautiful-mermaid";
+import DOMPurify from "dompurify";
 import {
   Download,
   Maximize2,
@@ -72,7 +73,10 @@ export function MermaidDiagram({
         fg: "var(--foreground)",
         transparent: true,
       });
-      return { svg: rendered, error: null };
+      const sanitized = DOMPurify.sanitize(rendered, {
+        USE_PROFILES: { svg: true },
+      });
+      return { svg: sanitized, error: null };
     } catch (err) {
       return {
         svg: null,

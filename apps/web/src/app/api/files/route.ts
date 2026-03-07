@@ -2,6 +2,7 @@ import { auth } from "@avenire/auth/server";
 import { UTApi } from "@avenire/storage";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { listWorkspaceFiles, resolveWorkspaceForUser } from "@/lib/file-data";
 
 interface UploadThingServerFile {
   contentType?: string;
@@ -34,37 +35,6 @@ function inferContentType(name: string): string | undefined {
   return undefined;
 }
 
-function normalizeFiles(input: unknown): UploadThingServerFile[] {
-  if (!Array.isArray(input)) {
-    return [];
-  }
-
-  return input
-    .filter((entry): entry is { key: string; name: string; size: number; uploadedAt: number } => {
-      if (typeof entry !== "object" || entry === null) {
-        return false;
-      }
-
-      const candidate = entry as Record<string, unknown>;
-      return (
-        typeof candidate.key === "string" &&
-        typeof candidate.name === "string" &&
-        typeof candidate.size === "number" &&
-        Number.isFinite(candidate.size) &&
-        typeof candidate.uploadedAt === "number" &&
-        Number.isFinite(candidate.uploadedAt)
-      );
-    })
-    .map((entry) => ({
-      key: entry.key,
-      name: entry.name,
-      size: entry.size,
-      uploadedAt: entry.uploadedAt,
-      url: "",
-      contentType: inferContentType(entry.name),
-    }));
-}
-
 export async function GET() {
   const session = await auth.api.getSession({ headers: await headers() });
 
@@ -78,9 +48,23 @@ export async function GET() {
 
   try {
     const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+    const activeOrganizationId =
+      (session as { session?: { activeOrganizationId?: string | null } }).session
+        ?.activeOrganizationId ?? null;
+    const workspace = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
+    if (!workspace) {
+      return NextResponse.json({ files: [] }, { status: 404 });
+    }
 
-    const listResponse = await utapi.listFiles({ limit: 100 });
-    const files = normalizeFiles(listResponse.files);
+    const dbFiles = await listWorkspaceFiles(workspace.workspaceId);
+    const files: UploadThingServerFile[] = dbFiles.map((file) => ({
+      key: file.storageKey,
+      name: file.name,
+      size: file.sizeBytes,
+      uploadedAt: Date.parse(file.createdAt),
+      url: "",
+      contentType: file.mimeType ?? inferContentType(file.name),
+    }));
 
     if (files.length === 0) {
       return NextResponse.json({ files: [] });

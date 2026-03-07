@@ -23,6 +23,7 @@ import { consumeChatUnits } from "@/lib/billing";
 import { createApiLogger } from "@/lib/observability";
 import {
   clearActiveStreamId,
+  getActiveStreamId,
   getRedisClient,
   getRedisSubscriber,
   setActiveStreamId,
@@ -226,7 +227,10 @@ export async function POST(request: Request) {
     );
   }
 
-  await clearActiveStreamId(chatSlug);
+  const previousStreamId = await getActiveStreamId(chatSlug);
+  if (previousStreamId) {
+    await clearActiveStreamId(chatSlug, previousStreamId);
+  }
 
   const stream = createUIMessageStream<UIMessage>({
     execute: async ({ writer }) => {
@@ -359,7 +363,7 @@ export async function POST(request: Request) {
                 error,
               });
             } finally {
-              await clearActiveStreamId(chatSlug);
+              await clearActiveStreamId(chatSlug, streamId);
               logInfo("Cleared active stream id", { chatId: chatSlug });
             }
           },
@@ -438,7 +442,10 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
   }
 
-  await clearActiveStreamId(id);
+  const activeStreamId = await getActiveStreamId(id);
+  if (activeStreamId) {
+    await clearActiveStreamId(id, activeStreamId);
+  }
   void apiLogger.featureUsed("chat.delete", { chatId: id });
   void apiLogger.requestSucceeded(200, { chatId: id });
 
