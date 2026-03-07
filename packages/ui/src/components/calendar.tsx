@@ -9,9 +9,17 @@ import {
 } from "react-day-picker"
 
 import { cn } from "../lib/utils"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "./button"
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react"
 
+/**
+ * Render a styled and localized calendar based on react-day-picker with opinionated classNames, component overrides, and selectable day buttons.
+ *
+ * The component forwards all DayPicker props while providing default styling, RTL adjustments, localized month formatting, and custom subcomponents (Root, Chevron, DayButton, WeekNumber). Use `className`, `classNames`, and `components` to further customize appearance and behavior.
+ *
+ * @param buttonVariant - Variant to apply to the calendar navigation buttons and day navigation controls.
+ * @returns The rendered Calendar element configured with the provided props and overrides.
+ */
 function Calendar({
   className,
   classNames,

@@ -1,25 +1,64 @@
 import { db } from "@avenire/database";
-import * as authSchema from "@avenire/database/auth-schema";
+import {
+  account,
+  invitation,
+  member,
+  organization as organizationTable,
+  passkey as passkeyTable,
+  session,
+  team,
+  teamMember,
+  user,
+  verification,
+} from "@avenire/database/auth-schema";
 import {
   Emailer,
   renderDeleteAccountEmail,
+  renderFileShareNotificationEmail,
   renderPasswordResetEmail,
   renderVerificationEmail,
-  renderWelcomeEmail
+  renderWelcomeEmail,
+  renderWorkspaceShareNotificationEmail
 } from "@avenire/emailer";
 import { betterAuth } from "better-auth";
 import { createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies, toNextJsHandler } from "better-auth/next-js";
 import { passkey } from "@better-auth/passkey";
+import { organization } from "better-auth/plugins/organization";
 import { username } from "better-auth/plugins/username";
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const appUrl = process.env.BETTER_AUTH_URL?.trim();
+if (!appUrl) {
+  throw new Error("Missing BETTER_AUTH_URL. Set BETTER_AUTH_URL for auth server configuration.");
+}
 const emailer = new Emailer();
+const slugifyWorkspace = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 40);
+const trustedOrigins = Array.from(new Set([appUrl, "https://avenire.space"]));
+const generatedBetterAuthSchema = {
+  user,
+  session,
+  account,
+  verification,
+  organization: organizationTable,
+  member,
+  invitation,
+  team,
+  teamMember,
+  passkey: passkeyTable,
+};
 
 export const auth = betterAuth({
-  trustedOrigins: [appUrl],
-  database: drizzleAdapter(db, { provider: "pg", schema: authSchema }),
+  trustedOrigins,
+  database: drizzleAdapter(db, { provider: "pg", schema: generatedBetterAuthSchema }),
+  session: {
+    updateAge: 60 * 60
+  },
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
@@ -66,7 +105,11 @@ export const auth = betterAuth({
       ? {
           google: {
             clientId: process.env.AUTH_GOOGLE_ID,
-            clientSecret: process.env.AUTH_GOOGLE_SECRET
+            clientSecret: process.env.AUTH_GOOGLE_SECRET,
+            mapProfileToUser: (profile) => ({
+              name: profile.given_name ?? profile.name,
+              username: profile.name
+            })
           }
         }
       : {}),
@@ -74,7 +117,11 @@ export const auth = betterAuth({
       ? {
           github: {
             clientId: process.env.AUTH_GITHUB_ID,
-            clientSecret: process.env.AUTH_GITHUB_SECRET
+            clientSecret: process.env.AUTH_GITHUB_SECRET,
+            mapProfileToUser: (profile) => ({
+              name: profile.name,
+              username: profile.name
+            })
           }
         }
       : {})
@@ -90,11 +137,31 @@ export const auth = betterAuth({
         subject: "Welcome to Avenire",
         html: await renderWelcomeEmail({ name: newSession.user.name ?? "there" })
       });
+
+      try {
+        const workspaceNameBase =
+          newSession.user.name ?? newSession.user.email.split("@")[0] ?? "workspace";
+        const slugBase = slugifyWorkspace(workspaceNameBase) || "workspace";
+        await auth.api.createOrganization({
+          body: {
+            userId: newSession.user.id,
+            name: `${workspaceNameBase}'s Workspace`,
+            slug: `${slugBase}-${newSession.user.id.slice(0, 6)}`
+          }
+        });
+      } catch (error) {
+        console.error("Failed to create default workspace", error);
+      }
     })
   },
   plugins: [
     username({
       usernameValidator: () => true
+    }),
+    organization({
+      teams: {
+        enabled: true,
+      },
     }),
     passkey({
       rpName: "Avenire",
@@ -110,3 +177,73 @@ export const auth = betterAuth({
 export const authRouteHandlers = toNextJsHandler(auth);
 
 export type Session = typeof auth.$Infer.Session;
+
+/**
+ * Send a file-share notification email to a recipient.
+ *
+ * @param input - Details for the file-share notification
+ * @param input.toEmail - Recipient email address
+ * @param input.fileName - Display name of the shared file
+ * @param input.shareUrl - URL the recipient can use to access the shared file
+ * @param input.sharedByName - Optional display name of the person who shared the file
+ */
+export async function sendFileShareEmail(input: {
+  toEmail: string;
+  fileName: string;
+  shareUrl: string;
+  sharedByName?: string;
+}) {
+  await emailer.send({
+    to: [input.toEmail],
+    subject: `${input.sharedByName ?? "Someone"} shared a file with you`,
+    html: await renderFileShareNotificationEmail({
+      fileName: input.fileName,
+      shareUrl: input.shareUrl,
+      sharedByName: input.sharedByName,
+    }),
+  });
+}
+
+/**
+ * Send a workspace sharing notification email to a recipient.
+ *
+ * @param input.toEmail - Recipient email address
+ * @param input.workspaceName - Display name of the shared workspace
+ * @param input.workspaceUrl - URL pointing to the shared workspace
+ * @param input.sharedByName - Optional display name of the person who shared the workspace (used in subject/body)
+ */
+export async function sendWorkspaceShareEmail(input: {
+  toEmail: string;
+  workspaceName: string;
+  workspaceUrl: string;
+  sharedByName?: string;
+}) {
+  await emailer.send({
+    to: [input.toEmail],
+    subject: `${input.sharedByName ?? "Someone"} shared a workspace with you`,
+    html: await renderWorkspaceShareNotificationEmail({
+      workspaceName: input.workspaceName,
+      workspaceUrl: input.workspaceUrl,
+      sharedByName: input.sharedByName,
+    }),
+  });
+}
+
+/**
+ * Sends a one-time security verification code email for confirming a sensitive action.
+ *
+ * @param input.toEmail - Recipient email address
+ * @param input.code - Verification code to display in the email
+ * @param input.expiresInMinutes - Minutes until the code expires
+ */
+export async function sendSudoVerificationCodeEmail(input: {
+  toEmail: string;
+  code: string;
+  expiresInMinutes: number;
+}) {
+  await emailer.send({
+    to: [input.toEmail],
+    subject: "Your Avenire security verification code",
+    html: `<p>Use this code to confirm a sensitive settings action:</p><p style="font-size:24px;font-weight:700;letter-spacing:2px;">${input.code}</p><p>This code expires in ${input.expiresInMinutes} minutes.</p>`,
+  });
+}

@@ -4,9 +4,15 @@ import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "../lib/utils"
-import { Button } from "@/components/ui/button"
+import { Button } from "./button"
 import { XIcon } from "lucide-react"
 
+/**
+ * Renders a Dialog root element with a fixed `data-slot="dialog"` attribute while forwarding all received props.
+ *
+ * @param props - Props to pass through to the underlying Dialog primitive root
+ * @returns The rendered Dialog root element
+ */
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }

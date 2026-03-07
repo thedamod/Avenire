@@ -1,9 +1,16 @@
 import * as React from "react"
 
 import { cn } from "../lib/utils"
-import { Button } from "@/components/ui/button"
+import { Button } from "./button"
 import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "lucide-react"
 
+/**
+ * Renders a centered navigation element configured as a pagination container.
+ *
+ * @param className - Additional CSS class names applied to the nav element.
+ * @param props - Other native `nav` element props forwarded to the element.
+ * @returns The `<nav>` element with `role="navigation"`, `aria-label="pagination"`, `data-slot="pagination"`, and composed class names.
+ */
 function Pagination({ className, ...props }: React.ComponentProps<"nav">) {
   return (
     <nav

@@ -614,6 +614,13 @@ function useStreamer(messages: ChatMessage[], speed = 12, enabled = true) {
 const KATEX_CSS_ID = "katex-css";
 const KATEX_SCRIPT_ID = "katex-script";
 
+/**
+ * Ensures KaTeX CSS and script are present in the document and invokes `onReady` when KaTeX is usable.
+ *
+ * Adds the KaTeX stylesheet to the document head if missing, loads the KaTeX script if not already present, and calls `onReady` as soon as `window.katex.renderToString` is available. When the script finishes loading the function dispatches a `katex-ready` DOM event before invoking `onReady`.
+ *
+ * @param onReady - Callback invoked once KaTeX's `renderToString` is available.
+ */
 function ensureKatexAssets(onReady: () => void) {
   const doc = document;
 
@@ -625,7 +632,7 @@ function ensureKatexAssets(onReady: () => void) {
     doc.head.appendChild(link);
   }
 
-  if (window.katex?.renderToString) {
+  if (typeof window.katex?.renderToString === "function") {
     onReady();
     return;
   }
@@ -800,7 +807,16 @@ function Msg({ msg, isStreaming = false, katexReady }: { msg: ChatMessage; isStr
   );
 }
 
-/* ── Demo Window (Cursor-style) ── */
+/**
+ * Renders the interactive demo chat and document workspace for a session.
+ *
+ * Presents a streaming chat view with user and AI messages, interactive question and follow-up controls,
+ * and a synchronized document panel showing sections, tasks, and study artifacts (flashcards, quiz, plot).
+ *
+ * @param session - Session data used to initialize messages, questions, follow-ups, document view, and artifacts.
+ * @param onStreamComplete - Callback invoked with the session id when streaming of an in-progress session finishes.
+ * @returns The React element that composes the demo chat and document panels for the provided session.
+ */
 function DemoWindow({
   session,
   onStreamComplete,
@@ -829,7 +845,7 @@ function DemoWindow({
   }, [completed, partial]);
 
   useEffect(() => {
-    const markReady = () => setKatexReady(Boolean(window.katex?.renderToString));
+    const markReady = () => setKatexReady(typeof window.katex?.renderToString === "function");
     ensureKatexAssets(markReady);
     window.addEventListener("katex-ready", markReady);
     markReady();

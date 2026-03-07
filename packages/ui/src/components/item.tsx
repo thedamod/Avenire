@@ -4,8 +4,13 @@ import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "../lib/utils"
-import { Separator } from "@/components/ui/separator"
+import { Separator } from "./separator"
 
+/**
+ * Container that groups Item components and applies spacing and layout for an item list.
+ *
+ * @returns A div element with role="list", data-slot="item-group", and composed gap/spacing and layout classes; additional props are spread onto the element.
+ */
 function ItemGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
