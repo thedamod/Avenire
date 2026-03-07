@@ -206,6 +206,7 @@ export function ChatWorkspace({
           <SidebarTrigger className="h-6 w-6 rounded-md" />
           {!isReadonly ? (
             <Button
+              aria-label="New chat"
               className="size-5 rounded-md"
               onClick={() => void createChat()}
               size="icon-xs"

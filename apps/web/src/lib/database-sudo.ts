@@ -1,1 +1,4 @@
-export { getLatestActiveSudoChallenge } from "../../../../packages/database/src";
+export {
+  getLatestActiveSudoChallenge,
+  invalidateSudoChallenge,
+} from "../../../../packages/database/src";

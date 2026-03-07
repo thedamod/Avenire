@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@avenire/auth/server";
 import { randomUUID } from "node:crypto";
 import { getWorkspaceContextForUser, getSessionUser } from "@/lib/workspace";
-import { resolveWorkspaceForUser } from "@/lib/file-data";
+import { listWorkspacesForUser, resolveWorkspaceForUser } from "@/lib/file-data";
 import { headers } from "next/headers";
 
 export async function GET() {
@@ -33,6 +33,24 @@ export async function POST(request: Request) {
       .replace(/(^-|-$)/g, "")
       .slice(0, 40) || "workspace";
   const slug = `${slugBase}-${randomUUID().slice(0, 8)}`;
+  const existingSummaries = await listWorkspacesForUser(user.id);
+  const existingWorkspace = existingSummaries.find(
+    (entry) => entry.name.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  if (existingWorkspace) {
+    const resolvedExisting = await resolveWorkspaceForUser(user.id, existingWorkspace.organizationId);
+    if (resolvedExisting) {
+      return NextResponse.json(
+        {
+          workspace: {
+            ...resolvedExisting,
+            name: existingWorkspace.name,
+          },
+        },
+        { status: 200 },
+      );
+    }
+  }
 
   const org = await auth.api.createOrganization({
     body: {
@@ -50,6 +68,9 @@ export async function POST(request: Request) {
 
   const workspace = await resolveWorkspaceForUser(user.id, org.id);
   if (!workspace) {
+    return NextResponse.json({ error: "Unable to resolve workspace" }, { status: 500 });
+  }
+  if (workspace.organizationId !== org.id) {
     return NextResponse.json({ error: "Unable to resolve workspace" }, { status: 500 });
   }
 

@@ -6,10 +6,11 @@ import { getSessionUser } from "@/lib/workspace";
 import {
   SUDO_CHALLENGE_TTL_SECONDS,
   SUDO_COOKIE_NAME,
-  SUDO_SESSION_TTL_SECONDS,
   createSudoChallenge,
-  validateSudoCookie,
+  getSudoCookieExpiresAt,
+  invalidateSudoChallenge,
   verifySudoCode,
+  SUDO_SESSION_TTL_SECONDS,
 } from "@/lib/sudo";
 
 export async function GET() {
@@ -20,11 +21,16 @@ export async function GET() {
 
   const cookieStore = await cookies();
   const cookieValue = cookieStore.get(SUDO_COOKIE_NAME)?.value ?? null;
-  const active = validateSudoCookie({ userId: user.id, cookieValue });
+  const expiresAt = getSudoCookieExpiresAt({ userId: user.id, cookieValue });
+  const expiresInSeconds = expiresAt
+    ? Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000))
+    : 0;
+  const active = expiresInSeconds > 0;
 
   return NextResponse.json({
     active,
-    expiresInSeconds: active ? SUDO_SESSION_TTL_SECONDS : 0,
+    expiresInSeconds,
+    expiresAt: expiresAt?.toISOString() ?? null,
   });
 }
 
@@ -49,11 +55,19 @@ export async function POST(request: Request) {
     }
 
     const challenge = await createSudoChallenge(user.id);
-    await sendSudoVerificationCodeEmail({
-      toEmail: user.email,
-      code: challenge.code,
-      expiresInMinutes: Math.floor(SUDO_CHALLENGE_TTL_SECONDS / 60),
-    });
+    try {
+      await sendSudoVerificationCodeEmail({
+        toEmail: user.email,
+        code: challenge.code,
+        expiresInMinutes: Math.floor(SUDO_CHALLENGE_TTL_SECONDS / 60),
+      });
+    } catch {
+      await invalidateSudoChallenge(challenge.id);
+      return NextResponse.json(
+        { error: "Unable to send verification code." },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({
       ok: true,

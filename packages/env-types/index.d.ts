@@ -14,6 +14,8 @@ declare namespace NodeJS {
     GROQ_API_KEY?: string;
     NEXT_PUBLIC_APP_URL?: string;
     NODE_ENV?: string;
+    BASETEN_API_KEY?: string;
+    COHERE_API_KEY?: string;
     MISTRAL_API_KEY?: string;
     OBSERVABILITY_ENABLED?: string;
     OBSERVABILITY_SAMPLE_RATE?: string;

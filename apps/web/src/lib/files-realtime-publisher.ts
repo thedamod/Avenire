@@ -17,7 +17,10 @@ interface FilesInvalidationPayload {
 }
 
 const redisUrl = process.env.REDIS_URL;
-let publisher: RedisClientType | null = null;
+type PublisherClient = ReturnType<typeof createClient>;
+
+let publisher: PublisherClient | null = null;
+let publisherInitPromise: Promise<PublisherClient> | null = null;
 
 function workspaceChannel(workspaceUuid: string) {
   return `files:workspace:${workspaceUuid}`;
@@ -28,15 +31,31 @@ async function getPublisher() {
     throw new Error("REDIS_URL is not configured");
   }
 
-  if (!publisher) {
-    publisher = createClient({ url: redisUrl });
-    publisher.on("error", (error) => {
-      console.error("Redis publisher error in files-realtime-publisher", error);
+  if (!publisher && !publisherInitPromise) {
+    publisherInitPromise = (async () => {
+      const client = createClient({ url: redisUrl });
+      client.on("error", (error) => {
+        console.error("Redis publisher error in files-realtime-publisher", error);
+      });
+      await client.connect();
+      publisher = client;
+      return client;
+    })().catch((error) => {
+      publisherInitPromise = null;
+      throw error;
     });
   }
 
-  if (!publisher.isOpen) {
-    await publisher.connect();
+  if (publisherInitPromise) {
+    const client = await publisherInitPromise;
+    if (!publisher) {
+      publisher = client;
+    }
+    publisherInitPromise = null;
+  }
+
+  if (!publisher) {
+    throw new Error("Redis publisher initialization failed");
   }
 
   return publisher;

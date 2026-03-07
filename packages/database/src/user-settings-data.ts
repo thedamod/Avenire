@@ -33,25 +33,26 @@ export async function upsertUserSettings(
   updates: Partial<UserSettingsRecord>,
 ): Promise<UserSettingsRecord> {
   const now = new Date();
-  const nextEmailReceipts =
-    typeof updates.emailReceipts === "boolean"
-      ? updates.emailReceipts
-      : DEFAULT_USER_SETTINGS.emailReceipts;
+  const hasValidEmailReceipts = typeof updates.emailReceipts === "boolean";
+
+  const insertValues: typeof userSettings.$inferInsert = {
+    userId,
+    createdAt: now,
+    updatedAt: now,
+    ...(hasValidEmailReceipts ? { emailReceipts: updates.emailReceipts } : {}),
+  };
+
+  const conflictSet: Partial<typeof userSettings.$inferInsert> = {
+    updatedAt: now,
+    ...(hasValidEmailReceipts ? { emailReceipts: updates.emailReceipts } : {}),
+  };
 
   const [settings] = await db
     .insert(userSettings)
-    .values({
-      userId,
-      emailReceipts: nextEmailReceipts,
-      createdAt: now,
-      updatedAt: now,
-    })
+    .values(insertValues)
     .onConflictDoUpdate({
       target: userSettings.userId,
-      set: {
-        emailReceipts: nextEmailReceipts,
-        updatedAt: now,
-      },
+      set: conflictSet,
     })
     .returning({
       emailReceipts: userSettings.emailReceipts,

@@ -40,7 +40,9 @@ export const session = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     activeOrganizationId: text("active_organization_id"),
-    activeTeamId: text("active_team_id"),
+    activeTeamId: text("active_team_id").references(() => team.id, {
+      onDelete: "set null",
+    }),
   },
   (table) => [index("session_userId_idx").on(table.userId)],
 );
@@ -124,11 +126,12 @@ export const teamMember = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at"),
+    createdAt: timestamp("created_at").notNull(),
   },
   (table) => [
     index("teamMember_teamId_idx").on(table.teamId),
     index("teamMember_userId_idx").on(table.userId),
+    uniqueIndex("teamMember_teamId_userId_uidx").on(table.teamId, table.userId),
   ],
 );
 
@@ -160,7 +163,9 @@ export const invitation = pgTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
     role: text("role"),
-    teamId: text("team_id"),
+    teamId: text("team_id").references(() => team.id, {
+      onDelete: "set null",
+    }),
     status: text("status").default("pending").notNull(),
     expiresAt: timestamp("expires_at").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),

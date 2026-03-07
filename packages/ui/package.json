@@ -9,6 +9,7 @@
     "./hooks/*": "./src/hooks/*.ts",
     "./components/*": "./src/components/*.tsx",
     "./media": "./src/media/index.ts"
+    
   },
   "scripts": {
     "build": "tsc --noEmit",

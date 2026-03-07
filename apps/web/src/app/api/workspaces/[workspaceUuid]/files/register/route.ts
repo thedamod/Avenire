@@ -1,6 +1,7 @@
 import {
   getFileAssetByStorageKey,
   isSharedFilesVirtualFolderId,
+  listWorkspaceMembers,
   registerFileAsset,
   softDeleteFileAsset,
   updateFileAsset,
@@ -49,6 +50,11 @@ export async function POST(
     void apiLogger.requestFailed(403, "Forbidden", { workspaceUuid });
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const members = await listWorkspaceMembers(workspaceUuid);
+  const currentMember = members.find((member) => member.userId === user.id);
+  if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const body = (await request.json().catch(() => ({}))) as {
     folderId?: string;
@@ -85,15 +91,20 @@ export async function POST(
     return NextResponse.json({ file: existing }, { status: 200 });
   }
 
-  const file = await registerFileAsset(workspaceUuid, user.id, {
-    folderId: body.folderId,
-    storageKey: body.storageKey,
-    storageUrl: body.storageUrl,
-    name: body.name,
-    mimeType: body.mimeType,
-    sizeBytes: body.sizeBytes,
-    metadata: body.metadata,
-  });
+  let file;
+  try {
+    file = await registerFileAsset(workspaceUuid, user.id, {
+      folderId: body.folderId,
+      storageKey: body.storageKey,
+      storageUrl: body.storageUrl,
+      name: body.name,
+      mimeType: body.mimeType,
+      sizeBytes: body.sizeBytes,
+      metadata: body.metadata,
+    });
+  } catch {
+    return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
+  }
 
   const usage = await consumeUploadUnits(user.id, 1);
   if (!usage.ok) {

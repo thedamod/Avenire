@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 interface FilesRealtimeTokenPayload {
   exp: number;
@@ -64,7 +64,16 @@ export function verifyFilesRealtimeToken(token: string, workspaceUuid: string) {
   }
 
   const expectedSignature = signPayload(payloadSegment, secret);
-  if (signature !== expectedSignature) {
+  const signatureBuffer = Buffer.from(signature, "utf8");
+  const expectedBuffer = Buffer.from(expectedSignature, "utf8");
+  if (signatureBuffer.length !== expectedBuffer.length) {
+    return { ok: false as const, reason: "signature" };
+  }
+  try {
+    if (!timingSafeEqual(signatureBuffer, expectedBuffer)) {
+      return { ok: false as const, reason: "signature" };
+    }
+  } catch {
     return { ok: false as const, reason: "signature" };
   }
 

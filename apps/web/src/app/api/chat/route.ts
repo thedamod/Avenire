@@ -59,6 +59,24 @@ function sanitizeChatName(value: string) {
     .slice(0, 120);
 }
 
+function isValidUIMessageArray(value: unknown): value is UIMessage[] {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+
+  return value.every((item) => {
+    if (typeof item !== "object" || item === null) {
+      return false;
+    }
+
+    const candidate = item as Record<string, unknown>;
+    return (
+      typeof candidate.role === "string" &&
+      Array.isArray(candidate.parts)
+    );
+  });
+}
+
 function extractLatestUserText(messages: UIMessage[]) {
   const latestUserMessage = [...messages].reverse().find((m) => m.role === "user");
   if (!latestUserMessage) {
@@ -96,8 +114,8 @@ async function generateChatName(messages: UIMessage[]) {
 
     const normalized = sanitizeChatName(text);
     logInfo("Generated chat title result", {
-      raw: text,
-      normalized,
+      rawLength: text.length,
+      normalizedLength: normalized.length,
       accepted: normalized.length > 0,
     });
 
@@ -181,7 +199,7 @@ export async function POST(request: Request) {
   }
 
   const body = (await request.json().catch(() => ({}))) as {
-    messages?: UIMessage[];
+    messages?: unknown;
     selectedModel?: FermionModelName;
     selectedReasoningModel?: FermionModelName;
     chatId?: string;
@@ -193,6 +211,10 @@ export async function POST(request: Request) {
   if (!chatSlug) {
     void apiLogger.requestFailed(400, "Missing chatId");
     return NextResponse.json({ error: "Missing chatId" }, { status: 400 });
+  }
+
+  if (typeof body.messages !== "undefined" && !isValidUIMessageArray(body.messages)) {
+    return NextResponse.json({ error: "Invalid messages" }, { status: 400 });
   }
 
   const originalMessages = body.messages ?? [];
@@ -226,11 +248,11 @@ export async function POST(request: Request) {
       { status: 429 },
     );
   }
-
   const previousStreamId = await getActiveStreamId(chatSlug);
   if (previousStreamId) {
     await clearActiveStreamId(chatSlug, previousStreamId);
   }
+  const streamId = randomUUID();
 
   const stream = createUIMessageStream<UIMessage>({
     execute: async ({ writer }) => {
@@ -239,7 +261,7 @@ export async function POST(request: Request) {
         if (nextName) {
           logInfo("Streaming generated chat title event", {
             chatId: chatSlug,
-            name: nextName,
+            nameLength: nextName.length,
           });
           writer.write({
             type: "data-chatName",
@@ -250,11 +272,19 @@ export async function POST(request: Request) {
             },
           });
 
-          await updateChatForUser(session.user.id, chatSlug, { title: nextName });
-          logInfo("Persisted generated chat title", {
-            chatId: chatSlug,
-            name: nextName,
-          });
+          try {
+            await updateChatForUser(session.user.id, chatSlug, { title: nextName });
+            logInfo("Persisted generated chat title", {
+              chatId: chatSlug,
+              nameLength: nextName.length,
+            });
+          } catch (error) {
+            logError("Failed to persist generated chat title", {
+              chatId: chatSlug,
+              nameLength: nextName.length,
+              error,
+            });
+          }
         }
       }
 
@@ -272,6 +302,7 @@ export async function POST(request: Request) {
           context: body.context,
         });
       } catch (error) {
+        await clearActiveStreamId(chatSlug, streamId);
         logError("Failed to start model stream", {
           chatId: chatSlug,
           model: body.selectedModel ?? body.selectedReasoningModel ?? "fermion-sprint",
@@ -293,7 +324,16 @@ export async function POST(request: Request) {
                 responseMessage: responseMessage as unknown as UIMessage,
                 isContinuation,
               });
-
+              const activeStreamId = await getActiveStreamId(chatSlug);
+              if (activeStreamId !== streamId) {
+                logInfo("Skipped persisting stale stream messages", {
+                  chatId: chatSlug,
+                  messageCount: messages.length,
+                  streamId,
+                  activeStreamId,
+                });
+                return;
+              }
               logInfo("Model stream finished", {
                 chatId: chatSlug,
                 messageCount: persistedMessages.length,
@@ -363,8 +403,11 @@ export async function POST(request: Request) {
                 error,
               });
             } finally {
-              await clearActiveStreamId(chatSlug, streamId);
-              logInfo("Cleared active stream id", { chatId: chatSlug });
+              const activeStreamId = await getActiveStreamId(chatSlug);
+              if (activeStreamId === streamId) {
+                await clearActiveStreamId(chatSlug, streamId);
+                logInfo("Cleared active stream id", { chatId: chatSlug, streamId });
+              }
             }
           },
         }),
@@ -377,28 +420,27 @@ export async function POST(request: Request) {
     return baseResponse;
   }
 
-  const streamId = randomUUID();
   const [clientBody, resumableBody] = baseResponse.body.tee();
   const resumableTextStream = resumableBody.pipeThrough(new TextDecoderStream());
 
-  void (async () => {
-    try {
-      const streamContext = createResumableStreamContext({
-        waitUntil: after,
-        publisher: await getRedisClient(),
-        subscriber: await getRedisSubscriber(),
-      });
+  try {
+    const streamContext = createResumableStreamContext({
+      waitUntil: after,
+      publisher: await getRedisClient(),
+      subscriber: await getRedisSubscriber(),
+    });
 
-      await streamContext.createNewResumableStream(streamId, () => resumableTextStream);
-      await setActiveStreamId(chatSlug, streamId);
-    } catch (error) {
-      logError("Failed to create resumable chat stream", {
-        chatSlug,
-        streamId,
-        error,
-      });
-    }
-  })();
+    await streamContext.createNewResumableStream(streamId, () => resumableTextStream);
+    await setActiveStreamId(chatSlug, streamId);
+  } catch (error) {
+    await clearActiveStreamId(chatSlug, streamId);
+    logError("Failed to create resumable chat stream", {
+      chatSlug,
+      streamId,
+      error,
+    });
+    throw error;
+  }
 
   void apiLogger.requestSucceeded(200, {
     chatId: chatSlug,
