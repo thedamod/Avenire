@@ -378,56 +378,89 @@ export interface UserWorkspaceSummary {
 }
 
 export async function ensureWorkspaceForOrganization(organizationId: string) {
-  const [existing] = await db
-    .select()
-    .from(workspace)
-    .where(eq(workspace.organizationId, organizationId))
-    .limit(1);
+  return db.transaction(async (tx) => {
+    const now = new Date();
+    const [created] = await tx
+      .insert(workspace)
+      .values({ organizationId, createdAt: now, updatedAt: now })
+      .onConflictDoNothing({ target: workspace.organizationId })
+      .returning();
 
-  if (existing) {
+    if (created) {
+      return created;
+    }
+
+    const [existing] = await tx
+      .select()
+      .from(workspace)
+      .where(eq(workspace.organizationId, organizationId))
+      .limit(1);
+
+    if (!existing) {
+      throw new Error("Failed to resolve workspace for organization");
+    }
+
     return existing;
-  }
-
-  const [created] = await db
-    .insert(workspace)
-    .values({ organizationId, createdAt: new Date(), updatedAt: new Date() })
-    .returning();
-
-  return created;
+  });
 }
 
 export async function ensureWorkspaceRootFolder(workspaceId: string, userId: string) {
-  const [existing] = await db
-    .select()
-    .from(fileFolder)
-    .where(
-      and(
-        eq(fileFolder.workspaceId, workspaceId),
-        isNull(fileFolder.parentId),
-        isNull(fileFolder.deletedAt),
-      ),
-    )
-    .orderBy(asc(fileFolder.createdAt))
-    .limit(1);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
 
-  if (existing) {
-    return existing;
-  }
+    const [existing] = await tx
+      .select()
+      .from(fileFolder)
+      .where(
+        and(
+          eq(fileFolder.workspaceId, workspaceId),
+          isNull(fileFolder.parentId),
+          isNull(fileFolder.deletedAt),
+        ),
+      )
+      .orderBy(asc(fileFolder.createdAt))
+      .limit(1);
 
-  const now = new Date();
-  const [created] = await db
-    .insert(fileFolder)
-    .values({
-      workspaceId,
-      parentId: null,
-      name: "Workspace",
-      createdBy: userId,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
+    if (existing) {
+      return existing;
+    }
 
-  return created;
+    const now = new Date();
+    const [created] = await tx
+      .insert(fileFolder)
+      .values({
+        workspaceId,
+        parentId: null,
+        name: "Workspace",
+        createdBy: userId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    if (created) {
+      return created;
+    }
+
+    const [fallback] = await tx
+      .select()
+      .from(fileFolder)
+      .where(
+        and(
+          eq(fileFolder.workspaceId, workspaceId),
+          isNull(fileFolder.parentId),
+          isNull(fileFolder.deletedAt),
+        ),
+      )
+      .orderBy(asc(fileFolder.createdAt))
+      .limit(1);
+
+    if (!fallback) {
+      throw new Error("Failed to resolve workspace root folder");
+    }
+
+    return fallback;
+  });
 }
 
 export async function resolveWorkspaceForUser(

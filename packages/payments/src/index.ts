@@ -72,14 +72,25 @@ export async function validatePolarWebhook(
   payload: string,
   headers: Record<string, string>,
 ) {
-  const secret = (process.env.POLAR_WEBHOOK_SECRET ?? "").trim();
+  return handlePolarWebhook(
+    payload,
+    headers["polar-signature"] ?? headers["Polar-Signature"] ?? null,
+  );
+}
 
-  if (!secret) {
+export async function handlePolarWebhook(
+  payload: string,
+  signatureHeader: string | null | undefined,
+) {
+  const secret = (process.env.POLAR_WEBHOOK_SECRET ?? "").trim();
+  const signature = signatureHeader?.trim();
+
+  if (!secret || !signature) {
     return null;
   }
 
   try {
-    return validateEvent(payload, headers, secret);
+    return validateEvent(payload, { "polar-signature": signature }, secret);
   } catch (error) {
     if (error instanceof WebhookVerificationError) {
       return null;

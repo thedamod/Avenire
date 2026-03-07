@@ -1,4 +1,4 @@
-import { validatePolarWebhook } from "@avenire/payments";
+import { handlePolarWebhook } from "@avenire/payments";
 import { NextRequest, NextResponse } from "next/server";
 import { applyPolarWebhookEvent } from "@/lib/billing";
 import { createApiLogger } from "@/lib/observability";
@@ -36,8 +36,7 @@ export async function POST(request: NextRequest) {
     }
 
     const payload = await request.text();
-    const headerRecord = Object.fromEntries(request.headers.entries());
-    const event = await validatePolarWebhook(payload, headerRecord);
+    const event = await handlePolarWebhook(payload, request.headers.get("polar-signature"));
     if (!event) {
       console.error("[api/polar/webhooks] signature verification failed", {
         requestId,

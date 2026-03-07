@@ -76,15 +76,20 @@ export async function setActiveStreamId(chatId: string, streamId: string) {
   }
 }
 
-export async function clearActiveStreamId(chatId: string) {
+export async function clearActiveStreamId(chatId: string, streamId: string) {
   if (!hasRedisConfigured()) {
     return;
   }
 
   try {
     const client = await getRedisClient();
-    await client.del(`${ACTIVE_STREAM_KEY_PREFIX}${chatId}`);
+    const key = `${ACTIVE_STREAM_KEY_PREFIX}${chatId}`;
+    const current = await client.get(key);
+    if (current !== streamId) {
+      return;
+    }
+    await client.del(key);
   } catch (error) {
-    console.error("Failed to clear active stream id", { chatId, error });
+    console.error("Failed to clear active stream id", { chatId, streamId, error });
   }
 }

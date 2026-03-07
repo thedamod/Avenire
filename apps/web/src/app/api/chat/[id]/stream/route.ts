@@ -44,7 +44,7 @@ export async function GET(
 
     const stream = await streamContext.resumeExistingStream(activeStreamId);
     if (!stream) {
-      await clearActiveStreamId(id);
+      await clearActiveStreamId(id, activeStreamId);
       return new Response(null, {
         status: 204,
         headers: { "Cache-Control": "no-store" },
