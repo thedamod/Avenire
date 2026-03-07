@@ -4,12 +4,14 @@ import {
   listWorkspaceMembers,
   registerFileAsset,
   softDeleteFileAsset,
+  updateFileAssetStorageMetadata,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { NextResponse } from "next/server";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 import { consumeUploadUnits } from "@/lib/billing";
 import { createApiLogger } from "@/lib/observability";
+import { optimizeAndReuploadVideo } from "@/lib/video-optimization";
 
 function classifyStoredFileType(mimeType: string | null) {
   if (!mimeType) {
@@ -121,7 +123,26 @@ export async function POST(
     );
   }
 
-  const storedFile = file;
+  let storedFile = file;
+  if (storedFile.mimeType?.startsWith("video/")) {
+    const optimized = await optimizeAndReuploadVideo({
+      sourceUrl: storedFile.storageUrl,
+      sourceName: storedFile.name,
+    }).catch(() => null);
+
+    if (optimized) {
+      const updated = await updateFileAssetStorageMetadata(workspaceUuid, storedFile.id, user.id, {
+        storageKey: optimized.storageKey,
+        storageUrl: optimized.storageUrl,
+        name: optimized.name,
+        mimeType: optimized.mimeType,
+        sizeBytes: optimized.sizeBytes,
+      });
+      if (updated) {
+        storedFile = updated;
+      }
+    }
+  }
 
   await publishFilesInvalidationEvent({
     workspaceUuid,

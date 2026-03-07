@@ -1220,6 +1220,43 @@ export async function updateFileAsset(
   return record ? mapFile(record) : null;
 }
 
+export async function updateFileAssetStorageMetadata(
+  workspaceId: string,
+  fileId: string,
+  userId: string,
+  updates: {
+    storageKey: string;
+    storageUrl: string;
+    name?: string;
+    mimeType?: string | null;
+    sizeBytes?: number;
+  },
+) {
+  const [record] = await db
+    .update(fileAsset)
+    .set({
+      storageKey: updates.storageKey,
+      storageUrl: updates.storageUrl,
+      ...(typeof updates.name === "string"
+        ? { name: updates.name.trim().slice(0, 255) || "Untitled" }
+        : {}),
+      ...(typeof updates.mimeType !== "undefined" ? { mimeType: updates.mimeType } : {}),
+      ...(typeof updates.sizeBytes === "number" ? { sizeBytes: updates.sizeBytes } : {}),
+      updatedBy: userId,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNull(fileAsset.deletedAt),
+      ),
+    )
+    .returning();
+
+  return record ? mapFile(record) : null;
+}
+
 export async function getFileAssetById(workspaceId: string, fileId: string) {
   const [record] = await db
     .select()

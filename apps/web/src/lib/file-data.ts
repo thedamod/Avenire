@@ -25,6 +25,7 @@ export {
   softDeleteFileAsset,
   softDeleteFolder,
   updateFileAsset,
+  updateFileAssetStorageMetadata,
   updateFolder,
   userCanAccessWorkspace,
   registerFileAsset,
