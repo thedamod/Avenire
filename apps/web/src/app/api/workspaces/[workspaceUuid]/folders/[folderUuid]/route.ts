@@ -1,5 +1,6 @@
 import {
   getFolderWithAncestors,
+  listWorkspaceMembers,
   listFolderContents,
   softDeleteFolder,
   updateFolder,
@@ -19,6 +20,11 @@ export async function GET(
   const { workspaceUuid, folderUuid } = await context.params;
   const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
   if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const members = await listWorkspaceMembers(workspaceUuid);
+  const currentMember = members.find((member) => member.userId === user.id);
+  if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -48,6 +54,11 @@ export async function PATCH(
   const { workspaceUuid, folderUuid } = await context.params;
   const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
   if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const members = await listWorkspaceMembers(workspaceUuid);
+  const currentMember = members.find((member) => member.userId === user.id);
+  if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

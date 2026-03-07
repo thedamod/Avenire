@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { db } from "./client";
 import { member, organization, user as authUser } from "./auth-schema";
@@ -32,6 +32,14 @@ export interface ExplorerFileRecord {
   sizeBytes: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkspaceMemberRecord {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: string;
+  createdAt: string;
 }
 
 function mapFolder(row: typeof fileFolder.$inferSelect): ExplorerFolderRecord {
@@ -328,6 +336,39 @@ export async function userCanAccessWorkspace(userId: string, workspaceId: string
   return Boolean(membership);
 }
 
+export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMemberRecord[]> {
+  const [ws] = await db
+    .select({ organizationId: workspace.organizationId })
+    .from(workspace)
+    .where(eq(workspace.id, workspaceId))
+    .limit(1);
+
+  if (!ws) {
+    return [];
+  }
+
+  const rows = await db
+    .select({
+      userId: authUser.id,
+      email: authUser.email,
+      name: authUser.name,
+      role: member.role,
+      createdAt: member.createdAt,
+    })
+    .from(member)
+    .innerJoin(authUser, eq(authUser.id, member.userId))
+    .where(eq(member.organizationId, ws.organizationId))
+    .orderBy(asc(authUser.email));
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    email: row.email,
+    name: row.name ?? null,
+    role: row.role,
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
 export async function getFolderWithAncestors(workspaceId: string, folderId: string) {
   const [folder] = await db
     .select()
@@ -431,9 +472,74 @@ export async function listWorkspaceFiles(workspaceId: string) {
   return rows.map(mapFile);
 }
 
+async function validateFolderParentId(input: {
+  workspaceId: string;
+  parentId: string | null;
+  currentFolderId?: string;
+}) {
+  const { workspaceId, parentId, currentFolderId } = input;
+
+  if (parentId === null) {
+    const roots = await db
+      .select({ id: fileFolder.id })
+      .from(fileFolder)
+      .where(
+        and(
+          eq(fileFolder.workspaceId, workspaceId),
+          isNull(fileFolder.parentId),
+          isNull(fileFolder.deletedAt),
+        ),
+      )
+      .limit(2);
+
+    const hasOtherRoot = roots.some((root) => root.id !== currentFolderId);
+    if (hasOtherRoot) {
+      return null;
+    }
+
+    return parentId;
+  }
+
+  if (parentId === workspaceId || parentId === currentFolderId) {
+    return null;
+  }
+
+  const [parentFolder] = await db
+    .select({ id: fileFolder.id })
+    .from(fileFolder)
+    .where(
+      and(
+        eq(fileFolder.id, parentId),
+        eq(fileFolder.workspaceId, workspaceId),
+        isNull(fileFolder.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  if (!parentFolder) {
+    return null;
+  }
+
+  if (currentFolderId) {
+    const parentWithAncestors = await getFolderWithAncestors(workspaceId, parentId);
+    if (!parentWithAncestors) {
+      return null;
+    }
+
+    const createsCycle = parentWithAncestors.ancestors.some(
+      (ancestor) => ancestor.id === currentFolderId,
+    );
+    if (createsCycle) {
+      return null;
+    }
+  }
+
+  return parentId;
+}
+
 export async function createFolder(
   workspaceId: string,
-  parentId: string,
+  parentId: string | null,
   name: string,
   userId: string,
 ) {
@@ -442,12 +548,20 @@ export async function createFolder(
     return null;
   }
 
+  const validParentId = await validateFolderParentId({
+    workspaceId,
+    parentId,
+  });
+  if (validParentId === null) {
+    return null;
+  }
+
   const now = new Date();
   const [folder] = await db
     .insert(fileFolder)
     .values({
       workspaceId,
-      parentId,
+      parentId: validParentId,
       name: trimmedName,
       createdBy: userId,
       createdAt: now,
@@ -463,13 +577,26 @@ export async function updateFolder(
   folderId: string,
   updates: { name?: string; parentId?: string | null },
 ) {
+  let nextParentId: string | null | undefined;
+  if (typeof updates.parentId !== "undefined") {
+    const validParentId = await validateFolderParentId({
+      workspaceId,
+      parentId: updates.parentId,
+      currentFolderId: folderId,
+    });
+    if (validParentId === null) {
+      return null;
+    }
+    nextParentId = validParentId;
+  }
+
   const [folder] = await db
     .update(fileFolder)
     .set({
       ...(typeof updates.name === "string"
         ? { name: updates.name.trim().slice(0, 160) || "Untitled Folder" }
         : {}),
-      ...(typeof updates.parentId !== "undefined" ? { parentId: updates.parentId } : {}),
+      ...(typeof nextParentId !== "undefined" ? { parentId: nextParentId } : {}),
       updatedAt: new Date(),
     })
     .where(

@@ -20,6 +20,7 @@ import {
 } from "@/lib/chat-data";
 import {
   clearActiveStreamId,
+  getActiveStreamId,
   getRedisClient,
   getRedisSubscriber,
   setActiveStreamId,

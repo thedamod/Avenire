@@ -7,6 +7,7 @@ export {
   grantResourceToUserByEmail,
   listFolderContents,
   listWorkspacesForUser,
+  listWorkspaceMembers,
   listWorkspaceFolders,
   listWorkspaceFiles,
   createWorkspaceForUser,

@@ -26,7 +26,7 @@ export async function POST(
 
   const { slug } = await context.params;
   const chat = await getChatBySlugForUser(session.user.id, slug);
-  if (!chat || chat.ownerUserId !== session.user.id) {
+  if (!chat) {
     void apiLogger.requestFailed(403, "Chat not found", { slug });
     return NextResponse.json({ error: "Chat not found" }, { status: 403 });
   }
