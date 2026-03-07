@@ -360,6 +360,7 @@ export function DashboardSidebar({
     Array<{ id: string; name: string; folderId: string; readOnly?: boolean }>
   >([]);
   const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(new Set());
+  const [hydratedTreeStorageKey, setHydratedTreeStorageKey] = useState<string | null>(null);
   const [treeDropFolderId, setTreeDropFolderId] = useState<string | null>(null);
   const [draggedTreeItem, setDraggedTreeItem] = useState<{
     id: string;
@@ -580,30 +581,39 @@ export function DashboardSidebar({
     if (!expandedTreeStorageKey) {
       return;
     }
-
-    try {
-      const raw = window.localStorage.getItem(expandedTreeStorageKey);
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw) as string[];
-      if (Array.isArray(parsed)) {
-        setExpandedTreePaths(new Set(parsed));
-      }
-    } catch {
-      // ignore
-    }
+    setExpandedTreePaths(new Set());
+    setHydratedTreeStorageKey(null);
   }, [expandedTreeStorageKey]);
 
   useEffect(() => {
     if (!expandedTreeStorageKey) {
       return;
     }
+
+    try {
+      const raw = window.localStorage.getItem(expandedTreeStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as string[];
+        if (Array.isArray(parsed)) {
+          setExpandedTreePaths(new Set(parsed));
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setHydratedTreeStorageKey(expandedTreeStorageKey);
+    }
+  }, [expandedTreeStorageKey]);
+
+  useEffect(() => {
+    if (!expandedTreeStorageKey || hydratedTreeStorageKey !== expandedTreeStorageKey) {
+      return;
+    }
     window.localStorage.setItem(
       expandedTreeStorageKey,
       JSON.stringify(Array.from(expandedTreePaths)),
     );
-  }, [expandedTreePaths, expandedTreeStorageKey]);
+  }, [expandedTreePaths, expandedTreeStorageKey, hydratedTreeStorageKey]);
 
   useEffect(() => {
     if (activeView !== "files" || folderTree.length === 0) {
@@ -1198,6 +1208,10 @@ export function DashboardSidebar({
                             );
                             setDraggedTreeItem(item);
                           },
+                          onDragEnd: () => {
+                            setDraggedTreeItem(null);
+                            setTreeDropFolderId(null);
+                          },
                           onDropToFolder: (folderId) => {
                             if (!draggedTreeItem) {
                               return;
@@ -1266,6 +1280,7 @@ function renderWorkspaceTree(input: {
   files: Array<{ id: string; name: string; folderId: string; readOnly?: boolean }>;
   treeDropFolderId: string | null;
   onDragStart: (event: DragEvent<HTMLDivElement>, item: { id: string; kind: "file" | "folder" }) => void;
+  onDragEnd: () => void;
   onDropToFolder: (folderId: string) => void;
   onDragTargetChange: (folderId: string | null) => void;
 }): ReactNode {
@@ -1284,7 +1299,10 @@ function renderWorkspaceTree(input: {
         draggable={!folder.readOnly}
         key={folder.id}
         name={folder.name}
-        onDragEnd={() => input.onDragTargetChange(null)}
+        onDragEnd={() => {
+          input.onDragTargetChange(null);
+          input.onDragEnd();
+        }}
         onDragLeave={() => input.onDragTargetChange(null)}
         onDragOver={(event) => {
           if (folder.readOnly) {
@@ -1328,6 +1346,7 @@ function renderWorkspaceTree(input: {
                 }
                 input.onDragStart(event, { id: file.id, kind: "file" });
               }}
+              onDragEnd={() => input.onDragEnd()}
               path={file.id}
               style={{
                 animationDelay: `${fileIndex * 16}ms`,

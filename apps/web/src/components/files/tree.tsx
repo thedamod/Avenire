@@ -166,6 +166,7 @@ export const FileTreeFolder = ({
             )}
             onClick={handleSelect}
             onKeyDown={(event) => {
+              event.stopPropagation();
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 handleSelect();
@@ -201,7 +202,6 @@ export const FileTreeFolder = ({
             <div
               className="ml-4 border-l pl-2"
               data-tree-children={isExpanded ? "open" : "closed"}
-              key={`${path}-${isExpanded ? "open" : "closed"}`}
             >
               {children}
             </div>

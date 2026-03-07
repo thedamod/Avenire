@@ -595,7 +595,10 @@ export function FileExplorer() {
       if (createdDateRange?.from && createdAt < createdDateRange.from.getTime()) {
         return false;
       }
-      if (createdDateRange?.to && createdAt > createdDateRange.to.getTime()) {
+      const toInclusive = createdDateRange?.to
+        ? new Date(createdDateRange.to).setHours(23, 59, 59, 999)
+        : null;
+      if (toInclusive !== null && createdAt > toInclusive) {
         return false;
       }
       return true;
@@ -642,7 +645,10 @@ export function FileExplorer() {
       if (createdDateRange?.from && createdAt < createdDateRange.from.getTime()) {
         return false;
       }
-      if (createdDateRange?.to && createdAt > createdDateRange.to.getTime()) {
+      const toInclusive = createdDateRange?.to
+        ? new Date(createdDateRange.to).setHours(23, 59, 59, 999)
+        : null;
+      if (toInclusive !== null && createdAt > toInclusive) {
         return false;
       }
       return true;
@@ -1502,6 +1508,17 @@ export function FileExplorer() {
       const targetFolder = allFolders.find((entry) => entry.id === targetFolderId);
       if (folder?.readOnly || targetFolder?.readOnly) {
         return;
+      }
+      if (folderId === targetFolderId) {
+        return;
+      }
+      const byId = new Map(allFolders.map((entry) => [entry.id, entry]));
+      let cursor = byId.get(targetFolderId);
+      while (cursor?.parentId) {
+        if (cursor.parentId === folderId) {
+          return;
+        }
+        cursor = byId.get(cursor.parentId);
       }
       await fetch(`/api/workspaces/${workspaceUuid}/folders/${folderId}`, {
         method: "PATCH",
@@ -2542,9 +2559,8 @@ export function FileExplorer() {
                                 configureDragPreview(event);
                                 event.dataTransfer.setData("text/plain", sourceIds.join(","));
                               }}
-                              onDrop={(event) => {
+                              onDrop={async (event) => {
                                 event.preventDefault();
-                                event.stopPropagation();
                                 if (folder.readOnly) {
                                   canvasDragDepthRef.current = 0;
                                   setCanvasDropActive(false);
@@ -2553,10 +2569,42 @@ export function FileExplorer() {
                                   return;
                                 }
                                 const sourceIds = draggingIds.length > 0 ? draggingIds : Array.from(selection.selectedIds);
+                                if (sourceIds.length === 0) {
+                                  const uploadCandidates = await getDropUploadCandidates(event);
+                                  if (uploadCandidates.length > 0) {
+                                    queueUploads(uploadCandidates);
+                                  }
+                                  canvasDragDepthRef.current = 0;
+                                  setCanvasDropActive(false);
+                                  setDropTargetId(null);
+                                  setDraggingIds([]);
+                                  return;
+                                }
+                                const folderById = new Map(allFolders.map((entry) => [entry.id, entry]));
+                                const hasInvalidMove = sourceIds.some((id) => {
+                                  if (id === folder.id) {
+                                    return true;
+                                  }
+                                  const sourceFolder = folderById.get(id);
+                                  if (!sourceFolder) {
+                                    return false;
+                                  }
+                                  let cursor = folderById.get(folder.id);
+                                  while (cursor?.parentId) {
+                                    if (cursor.parentId === sourceFolder.id) {
+                                      return true;
+                                    }
+                                    cursor = folderById.get(cursor.parentId);
+                                  }
+                                  return false;
+                                });
                                 canvasDragDepthRef.current = 0;
                                 setCanvasDropActive(false);
                                 setDropTargetId(null);
-                                void moveItemsToFolder(sourceIds, folder.id);
+                                if (!hasInvalidMove) {
+                                  event.stopPropagation();
+                                  void moveItemsToFolder(sourceIds, folder.id);
+                                }
                                 setDraggingIds([]);
                               }}
                               onTouchEnd={endTouchDrag}
@@ -2578,6 +2626,7 @@ export function FileExplorer() {
                             >
                               <div className="absolute top-2 left-2 z-[90]">
                                 <Checkbox
+                                  aria-label={`Select folder ${folder.name}`}
                                   checked={selection.selectedIds.has(folder.id)}
                                   onCheckedChange={() => selection.toggleSelection(folder.id)}
                                   onClick={(event) => event.stopPropagation()}
@@ -2749,16 +2798,17 @@ export function FileExplorer() {
                                 style={{ width: 160 }}
                               >
                                 <div className="absolute top-2 left-2 z-10">
-                                  <Checkbox
-                                    checked={selection.selectedIds.has(file.id)}
-                                    onCheckedChange={() => selection.toggleSelection(file.id)}
-                                    onClick={(event) => event.stopPropagation()}
+                                <Checkbox
+                                  aria-label={`Select file ${file.name}`}
+                                  checked={selection.selectedIds.has(file.id)}
+                                  onCheckedChange={() => selection.toggleSelection(file.id)}
+                                  onClick={(event) => event.stopPropagation()}
                                   />
                                 </div>
                                 <CardContent className="pt-0">
                                   <FileCard
                                     fileType={fileCardType}
-                                    lastUpdated={new Date(file.createdAt)}
+                                    lastUpdated={new Date(file.updatedAt ?? file.createdAt)}
                                     name={file.name}
                                     previewContent={
                                       isImage ? (
@@ -2845,7 +2895,9 @@ export function FileExplorer() {
                     {viewMode === "list" ? (
                       <div className="divide-y divide-border/70 rounded-md border border-border/70">
                         {sortedFolders.map((folder) => (
-                          <div
+                          <ContextMenu key={folder.id}>
+                            <ContextMenuTrigger>
+                              <div
                             className={cn(
                               "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
                               selection.selectedIds.has(folder.id) && "bg-emerald-500/10",
@@ -2854,7 +2906,6 @@ export function FileExplorer() {
                             data-drop-folder-id={folder.id}
                             data-select-item="true"
                             draggable={!folder.readOnly}
-                            key={folder.id}
                             onClick={(event) => {
                               selection.handleItemClick(event, folder.id, visibleItemIds);
                               handleOpenOnDoubleClick(event, () => navigateToFolder(folder.id));
@@ -2894,9 +2945,8 @@ export function FileExplorer() {
                               configureDragPreview(event);
                               event.dataTransfer.setData("text/plain", sourceIds.join(","));
                             }}
-                            onDrop={(event) => {
+                            onDrop={async (event) => {
                               event.preventDefault();
-                              event.stopPropagation();
                               if (folder.readOnly) {
                                 canvasDragDepthRef.current = 0;
                                 setCanvasDropActive(false);
@@ -2905,10 +2955,42 @@ export function FileExplorer() {
                                 return;
                               }
                               const sourceIds = draggingIds.length > 0 ? draggingIds : Array.from(selection.selectedIds);
+                              if (sourceIds.length === 0) {
+                                const uploadCandidates = await getDropUploadCandidates(event);
+                                if (uploadCandidates.length > 0) {
+                                  queueUploads(uploadCandidates);
+                                }
+                                canvasDragDepthRef.current = 0;
+                                setCanvasDropActive(false);
+                                setDropTargetId(null);
+                                setDraggingIds([]);
+                                return;
+                              }
+                              const folderById = new Map(allFolders.map((entry) => [entry.id, entry]));
+                              const hasInvalidMove = sourceIds.some((id) => {
+                                if (id === folder.id) {
+                                  return true;
+                                }
+                                const sourceFolder = folderById.get(id);
+                                if (!sourceFolder) {
+                                  return false;
+                                }
+                                let cursor = folderById.get(folder.id);
+                                while (cursor?.parentId) {
+                                  if (cursor.parentId === sourceFolder.id) {
+                                    return true;
+                                  }
+                                  cursor = folderById.get(cursor.parentId);
+                                }
+                                return false;
+                              });
                               canvasDragDepthRef.current = 0;
                               setCanvasDropActive(false);
                               setDropTargetId(null);
-                              void moveItemsToFolder(sourceIds, folder.id);
+                              if (!hasInvalidMove) {
+                                event.stopPropagation();
+                                void moveItemsToFolder(sourceIds, folder.id);
+                              }
                               setDraggingIds([]);
                             }}
                             onTouchEnd={endTouchDrag}
@@ -2928,6 +3010,7 @@ export function FileExplorer() {
                             }}
                           >
                             <Checkbox
+                              aria-label={`Select folder ${folder.name}`}
                               checked={selection.selectedIds.has(folder.id)}
                               onCheckedChange={() => selection.toggleSelection(folder.id)}
                               onClick={(event) => event.stopPropagation()}
@@ -2942,19 +3025,78 @@ export function FileExplorer() {
                                 {folder.updatedAt ? toUpdatedLabel(folder.updatedAt) : "—"}
                               </span>
                             </div>
-                          </div>
+                              </div>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent>
+                              <ContextMenuItem onClick={() => navigateToFolder(folder.id)}>
+                                Open
+                              </ContextMenuItem>
+                              {!folder.readOnly ? (
+                                <>
+                                  <ContextMenuItem onClick={() => openRenameFolderDialog(folder)}>
+                                    Rename
+                                  </ContextMenuItem>
+                                  <ContextMenuItem onClick={() => openCreateFolderDialog(folder.id)}>
+                                    New folder here
+                                  </ContextMenuItem>
+                                  <ContextMenuSub>
+                                    <ContextMenuSubTrigger>Move to</ContextMenuSubTrigger>
+                                    <ContextMenuSubContent>
+                                      {allFolders
+                                        .filter((target) => target.id !== folder.id && !target.readOnly)
+                                        .slice(0, 20)
+                                        .map((target) => (
+                                          <ContextMenuItem
+                                            key={target.id}
+                                            onClick={() => {
+                                              void moveFolder(folder.id, target.id);
+                                            }}
+                                          >
+                                            {target.name}
+                                          </ContextMenuItem>
+                                        ))}
+                                    </ContextMenuSubContent>
+                                  </ContextMenuSub>
+                                </>
+                              ) : null}
+                              <ContextMenuItem
+                                onClick={() => {
+                                  setPropertiesItem({
+                                    kind: "folder",
+                                    id: folder.id,
+                                    name: folder.name,
+                                    detail: "Folder",
+                                  });
+                                  setPropertiesOpen(true);
+                                }}
+                              >
+                                Properties
+                              </ContextMenuItem>
+                              {!folder.readOnly ? (
+                                <ContextMenuItem
+                                  onClick={() => {
+                                    void deleteFolder(folder.id);
+                                  }}
+                                  variant="destructive"
+                                >
+                                  Delete
+                                </ContextMenuItem>
+                              ) : null}
+                            </ContextMenuContent>
+                          </ContextMenu>
                         ))}
                         {sortedFiles.map((file) => {
                           const fileKind = detectFileKind(file);
                           return (
-                            <div
+                            <ContextMenu key={file.id}>
+                              <ContextMenuTrigger>
+                                <div
                               className={cn(
                                 "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
                                 selection.selectedIds.has(file.id) && "bg-emerald-500/10",
                               )}
                               data-select-item="true"
                               draggable={!file.readOnly}
-                              key={file.id}
                               onClick={(event) => {
                                 selection.handleItemClick(event, file.id, visibleItemIds);
                                 handleOpenOnDoubleClick(event, () => selectFile(file.id));
@@ -2993,6 +3135,7 @@ export function FileExplorer() {
                               }}
                             >
                               <Checkbox
+                                aria-label={`Select file ${file.name}`}
                                 checked={selection.selectedIds.has(file.id)}
                                 onCheckedChange={() => selection.toggleSelection(file.id)}
                                 onClick={(event) => event.stopPropagation()}
@@ -3011,7 +3154,60 @@ export function FileExplorer() {
                                   {toUpdatedLabel(file.updatedAt ?? file.createdAt)}
                                 </span>
                               </div>
-                            </div>
+                                </div>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem onClick={() => selectFile(file.id)}>Open</ContextMenuItem>
+                                {!file.readOnly ? (
+                                  <>
+                                    <ContextMenuItem onClick={() => openRenameFileDialog(file)}>
+                                      Rename
+                                    </ContextMenuItem>
+                                    <ContextMenuSub>
+                                      <ContextMenuSubTrigger>Move to</ContextMenuSubTrigger>
+                                      <ContextMenuSubContent>
+                                        {allFolders
+                                          .filter((target) => !target.readOnly)
+                                          .slice(0, 20)
+                                          .map((target) => (
+                                            <ContextMenuItem
+                                              key={target.id}
+                                              onClick={() => {
+                                                void moveFile(file.id, target.id);
+                                              }}
+                                            >
+                                              {target.name}
+                                            </ContextMenuItem>
+                                          ))}
+                                      </ContextMenuSubContent>
+                                    </ContextMenuSub>
+                                  </>
+                                ) : null}
+                                <ContextMenuItem
+                                  onClick={() => {
+                                    setPropertiesItem({
+                                      kind: "file",
+                                      id: file.id,
+                                      name: file.name,
+                                      detail: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown"}`,
+                                    });
+                                    setPropertiesOpen(true);
+                                  }}
+                                >
+                                  Properties
+                                </ContextMenuItem>
+                                {!file.readOnly ? (
+                                  <ContextMenuItem
+                                    onClick={() => {
+                                      void deleteFile(file.id);
+                                    }}
+                                    variant="destructive"
+                                  >
+                                    Delete
+                                  </ContextMenuItem>
+                                ) : null}
+                              </ContextMenuContent>
+                            </ContextMenu>
                           );
                         })}
                       </div>

@@ -1,6 +1,6 @@
 import { UTApi, UTFile } from "@avenire/storage";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 
@@ -38,12 +38,34 @@ async function runFfmpeg(args: string[]) {
     });
 
     let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill("SIGKILL");
+      reject(new Error(`ffmpeg timed out after ${FFMPEG_TIMEOUT_MS}ms\n${stderr}`.trim()));
+    }, FFMPEG_TIMEOUT_MS);
+
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
 
-    child.on("error", reject);
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
     child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       if (code === 0) {
         resolve();
         return;
@@ -66,13 +88,35 @@ export async function optimizeAndReuploadVideo(
   const transcodePath = join(tempDir, "transcoded.mp4");
 
   try {
-    const response = await fetch(input.sourceUrl);
+    const response = await fetch(input.sourceUrl, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!response.ok || !response.body) {
       return null;
     }
 
-    const sourceBuffer = Buffer.from(await response.arrayBuffer());
-    await writeFile(sourcePath, sourceBuffer);
+    const sourceFile = await open(sourcePath, "w");
+    const reader = response.body.getReader();
+    let downloadedBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        if (!value) {
+          continue;
+        }
+        downloadedBytes += value.byteLength;
+        if (downloadedBytes > DOWNLOAD_MAX_BYTES) {
+          throw new Error("Source video exceeds maximum download size");
+        }
+        await sourceFile.write(value);
+      }
+    } finally {
+      await sourceFile.close();
+      reader.releaseLock();
+    }
 
     let optimizedPath = remuxPath;
     try {
@@ -145,3 +189,6 @@ export async function optimizeAndReuploadVideo(
     await rm(tempDir, { recursive: true, force: true });
   }
 }
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
+const FFMPEG_TIMEOUT_MS = 3 * 60_000;

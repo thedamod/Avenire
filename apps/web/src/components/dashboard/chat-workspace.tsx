@@ -22,6 +22,7 @@ import {
   CHAT_NAME_UPDATED_EVENT,
   type ChatNameUpdatedDetail,
 } from "@/lib/chat-events";
+import type { ShareSuggestion } from "@/components/files/explorer/shared";
 import { useDashboardViewStore } from "@/stores/dashboardViewStore";
 
 interface ChatWorkspaceProps {
@@ -29,11 +30,6 @@ interface ChatWorkspaceProps {
   chatTitle: string;
   initialMessages: UIMessage[];
   isReadonly?: boolean;
-}
-
-interface ShareSuggestion {
-  email: string;
-  name: string | null;
 }
 
 function PlaceholderCard({
@@ -70,6 +66,7 @@ export function ChatWorkspace({
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [title, setTitle] = useState(chatTitle);
 
   useEffect(() => {
@@ -98,6 +95,10 @@ export function ChatWorkspace({
   }, [chatSlug]);
 
   useEffect(() => {
+    if (!isShareDialogOpen && !shareEmail.trim()) {
+      setShareSuggestions([]);
+      return;
+    }
     const timer = setTimeout(() => {
       void (async () => {
         try {
@@ -118,7 +119,7 @@ export function ChatWorkspace({
       })();
     }, 150);
     return () => clearTimeout(timer);
-  }, [chatSlug, shareEmail]);
+  }, [chatSlug, isShareDialogOpen, shareEmail]);
 
   if (view === "flashcards") {
     return (
@@ -222,7 +223,7 @@ export function ChatWorkspace({
         </div>
         <div className="flex w-1/3 justify-end">
           {!isReadonly ? (
-          <Dialog>
+          <Dialog onOpenChange={setIsShareDialogOpen} open={isShareDialogOpen}>
             <DialogTrigger
               render={
                 <Button

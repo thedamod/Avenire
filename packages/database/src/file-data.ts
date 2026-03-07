@@ -1177,6 +1177,7 @@ export async function registerFileAsset(
 export async function updateFileAsset(
   workspaceId: string,
   fileId: string,
+  userId: string,
   updates: { folderId?: string; name?: string },
 ) {
   if (updates.folderId) {
@@ -1204,6 +1205,7 @@ export async function updateFileAsset(
       ...(typeof updates.name === "string"
         ? { name: updates.name.trim().slice(0, 255) || "Untitled" }
         : {}),
+      updatedBy: userId,
       updatedAt: new Date(),
     })
     .where(

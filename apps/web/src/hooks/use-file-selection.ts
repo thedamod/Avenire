@@ -138,22 +138,13 @@ export function useFileSelection({ gridRef, itemRefs }: UseFileSelectionOptions)
       }
 
       if (isMultiToggle) {
-        setSelectedIds((previous) => {
-          const next = new Set(previous);
-          if (next.has(itemId)) {
-            next.delete(itemId);
-          } else {
-            next.add(itemId);
-          }
-          return next;
-        });
-        setSelectionAnchorId(itemId);
+        toggleSelection(itemId);
         return;
       }
 
       setSelection([itemId], itemId);
     },
-    [selectedIds, selectionAnchorId, setSelection],
+    [selectedIds, selectionAnchorId, setSelection, toggleSelection],
   );
 
   const prepareDrag = useCallback(

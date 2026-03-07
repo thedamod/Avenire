@@ -4,14 +4,12 @@ import {
   listWorkspaceMembers,
   registerFileAsset,
   softDeleteFileAsset,
-  updateFileAsset,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { NextResponse } from "next/server";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 import { consumeUploadUnits } from "@/lib/billing";
 import { createApiLogger } from "@/lib/observability";
-import { optimizeAndReuploadVideo } from "@/lib/video-optimization";
 
 function classifyStoredFileType(mimeType: string | null) {
   if (!mimeType) {
@@ -123,26 +121,7 @@ export async function POST(
     );
   }
 
-  let storedFile = file;
-  if (storedFile.mimeType?.startsWith("video/")) {
-    const optimized = await optimizeAndReuploadVideo({
-      sourceUrl: storedFile.storageUrl,
-      sourceName: storedFile.name,
-    }).catch(() => null);
-
-    if (optimized) {
-      const updated = await updateFileAsset(workspaceUuid, storedFile.id, user.id, {
-        storageKey: optimized.storageKey,
-        storageUrl: optimized.storageUrl,
-        name: optimized.name,
-        mimeType: optimized.mimeType,
-        sizeBytes: optimized.sizeBytes,
-      });
-      if (updated) {
-        storedFile = updated;
-      }
-    }
-  }
+  const storedFile = file;
 
   await publishFilesInvalidationEvent({
     workspaceUuid,

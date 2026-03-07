@@ -21,5 +21,46 @@ export async function GET(
     return new Response("File not found", { status: 404 });
   }
 
-  return Response.redirect(file.storageUrl, 307);
+  const upstreamHeaders = new Headers();
+  const range = request.headers.get("range");
+  if (range) {
+    upstreamHeaders.set("range", range);
+  }
+
+  const upstream = await fetch(file.storageUrl, {
+    headers: upstreamHeaders,
+    redirect: "follow",
+  }).catch(() => null);
+
+  if (!upstream) {
+    return new Response("Unable to stream file", { status: 502 });
+  }
+
+  if (!upstream.ok && upstream.status !== 206) {
+    return new Response("Unable to stream file", { status: upstream.status });
+  }
+
+  const headers = new Headers();
+  const passthrough = [
+    "accept-ranges",
+    "cache-control",
+    "content-disposition",
+    "content-length",
+    "content-range",
+    "content-type",
+    "etag",
+    "last-modified",
+  ];
+
+  for (const key of passthrough) {
+    const value = upstream.headers.get(key);
+    if (value) {
+      headers.set(key, value);
+    }
+  }
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers,
+  });
 }

@@ -69,6 +69,8 @@ function PDFViewerContent({ source }: { source: string }) {
   const resolvedZoomInput =
     isZoomInputDirty ? zoomInput : String(Math.round((zoomLevel || 1) * 100));
 
+  // Workaround: nudge zoom by +0.01 then -0.01 after pdfProxy is ready to force
+  // an initial renderer reflow; didNudgeZoom prevents repeating this fixup.
   useEffect(() => {
     if (!pdfProxy || didNudgeZoom.current) {
       return;

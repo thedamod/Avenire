@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@avenire/ui/components/button";
 import { Progress } from "@avenire/ui/components/progress";
@@ -81,7 +81,14 @@ function CircularLoader({
   return (
     <div className="relative flex h-10 w-10 flex-shrink-0 items-center justify-center">
       <svg width="40" height="40" className="-rotate-90 transform">
-        <circle cx="20" cy="20" r={radius} fill="none" stroke="#e2e8f0" strokeWidth="2" />
+        <circle
+          cx="20"
+          cy="20"
+          r={radius}
+          fill="none"
+          strokeWidth="2"
+          className="stroke-slate-200 dark:stroke-slate-700"
+        />
         <circle
           cx="20"
           cy="20"
@@ -222,6 +229,10 @@ export function FileUploadActivity({
   const isMobile = useIsMobile();
   const [localFiles, setLocalFiles] = useState<FileUploadItem[]>(files);
 
+  useEffect(() => {
+    setLocalFiles(files);
+  }, [files]);
+
   const handleRemoveFile = (id: string) => {
     setLocalFiles((prev) => prev.filter((f) => f.id !== id));
   };
@@ -237,15 +248,10 @@ export function FileUploadActivity({
     return null;
   }
 
-  const completedCount = displayFiles.filter((f) => f.completed).length;
-
   if (isMobile) {
     return (
       <div className="pointer-events-none fixed inset-0 z-50 flex items-end justify-center px-4 pb-4">
-        <div
-          className="pointer-events-auto w-full max-w-sm overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
-          onClick={() => {}}
-        >
+        <div className="pointer-events-auto w-full max-w-sm overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
           <div className="flex justify-end border-b border-slate-200 p-3 dark:border-slate-800">
             <button
               onClick={() => onOpenChange?.(false)}
@@ -255,35 +261,11 @@ export function FileUploadActivity({
               <X size={20} />
             </button>
           </div>
-
-          <div className="max-h-96 overflow-y-auto p-2">
-            {displayFiles.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-                <Upload className="h-8 w-8 text-slate-300 dark:text-slate-700" />
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  No files uploaded yet
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {displayFiles.map((file) => (
-                  <FileItem key={file.id} file={file} onRemove={handleRemoveFile} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {completedCount > 0 && (
-            <div className="border-t border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
-              <button
-                onClick={handleClearCompleted}
-                className="text-xs text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-50"
-                type="button"
-              >
-                Clear completed
-              </button>
-            </div>
-          )}
+          <ActivityContent
+            files={displayFiles}
+            onClearCompleted={handleClearCompleted}
+            onRemoveFile={handleRemoveFile}
+          />
         </div>
       </div>
     );
@@ -302,32 +284,11 @@ export function FileUploadActivity({
           </button>
         </div>
 
-        <div className="max-h-96 overflow-y-auto p-2">
-          {displayFiles.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-              <Upload className="h-8 w-8 text-slate-300 dark:text-slate-700" />
-              <p className="text-sm text-slate-500 dark:text-slate-400">No files uploaded yet</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {displayFiles.map((file) => (
-                <FileItem key={file.id} file={file} onRemove={handleRemoveFile} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {completedCount > 0 && (
-          <div className="border-t border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
-            <button
-              onClick={handleClearCompleted}
-              className="text-xs text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-50"
-              type="button"
-            >
-              Clear completed
-            </button>
-          </div>
-        )}
+        <ActivityContent
+          files={displayFiles}
+          onClearCompleted={handleClearCompleted}
+          onRemoveFile={handleRemoveFile}
+        />
       </div>
     </div>
   );

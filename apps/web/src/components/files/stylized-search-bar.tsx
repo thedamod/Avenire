@@ -88,6 +88,13 @@ export function StylizedSearchBar({
   const [aiSnippet, setAiSnippet] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const onSearchRef = useRef(onSearch);
+  const onApplyWorkspaceFilterRef = useRef(onApplyWorkspaceFilter);
+
+  useEffect(() => {
+    onSearchRef.current = onSearch;
+    onApplyWorkspaceFilterRef.current = onApplyWorkspaceFilter;
+  }, [onApplyWorkspaceFilter, onSearch]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -116,15 +123,12 @@ export function StylizedSearchBar({
     if (query.trim().length > 0) {
       return;
     }
-    if (!showResults && results.length === 0 && !aiSnippet) {
-      return;
-    }
     setShowResults(false);
     setResults([]);
     setAiSnippet("");
-    onApplyWorkspaceFilter?.(null);
-    onSearch?.("", []);
-  }, [aiSnippet, onApplyWorkspaceFilter, onSearch, query, results.length, showResults]);
+    onApplyWorkspaceFilterRef.current?.(null);
+    onSearchRef.current?.("", []);
+  }, [query]);
 
   const handleSearch = async (searchQuery: string) => {
     const trimmed = searchQuery.trim();
@@ -187,12 +191,11 @@ export function StylizedSearchBar({
           >
             {isLoading && (
               <div
-                className="pointer-events-none absolute inset-0 rounded-3xl"
+                className="pointer-events-none absolute inset-0 animate-pulse rounded-3xl"
                 style={{
                   backgroundImage:
                     "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 20%, rgba(255,255,255,0.5) 50%, rgba(255,255,255,0.3) 80%, transparent 100%)",
                   backgroundSize: "200% 100%",
-                  animation: "shimmerMove 2s infinite",
                 }}
               />
             )}
@@ -262,12 +265,8 @@ export function StylizedSearchBar({
             <div
               className={`
                 rounded-2xl border border-border bg-card p-4
-                backdrop-blur-sm
-                transition-all duration-500 ease-out
+                backdrop-blur-sm transition-all duration-500 ease-out motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2
               `}
-              style={{
-                animation: showResults ? "slideInAndFade 0.5s ease-out 0.1s both" : "none",
-              }}
             >
               <div className="flex items-start gap-3">
                 <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10">
@@ -285,24 +284,15 @@ export function StylizedSearchBar({
             </div>
 
             {results.length > 0 && (
-              <div
-                className="space-y-2"
-                style={{
-                  animation: showResults ? "slideInAndFade 0.5s ease-out 0.2s both" : "none",
-                }}
-              >
+              <div className="space-y-2 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2">
                 {results.map((result, index) => (
                   <div
                     className="
                       group cursor-pointer rounded-2xl border border-border bg-card p-3
-                      transition-colors duration-200 hover:border-foreground/20
+                      transition-colors duration-200 hover:border-foreground/20 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2
                     "
                     key={result.id}
-                    style={{
-                      animation: showResults
-                        ? `slideInAndFade 0.5s ease-out ${0.3 + index * 0.1}s both`
-                        : "none",
-                    }}
+                    style={{ animationDelay: `${index * 60}ms` }}
                   >
                     <h4 className="text-sm font-medium text-foreground transition-colors duration-200 group-hover:text-primary">
                       {result.title}
@@ -317,37 +307,6 @@ export function StylizedSearchBar({
           </div>
         </div>
 
-        <style>{`
-          @keyframes shimmerMove {
-            0% {
-              background-position: -200% 0;
-            }
-            100% {
-              background-position: 200% 0;
-            }
-          }
-
-          @keyframes slideInAndFade {
-            from {
-              opacity: 0;
-              transform: translateY(-8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
-
-          @keyframes spin {
-            to {
-              transform: rotate(360deg);
-            }
-          }
-
-          .animate-spin {
-            animation: spin 1s linear infinite;
-          }
-        `}</style>
       </div>
     </div>
   );

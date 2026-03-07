@@ -1,7 +1,7 @@
 "use client";
 
 import { FileText } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 type FileCardType = "archive" | "audio" | "code" | "document" | "image" | "other" | "video";
@@ -60,7 +60,7 @@ function getFileIcon(fileType: FileCardType): React.ReactNode {
     case "image":
       return (
         <svg {...iconProps}>
-          <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+          <path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14h18zm-2 0H5l4.5-6 3.2 4.1 2.3-3.1L19 19zM8.5 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
         </svg>
       );
     case "video":
@@ -110,7 +110,15 @@ export function FileCard({
   previewContent,
   previewUrl,
 }: FileCardProps) {
-  const timeAgo = useMemo(() => formatTimeAgo(lastUpdated), [lastUpdated]);
+  const [timeAgo, setTimeAgo] = useState(() => formatTimeAgo(lastUpdated));
+
+  useEffect(() => {
+    setTimeAgo(formatTimeAgo(lastUpdated));
+    const timer = setInterval(() => {
+      setTimeAgo(formatTimeAgo(lastUpdated));
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [lastUpdated]);
 
   return (
     <div className={`space-y-3 ${className}`}>
