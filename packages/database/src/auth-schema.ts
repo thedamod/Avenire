@@ -126,7 +126,7 @@ export const teamMember = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at"),
+    createdAt: timestamp("created_at").notNull(),
   },
   (table) => [
     index("teamMember_teamId_idx").on(table.teamId),

@@ -22,13 +22,24 @@ export async function GET(request: Request) {
     return Response.json({ error: "Unauthorized", reason: verification.reason }, { status: 401 });
   }
 
-  const { channel, subscriber } = await createFilesRealtimeSubscriber(workspaceUuid);
   const encoder = new TextEncoder();
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   let streamClosed = false;
+  let channel: string | null = null;
+  let subscriber: Awaited<ReturnType<typeof createFilesRealtimeSubscriber>>["subscriber"] | null = null;
 
   const body = new ReadableStream<Uint8Array>({
-    start: (controller) => {
+    start: async (controller) => {
+      try {
+        const created = await createFilesRealtimeSubscriber(workspaceUuid);
+        channel = created.channel;
+        subscriber = created.subscriber;
+      } catch {
+        streamClosed = true;
+        controller.error(new Error("Unable to start realtime stream"));
+        return;
+      }
+
       const write = (chunk: string) => {
         if (streamClosed) {
           return;
@@ -37,6 +48,10 @@ export async function GET(request: Request) {
       };
 
       const disconnect = async () => {
+        if (!subscriber || !channel) {
+          return;
+        }
+
         try {
           await subscriber.unsubscribe(channel);
         } catch {
@@ -99,6 +114,10 @@ export async function GET(request: Request) {
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer);
         heartbeatTimer = null;
+      }
+
+      if (!subscriber || !channel) {
+        return;
       }
 
       try {

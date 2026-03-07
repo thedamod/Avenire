@@ -1,4 +1,9 @@
-import { isSharedFilesVirtualFolderId, softDeleteFileAsset, updateFileAsset } from "@/lib/file-data";
+import {
+  getFileAssetById,
+  isSharedFilesVirtualFolderId,
+  softDeleteFileAsset,
+  updateFileAsset,
+} from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { listWorkspaceMembers } from "@/lib/file-data";
 import { NextResponse } from "next/server";
@@ -74,6 +79,11 @@ export async function DELETE(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const existingFile = await getFileAssetById(workspaceUuid, fileUuid);
+  if (!existingFile) {
+    return NextResponse.json({ error: "File not found" }, { status: 404 });
+  }
+
   const ok = await softDeleteFileAsset(workspaceUuid, fileUuid);
   if (!ok) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
@@ -81,6 +91,7 @@ export async function DELETE(
 
   await publishFilesInvalidationEvent({
     workspaceUuid,
+    folderId: existingFile.folderId || undefined,
     reason: "file.deleted",
   });
   await publishFilesInvalidationEvent({

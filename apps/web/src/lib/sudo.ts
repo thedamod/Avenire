@@ -1,9 +1,8 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import {
   createSudoChallenge as createSudoChallengeRecord,
-  consumeSudoChallenge,
-  getLatestActiveSudoChallenge,
   invalidateSudoChallenge as invalidateSudoChallengeRecord,
+  verifyAndConsumeLatestSudoChallenge,
 } from "../../../../packages/database/src";
 
 export const SUDO_COOKIE_NAME = "avenire_sudo";
@@ -70,21 +69,13 @@ export async function invalidateSudoChallenge(challengeId: string) {
 }
 
 export async function verifySudoCode(input: { userId: string; code: string }) {
-  const challenge = await getLatestActiveSudoChallenge(input.userId);
-  if (!challenge) {
-    return { ok: false as const, reason: "missing-challenge" as const };
-  }
-
   const expectedHash = hashSudoCode(input.code.trim());
-  const isMatch = safeCompare(expectedHash, challenge.codeHash);
-
-  await consumeSudoChallenge({
-    challengeId: challenge.id,
-    success: isMatch,
+  const verification = await verifyAndConsumeLatestSudoChallenge({
+    userId: input.userId,
+    expectedCodeHash: expectedHash,
   });
-
-  if (!isMatch) {
-    return { ok: false as const, reason: "invalid-code" as const };
+  if (!verification.ok) {
+    return verification;
   }
 
   const expiresAt = new Date(Date.now() + SUDO_SESSION_TTL_SECONDS * 1000);

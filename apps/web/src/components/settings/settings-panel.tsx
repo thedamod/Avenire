@@ -35,6 +35,7 @@ import {
 type WorkspaceSummary = {
   workspaceId: string;
   organizationId: string;
+  ownerId?: string;
   rootFolderId: string;
   name: string;
 };
@@ -130,6 +131,8 @@ export function SettingsPanel({
   const [profileName, setProfileName] = useState(session?.user?.name ?? "");
   const [profileImage, setProfileImage] = useState(session?.user?.image ?? "");
   const [profileStatus, setProfileStatus] = useState<string | null>(null);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -155,6 +158,8 @@ export function SettingsPanel({
   const [workspaceEmail, setWorkspaceEmail] = useState("");
   const [workspaceStatus, setWorkspaceStatus] = useState<string | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [isInvitingMember, setIsInvitingMember] = useState(false);
   const [workspaceDeleteConfirm, setWorkspaceDeleteConfirm] = useState("");
   const [accountDeleteConfirm, setAccountDeleteConfirm] = useState("");
   const [dangerStatus, setDangerStatus] = useState<string | null>(null);
@@ -314,25 +319,34 @@ export function SettingsPanel({
               accept="image/*"
               className="hidden"
               onChange={(e) => {
+                const inputElement = e.currentTarget;
                 const file = e.target.files?.[0];
                 if (!file) return;
                 void (async () => {
-                  setProfileStatus("Uploading avatar...");
-                  const uploadedFiles = await startAvatarUpload([file]);
-                  const uploaded = uploadedFiles?.[0];
-                  const uploadedFile = uploaded as
-                    | { ufsUrl?: string | null; url?: string | null }
-                    | undefined;
-                  const uploadedUrl = uploadedFile?.ufsUrl ?? uploadedFile?.url ?? null;
+                  setIsUploadingAvatar(true);
+                  try {
+                    setProfileStatus("Uploading avatar...");
+                    const uploadedFiles = await startAvatarUpload([file]);
+                    const uploaded = uploadedFiles?.[0];
+                    const uploadedFile = uploaded as
+                      | { ufsUrl?: string | null; url?: string | null }
+                      | undefined;
+                    const uploadedUrl = uploadedFile?.ufsUrl ?? uploadedFile?.url ?? null;
 
-                  if (!uploadedUrl) {
+                    if (!uploadedUrl) {
+                      setProfileStatus("Unable to upload avatar.");
+                      return;
+                    }
+
+                    setProfileImage(uploadedUrl);
+                    setAvatarPreview(uploadedUrl);
+                    setProfileStatus("Avatar uploaded. Save changes to apply.");
+                  } catch {
                     setProfileStatus("Unable to upload avatar.");
-                    return;
+                  } finally {
+                    inputElement.value = "";
+                    setIsUploadingAvatar(false);
                   }
-
-                  setProfileImage(uploadedUrl);
-                  setAvatarPreview(uploadedUrl);
-                  setProfileStatus("Avatar uploaded. Save changes to apply.");
                 })();
               }}
             />
@@ -441,14 +455,20 @@ export function SettingsPanel({
                   </div>
                   <Button
                     size="sm"
+                    disabled={isSavingProfile || isUploadingAvatar}
                     onClick={() => {
                       void (async () => {
-                        setProfileStatus("Saving...");
-                        const result = await updateUser({
-                          name: profileName.trim() || undefined,
-                          image: profileImage.trim() || undefined,
-                        });
-                        setProfileStatus(result.error ? "Unable to update profile." : "Profile updated.");
+                        setIsSavingProfile(true);
+                        try {
+                          setProfileStatus("Saving...");
+                          const result = await updateUser({
+                            name: profileName.trim() || undefined,
+                            image: profileImage.trim() || undefined,
+                          });
+                          setProfileStatus(result.error ? "Unable to update profile." : "Profile updated.");
+                        } finally {
+                          setIsSavingProfile(false);
+                        }
                       })();
                     }}
                     type="button"
@@ -828,19 +848,24 @@ export function SettingsPanel({
                     />
                     <Button
                       size="sm"
-                      disabled={!workspaceName.trim()}
+                      disabled={isCreatingWorkspace || !workspaceName.trim()}
                       type="button"
                       onClick={() => {
                         void (async () => {
-                          const response = await fetch("/api/workspaces", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ name: workspaceName.trim() }),
-                          });
-                          if (!response.ok) { setWorkspaceStatus("Unable to create workspace."); return; }
-                          setWorkspaceStatus("Workspace created.");
-                          setWorkspaceName("");
-                          await refreshWorkspaces();
+                          setIsCreatingWorkspace(true);
+                          try {
+                            const response = await fetch("/api/workspaces", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ name: workspaceName.trim() }),
+                            });
+                            if (!response.ok) { setWorkspaceStatus("Unable to create workspace."); return; }
+                            setWorkspaceStatus("Workspace created.");
+                            setWorkspaceName("");
+                            await refreshWorkspaces();
+                          } finally {
+                            setIsCreatingWorkspace(false);
+                          }
                         })();
                       }}
                     >
@@ -886,18 +911,23 @@ export function SettingsPanel({
                     />
                     <Button
                       size="sm"
-                      disabled={!selectedWorkspace || !workspaceEmail.trim()}
+                      disabled={isInvitingMember || !selectedWorkspace || !workspaceEmail.trim()}
                       type="button"
                       onClick={() => {
                         if (!selectedWorkspace) return;
                         void (async () => {
-                          const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}/share/members`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ email: workspaceEmail.trim() }),
-                          });
-                          setWorkspaceStatus(response.ok ? "Member added." : "Unable to add member.");
-                          if (response.ok) { setWorkspaceEmail(""); await refreshMembers(selectedWorkspace.workspaceId); }
+                          setIsInvitingMember(true);
+                          try {
+                            const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}/share/members`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ email: workspaceEmail.trim() }),
+                            });
+                            setWorkspaceStatus(response.ok ? "Member added." : "Unable to add member.");
+                            if (response.ok) { setWorkspaceEmail(""); await refreshMembers(selectedWorkspace.workspaceId); }
+                          } finally {
+                            setIsInvitingMember(false);
+                          }
                         })();
                       }}
                     >
@@ -909,34 +939,51 @@ export function SettingsPanel({
                       <p className="text-xs text-muted-foreground">No members found.</p>
                     ) : (
                       workspaceMembers.map((member, index) => (
-                        <div
-                          key={member.id ?? member.email ?? member.userId ?? `member-${index}`}
-                          className="flex items-center justify-between rounded-lg border border-border/60 bg-card px-3 py-2"
-                        >
-                          <div>
-                            <p className="text-sm font-medium">{member.name ?? member.email ?? "Unknown user"}</p>
-                            <p className="text-xs text-muted-foreground capitalize">{member.role}</p>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            type="button"
-                            onClick={() => {
-                              if (!selectedWorkspace || !(member.id ?? member.email)) return;
-                              void (async () => {
-                                const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}/share/members`, {
-                                  method: "DELETE",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ memberIdOrEmail: member.id ?? member.email }),
-                                });
-                                setWorkspaceStatus(response.ok ? "Member removed." : "Unable to remove member.");
-                                if (response.ok) await refreshMembers(selectedWorkspace.workspaceId);
-                              })();
-                            }}
-                          >
-                            Remove
-                          </Button>
-                        </div>
+                        (() => {
+                          const currentUserId = session?.user?.id ?? null;
+                          const currentUserEmail = session?.user?.email?.toLowerCase() ?? null;
+                          const memberEmail = member.email?.toLowerCase() ?? null;
+                          const isSelf =
+                            (currentUserId && (member.userId === currentUserId || member.id === currentUserId)) ||
+                            (currentUserEmail && memberEmail === currentUserEmail);
+                          const isOwner =
+                            member.role === "owner" ||
+                            (selectedWorkspace?.ownerId ? member.userId === selectedWorkspace.ownerId : false);
+                          const canRemove = Boolean(!isSelf && !isOwner);
+
+                          return (
+                            <div
+                              key={member.id ?? member.email ?? member.userId ?? `member-${index}`}
+                              className="flex items-center justify-between rounded-lg border border-border/60 bg-card px-3 py-2"
+                            >
+                              <div>
+                                <p className="text-sm font-medium">{member.name ?? member.email ?? "Unknown user"}</p>
+                                <p className="text-xs text-muted-foreground capitalize">{member.role}</p>
+                              </div>
+                              {canRemove ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  type="button"
+                                  onClick={() => {
+                                    if (!selectedWorkspace || !(member.id ?? member.email)) return;
+                                    void (async () => {
+                                      const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}/share/members`, {
+                                        method: "DELETE",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ memberIdOrEmail: member.id ?? member.email }),
+                                      });
+                                      setWorkspaceStatus(response.ok ? "Member removed." : "Unable to remove member.");
+                                      if (response.ok) await refreshMembers(selectedWorkspace.workspaceId);
+                                    })();
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              ) : null}
+                            </div>
+                          );
+                        })()
                       ))
                     )}
                   </div>

@@ -2,7 +2,7 @@ import { listWorkspaceShareSuggestions, resolveWorkspaceForUser } from "@/lib/fi
 import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { getChatBySlugForUser, isChatOwnerForUser } from "@/lib/chat-data";
+import { getChatBySlugForUser } from "@/lib/chat-data";
 
 export async function GET(
   request: Request,
@@ -14,13 +14,12 @@ export async function GET(
   }
 
   const { slug } = await context.params;
-  const isOwner = await isChatOwnerForUser(session.user.id, slug);
-  if (!isOwner) {
-    return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
-  }
   const chat = await getChatBySlugForUser(session.user.id, slug);
   if (!chat) {
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+  }
+  if (chat.ownerUserId !== session.user.id) {
+    return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
   }
 
   const activeOrganizationId =

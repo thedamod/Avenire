@@ -53,6 +53,22 @@ type WorkspaceSummary = {
   name: string;
 };
 
+function getInitials(name: string) {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return "U";
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
 export function NavUser({
   user,
   workspaces = [],
@@ -73,6 +89,7 @@ export function NavUser({
   const { isMobile } = useSidebar();
   const router = useRouter();
   const fallbackAvatar = getFacehashUrl(user.name || user.email);
+  const initials = getInitials(user.name || user.email || "User");
   const [avatarSrc, setAvatarSrc] = useState(user.avatar || fallbackAvatar);
   const [createOpen, setCreateOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState("");
@@ -103,7 +120,7 @@ export function NavUser({
                     alt={user.name}
                     onError={() => setAvatarSrc(fallbackAvatar)}
                   />
-                  <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                  <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
@@ -126,7 +143,7 @@ export function NavUser({
                           alt={user.name}
                           onError={() => setAvatarSrc(fallbackAvatar)}
                         />
-                        <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                        <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
                       </Avatar>
                       <div className="grid flex-1 text-left text-sm leading-tight">
                         <span className="truncate font-medium">{user.name}</span>
@@ -196,9 +213,15 @@ export function NavUser({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={() => {
-                    void authClient.signOut().then(() => {
-                      router.push("/login" as Route);
-                    });
+                    void (async () => {
+                      try {
+                        await authClient.signOut();
+                      } catch (error) {
+                        console.error("Failed to sign out", error);
+                      } finally {
+                        router.push("/login" as Route);
+                      }
+                    })();
                   }}
                 >
                   <LogOut />

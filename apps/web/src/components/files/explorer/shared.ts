@@ -44,8 +44,16 @@ export function formatBytes(bytes: number) {
 }
 
 export function toUpdatedLabel(isoDate: string): string {
+  if (!isoDate) {
+    return "";
+  }
+
   const timestamp = new Date(isoDate).getTime();
-  const diffMs = Date.now() - timestamp;
+  if (Number.isNaN(timestamp) || !Number.isFinite(timestamp)) {
+    return "";
+  }
+
+  const diffMs = Math.max(0, Date.now() - timestamp);
   const minutes = Math.max(1, Math.floor(diffMs / (1000 * 60)));
 
   if (minutes < 60) {
