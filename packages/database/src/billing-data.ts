@@ -35,6 +35,22 @@ const PLAN_ENTITLEMENTS: Record<BillingPlan, PlanEntitlements> = {
 
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
 
+function clampToCapacity(value: number, capacity: number) {
+  return Math.max(0, Math.min(value, capacity));
+}
+
+function recomputeRemainingFromConsumed(input: {
+  previousBalance: number;
+  previousCapacity: number;
+  nextCapacity: number;
+}) {
+  const consumed = clampToCapacity(
+    input.previousCapacity - input.previousBalance,
+    input.previousCapacity,
+  );
+  return clampToCapacity(input.nextCapacity - consumed, input.nextCapacity);
+}
+
 function toPlan(input?: string | null): BillingPlan {
   if (input === "core" || input === "scholar") {
     return input;
@@ -90,18 +106,8 @@ async function getOrCreateMeter(userId: string, meter: UsageMeterType) {
   const plan = await getUserPlan(userId);
   const entitlement = PLAN_ENTITLEMENTS[plan][meter];
 
-  const [existing] = await db
-    .select()
-    .from(usageMeter)
-    .where(and(eq(usageMeter.userId, userId), eq(usageMeter.meter, meter)))
-    .limit(1);
-
-  if (existing) {
-    return { meterRow: existing, plan, entitlement };
-  }
-
   const now = new Date();
-  const [created] = await db
+  await db
     .insert(usageMeter)
     .values({
       id: randomUUID(),
@@ -115,9 +121,21 @@ async function getOrCreateMeter(userId: string, meter: UsageMeterType) {
       createdAt: now,
       updatedAt: now,
     })
-    .returning();
+    .onConflictDoNothing({
+      target: [usageMeter.userId, usageMeter.meter],
+    });
 
-  return { meterRow: created, plan, entitlement };
+  const [meterRow] = await db
+    .select()
+    .from(usageMeter)
+    .where(and(eq(usageMeter.userId, userId), eq(usageMeter.meter, meter)))
+    .limit(1);
+
+  if (!meterRow) {
+    throw new Error("usage meter row missing after create-or-get upsert");
+  }
+
+  return { meterRow, plan, entitlement };
 }
 
 export async function consumeUsageUnits(input: {
@@ -160,15 +178,24 @@ export async function consumeUsageUnits(input: {
       updatedAt: now,
     };
 
+    const baselineFourHourBalance = recomputeRemainingFromConsumed({
+      previousBalance: base.fourHourBalance,
+      previousCapacity: base.fourHourCapacity,
+      nextCapacity: entitlement.fourHourCapacity,
+    });
     const reset = advanceFourHourWindow({
-      fourHourBalance: Math.min(base.fourHourBalance, entitlement.fourHourCapacity),
+      fourHourBalance: baselineFourHourBalance,
       fourHourCapacity: entitlement.fourHourCapacity,
       fourHourRefillAt: base.fourHourRefillAt,
       now,
     });
 
     let nextFourHourBalance = reset.fourHourBalance;
-    let nextOverageBalance = Math.min(base.overageBalance, entitlement.overageCapacity);
+    let nextOverageBalance = recomputeRemainingFromConsumed({
+      previousBalance: base.overageBalance,
+      previousCapacity: base.overageCapacity,
+      nextCapacity: entitlement.overageCapacity,
+    });
 
     const spendFourHour = Math.min(nextFourHourBalance, units);
     const remaining = units - spendFourHour;
@@ -261,8 +288,13 @@ export async function getUsageOverview(userId: string) {
         : activeEntitlements.upload;
     const fourHourCapacity = entitlement.fourHourCapacity;
     const overageCapacity = entitlement.overageCapacity;
+    const baselineFourHourBalance = recomputeRemainingFromConsumed({
+      previousBalance: row.fourHourBalance,
+      previousCapacity: row.fourHourCapacity,
+      nextCapacity: fourHourCapacity,
+    });
     const next = advanceFourHourWindow({
-      fourHourBalance: Math.min(row.fourHourBalance, fourHourCapacity),
+      fourHourBalance: baselineFourHourBalance,
       fourHourCapacity,
       fourHourRefillAt: row.fourHourRefillAt,
       now,
@@ -273,9 +305,23 @@ export async function getUsageOverview(userId: string) {
       fourHourCapacity,
       overageCapacity,
       fourHourBalance: next.fourHourBalance,
-      overageBalance: Math.min(row.overageBalance, overageCapacity),
+      overageBalance: recomputeRemainingFromConsumed({
+        previousBalance: row.overageBalance,
+        previousCapacity: row.overageCapacity,
+        nextCapacity: overageCapacity,
+      }),
       fourHourRefillAt: next.fourHourRefillAt,
-      shouldPersist: next.changed,
+      shouldPersist:
+        next.changed ||
+        row.fourHourCapacity !== fourHourCapacity ||
+        row.fourHourBalance !== next.fourHourBalance ||
+        row.overageCapacity !== overageCapacity ||
+        row.overageBalance !==
+          recomputeRemainingFromConsumed({
+            previousBalance: row.overageBalance,
+            previousCapacity: row.overageCapacity,
+            nextCapacity: overageCapacity,
+          }),
     };
   });
 
@@ -286,8 +332,11 @@ export async function getUsageOverview(userId: string) {
         db
           .update(usageMeter)
           .set({
+            fourHourCapacity: row.fourHourCapacity,
             fourHourBalance: row.fourHourBalance,
             fourHourRefillAt: row.fourHourRefillAt,
+            overageCapacity: row.overageCapacity,
+            overageBalance: row.overageBalance,
             updatedAt: now,
           })
           .where(eq(usageMeter.id, row.id)),

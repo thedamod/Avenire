@@ -176,6 +176,7 @@ export function ChatWorkspace({
         <div className="flex w-1/3 items-center gap-2">
           <SidebarTrigger className="h-8 w-8 rounded-md" />
           <Button
+            aria-label="New chat"
             className="h-8 w-8 rounded-md"
             onClick={() => void createChat()}
             size="icon-sm"

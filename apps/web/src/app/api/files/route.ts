@@ -56,7 +56,7 @@ export async function GET() {
       return NextResponse.json({ files: [] }, { status: 404 });
     }
 
-    const dbFiles = await listWorkspaceFiles(workspace.workspaceId);
+    const dbFiles = await listWorkspaceFiles(workspace.workspaceId, session.user.id);
     const files: UploadThingServerFile[] = dbFiles.map((file) => ({
       key: file.storageKey,
       name: file.name,
