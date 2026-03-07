@@ -6,6 +6,8 @@ import { getMessagesByChatSlug } from "@/lib/chat-data";
 import {
   canUserAccessSharedResource,
   getFileAssetById,
+  getFolderWithAncestors,
+  listFolderContents,
   resolveResourceShareLink,
 } from "@/lib/file-data";
 
@@ -114,6 +116,73 @@ export default async function SharedResourcePage({
         >
           Open dashboard
         </Link>
+      </main>
+    );
+  }
+
+  if (link.resourceType === "folder") {
+    const session = await auth.api.getSession({ headers: await headers() });
+    const hasAccess = await canUserAccessSharedResource({
+      link,
+      userId: session?.user?.id,
+    });
+
+    if (!hasAccess && !session?.user) {
+      redirect(`/login?callbackURL=${encodeURIComponent(`/share/${token}`)}`);
+    }
+
+    if (!hasAccess) {
+      return (
+        <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center p-6 text-center">
+          <h1 className="font-semibold text-2xl">Access denied</h1>
+          <p className="mt-2 text-muted-foreground">
+            You do not have access to this folder.
+          </p>
+        </main>
+      );
+    }
+
+    const folder = await getFolderWithAncestors(link.workspaceId, link.resourceId);
+    if (!folder?.folder) {
+      notFound();
+    }
+    const children = await listFolderContents(link.workspaceId, link.resourceId);
+
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col p-6">
+        <h1 className="mb-2 font-semibold text-2xl">Shared folder</h1>
+        <p className="mb-4 text-muted-foreground text-sm">{folder.folder.name}</p>
+        <div className="rounded-lg border bg-card p-4">
+          <p className="font-medium text-sm">Folders</p>
+          {children.folders.length === 0 ? (
+            <p className="mt-1 text-muted-foreground text-sm">No subfolders</p>
+          ) : (
+            <ul className="mt-2 space-y-1 text-sm">
+              {children.folders.map((entry) => (
+                <li key={entry.id}>[Folder] {entry.name}</li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-4 font-medium text-sm">Files</p>
+          {children.files.length === 0 ? (
+            <p className="mt-1 text-muted-foreground text-sm">No files</p>
+          ) : (
+            <ul className="mt-2 space-y-1 text-sm">
+              {children.files.map((entry) => (
+                <li key={entry.id}>
+                  <a
+                    className="underline"
+                    href={entry.storageUrl}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    {entry.name}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </main>
     );
   }

@@ -1,4 +1,4 @@
-import { createResourceShareLink, resolveWorkspaceForUser } from "@/lib/file-data";
+import { createResourceShareLink } from "@/lib/file-data";
 import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -30,18 +30,18 @@ export async function POST(
     void apiLogger.requestFailed(403, "Chat not found", { slug });
     return NextResponse.json({ error: "Chat not found" }, { status: 403 });
   }
-
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const ws = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
-  if (!ws) {
-    void apiLogger.requestFailed(404, "Workspace not found", { slug });
-    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  const isOwner = await isChatOwnerForUser(session.user.id, slug, chat.workspaceId);
+  if (!isOwner) {
+    void apiLogger.requestFailed(403, "Read-only chat", { slug });
+    return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
+  }
+  if (!chat.workspaceId) {
+    void apiLogger.requestFailed(400, "Chat workspace missing", { slug });
+    return NextResponse.json({ error: "Chat workspace missing" }, { status: 400 });
   }
 
   const link = await createResourceShareLink({
-    workspaceId: ws.workspaceId,
+    workspaceId: chat.workspaceId,
     resourceType: "chat",
     resourceId: chat.slug,
     createdBy: session.user.id,
@@ -53,7 +53,7 @@ export async function POST(
   void apiLogger.meter("meter.share.created", {
     resourceType: "chat-link",
     slug,
-    workspaceUuid: ws.workspaceId,
+    workspaceUuid: chat.workspaceId,
   });
   void apiLogger.featureUsed("chat.sharing.link.created", { slug });
   void apiLogger.requestSucceeded(200, { slug });

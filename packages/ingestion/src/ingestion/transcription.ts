@@ -1,6 +1,5 @@
-import { createGroq } from '@ai-sdk/groq';
+import { apollo } from "@avenire/ai";
 import { experimental_transcribe as transcribe } from 'ai';
-import { config } from '../config';
 
 export type TranscriptSegment = {
   startMs: number;
@@ -11,14 +10,10 @@ export type TranscriptSegment = {
 export const transcribeAudio = async (
   audioBytes: Uint8Array,
 ): Promise<{ text: string; segments: TranscriptSegment[] }> => {
-  const groq = createGroq({
-    apiKey: config.groqApiKey,
-  });
-
   let result: Awaited<ReturnType<typeof transcribe>>;
   try {
     result = await transcribe({
-      model: groq.transcription(config.groqTranscriptionModel),
+      model: apollo.transcriptionModel("apollo-transcript"),
       audio: audioBytes,
       providerOptions: {
         groq: {

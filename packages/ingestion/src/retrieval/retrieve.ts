@@ -1,3 +1,5 @@
+import { apollo } from "@avenire/ai";
+import { rerank } from "ai";
 import { config } from '../config';
 import {
   embedMultimodal,
@@ -301,11 +303,28 @@ export const retrieveRelevantChunks = async (
   );
   const rerankCandidates = sortedByModalityPreference.slice(0, rerankCandidateCount);
 
-  const reranked = await rerankByCohereWithQueryEmbedding(
-    queryEmbedding,
-    rerankCandidates,
-    limit,
-  ).catch(error => {
+  const reranked = await rerank({
+    model: apollo.rerankingModel("apollo-reranking"),
+    documents: rerankCandidates.map(candidate => candidate.content),
+    query,
+    topN: limit,
+  })
+    .then(({ ranking }) =>
+      ranking.map(item => ({
+        ...rerankCandidates[item.originalIndex],
+        rerankScore: item.score,
+      })),
+    )
+    .catch(async error => {
+      // Keep retrieval available if provider reranking fails.
+      const fallback = await rerankByCohereWithQueryEmbedding(
+        queryEmbedding,
+        rerankCandidates,
+        limit,
+      );
+      return fallback;
+    })
+    .catch(error => {
     console.warn(
       JSON.stringify({
         event: 'retrieval_rerank_fallback',

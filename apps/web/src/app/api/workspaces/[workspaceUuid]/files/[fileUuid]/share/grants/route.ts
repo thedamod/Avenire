@@ -35,7 +35,10 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const body = (await request.json().catch(() => ({}))) as { email?: string };
+  const body = (await request.json().catch(() => ({}))) as {
+    email?: string;
+    permission?: "viewer" | "editor";
+  };
   if (!body.email) {
     void apiLogger.requestFailed(400, "Missing email", { workspaceUuid, fileUuid });
     return NextResponse.json({ error: "Missing email" }, { status: 400 });
@@ -53,7 +56,7 @@ export async function POST(
     resourceId: fileUuid,
     email: body.email,
     createdBy: session.user.id,
-    permission: "read",
+    permission: body.permission === "editor" ? "editor" : "viewer",
   });
 
   if (!grant) {

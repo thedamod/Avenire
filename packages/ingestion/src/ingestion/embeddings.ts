@@ -5,7 +5,7 @@ export type MultimodalInput = {
   content: Array<
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: string }
-    | { type: 'image_base64'; image_base64: string }
+    | { type: 'image_base64'; image_base64: string; mimeType?: string }
   >;
 };
 
@@ -212,7 +212,9 @@ const toCohereContent = (
 
     return {
       type: 'image_url',
-      image_url: { url: `data:image/jpeg;base64,${part.image_base64}` },
+      image_url: {
+        url: `data:${part.mimeType || 'image/jpeg'};base64,${part.image_base64}`,
+      },
     };
   });
 };
@@ -392,7 +394,7 @@ export const embedMultimodal = async (
       }
 
       console.warn(
-        `Cohere multimodal embedding failed (${response.status}); retrying batch with text-only fallback.`,
+        `Cohere multimodal embedding failed (${response.status}): ${detail.slice(0, 800)}; retrying batch with text-only fallback.`,
       );
 
       response = await fetchCohereEmbeddings({

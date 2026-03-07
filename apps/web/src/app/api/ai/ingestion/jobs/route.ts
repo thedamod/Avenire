@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { enqueueIngestionJob } from "@/lib/ingestion-data";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 const enqueueSchema = z.object({
@@ -34,6 +35,21 @@ export async function POST(request: Request) {
     workspaceId: parsed.data.workspaceUuid,
     fileId: parsed.data.fileUuid,
     sourceType: parsed.data.sourceType,
+  });
+
+  await publishWorkspaceStreamEvent({
+    workspaceUuid: parsed.data.workspaceUuid,
+    type: "ingestion.job",
+    payload: {
+      createdAt: new Date().toISOString(),
+      eventType: "job.queued",
+      jobId: job.id,
+      payload: {
+        status: "queued",
+        sourceType: parsed.data.sourceType ?? null,
+      },
+      workspaceId: parsed.data.workspaceUuid,
+    },
   });
 
   return NextResponse.json({ job }, { status: 202 });

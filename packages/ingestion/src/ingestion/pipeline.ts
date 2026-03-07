@@ -8,6 +8,7 @@ import { ingestPdfs } from "./ocr";
 import { persistCanonicalResource } from "./persist";
 import type { CanonicalResource, IngestResponse } from "./types";
 import { ingestVideo } from "./video";
+import { assertSafeUrl } from "../utils/safety";
 
 const logCorpusGrowth = async (
   before: Awaited<ReturnType<PostgresVectorStore["corpusStats"]>>,
@@ -102,19 +103,118 @@ const logStageTiming = (params: {
   );
 };
 
-async function fetchRemoteText(url: string) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch text source (${response.status})`);
+const sleep = async (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const shouldRetryStatus = (status: number) =>
+  status === 408 || status === 425 || status === 429 || status >= 500;
+
+const normalizeUploadThingStorageUrl = (
+  storageUrl: string,
+  storageKey?: string | null
+) => {
+  let parsed: URL;
+  try {
+    parsed = new URL(storageUrl);
+  } catch {
+    return storageUrl;
   }
 
-  return response.text();
+  const host = parsed.hostname.toLowerCase();
+  const isUploadThingHost = host === "utfs.io" || host.endsWith(".ufs.sh");
+  if (!isUploadThingHost) {
+    return storageUrl;
+  }
+
+  const keyFromPath = parsed.pathname.startsWith("/f/")
+    ? decodeURIComponent(parsed.pathname.slice(3).split("/")[0] ?? "")
+    : "";
+  const key = (storageKey ?? keyFromPath).trim();
+  if (!key) {
+    return storageUrl;
+  }
+
+  return `https://utfs.io/f/${encodeURIComponent(key)}`;
+};
+
+const resolveIngestionStorageUrl = (
+  storageUrl: string,
+  storageKey?: string | null
+) => assertSafeUrl(normalizeUploadThingStorageUrl(storageUrl, storageKey)).toString();
+
+async function fetchRemoteText(url: string) {
+  const attempts = Math.max(1, config.remoteFetchMaxAttempts);
+  const timeoutMs = Math.max(1000, config.remoteFetchTimeoutMs);
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = new Error(
+          `Failed to fetch text source (${response.status}) from ${new URL(url).hostname}`
+        );
+        if (attempt < attempts && shouldRetryStatus(response.status)) {
+          lastError = error;
+          await sleep(Math.min(2500, 200 * 2 ** (attempt - 1)));
+          continue;
+        }
+        Object.assign(error, { retryable: false });
+        throw error;
+      }
+
+      return await response.text();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown fetch error";
+      const wrapped = new Error(
+        `Failed to fetch text source from ${new URL(url).hostname}: ${message}`
+      );
+      if (error instanceof Error && error.name === "AbortError") {
+        wrapped.name = "AbortError";
+      }
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "retryable" in error &&
+        (error as { retryable?: boolean }).retryable === false
+      ) {
+        Object.assign(wrapped, { retryable: false });
+      }
+      lastError = wrapped;
+      const retryable =
+        !(
+          typeof wrapped === "object" &&
+          wrapped !== null &&
+          "retryable" in wrapped &&
+          (wrapped as { retryable?: boolean }).retryable === false
+        );
+      if (attempt < attempts && retryable) {
+        await sleep(Math.min(2500, 200 * 2 ** (attempt - 1)));
+        continue;
+      }
+      throw wrapped;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(`Failed to fetch text source from ${new URL(url).hostname}`)
+  );
 }
 
 export const ingestStoredFile = async (input: {
   workspaceId: string;
   fileId: string;
   storageUrl: string;
+  storageKey?: string | null;
   fileName: string;
   mimeType?: string | null;
   metadata?: Record<string, unknown>;
@@ -122,6 +222,10 @@ export const ingestStoredFile = async (input: {
   const vectorStore = new PostgresVectorStore(input.workspaceId);
   const beforeStats = await vectorStore.corpusStats();
   const mime = input.mimeType?.toLowerCase() ?? "";
+  const resolvedStorageUrl = resolveIngestionStorageUrl(
+    input.storageUrl,
+    input.storageKey
+  );
   const extractionStartedAt = Date.now();
 
   let resources: CanonicalResource[] = [];
@@ -129,18 +233,18 @@ export const ingestStoredFile = async (input: {
     mime === "application/pdf" ||
     input.fileName.toLowerCase().endsWith(".pdf")
   ) {
-    resources = await ingestPdfs([input.storageUrl]);
+    resources = await ingestPdfs([resolvedStorageUrl]);
   } else if (mime.startsWith("image/")) {
     resources = [
       await ingestImage({
-        url: input.storageUrl,
+        url: resolvedStorageUrl,
         title: input.fileName,
       }),
     ];
   } else if (mime.startsWith("video/")) {
     resources = [
       await ingestVideo({
-        url: input.storageUrl,
+        url: resolvedStorageUrl,
         title: input.fileName,
       }),
     ];
@@ -155,7 +259,7 @@ export const ingestStoredFile = async (input: {
   ) {
     resources = [
       await ingestAudio({
-        url: input.storageUrl,
+        url: resolvedStorageUrl,
         title: input.fileName,
       }),
     ];
@@ -164,16 +268,16 @@ export const ingestStoredFile = async (input: {
     input.fileName.toLowerCase().endsWith(".md") ||
     input.fileName.toLowerCase().endsWith(".txt")
   ) {
-    const markdown = await fetchRemoteText(input.storageUrl);
+    const markdown = await fetchRemoteText(resolvedStorageUrl);
     resources = [
       ingestMarkdown({
         markdown: markdown.slice(0, config.maxMarkdownChars),
-        source: input.storageUrl,
+        source: resolvedStorageUrl,
         title: input.fileName,
       }),
     ];
   } else if (mime === "application/url" || mime === "text/uri-list") {
-    resources = [await ingestLink(input.storageUrl)];
+    resources = [await ingestLink(resolvedStorageUrl)];
   } else {
     throw new Error(
       `Unsupported file type for ingestion: ${mime || "unknown"}`

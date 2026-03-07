@@ -1,4 +1,5 @@
 import { createClient, type RedisClientType } from "redis";
+import { publishWorkspaceStreamEvent } from "./workspace-event-stream";
 
 export type FilesInvalidationReason =
   | "file.created"
@@ -93,6 +94,17 @@ export async function publishFilesInvalidationEvent(payload: FilesInvalidationPa
         workspaceUuid: payload.workspaceUuid,
       }),
     );
+
+    await publishWorkspaceStreamEvent({
+      workspaceUuid: payload.workspaceUuid,
+      type: "files.invalidate",
+      payload: {
+        at: payload.at ?? Date.now(),
+        folderId: payload.folderId ?? null,
+        reason: payload.reason,
+        workspaceUuid: payload.workspaceUuid,
+      },
+    });
   } catch (error) {
     console.error("Failed to publish files invalidation event", { payload, error });
   }

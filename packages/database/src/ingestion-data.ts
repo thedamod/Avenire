@@ -338,6 +338,44 @@ export async function markIngestionJobFailed(input: {
   });
 }
 
+export async function retryIngestionJob(input: {
+  workspaceId: string;
+  jobId: string;
+  error: string;
+  retryInMs: number;
+}) {
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(ingestionJob)
+      .set({
+        status: "queued",
+        finishedAt: null,
+        startedAt: null,
+        updatedAt: now,
+        error: input.error.slice(0, 2000),
+      })
+      .where(
+        and(
+          eq(ingestionJob.workspaceId, input.workspaceId),
+          eq(ingestionJob.id, input.jobId)
+        )
+      );
+
+    await tx.insert(ingestionJobEvent).values({
+      workspaceId: input.workspaceId,
+      jobId: input.jobId,
+      eventType: "job.retry_scheduled",
+      payload: {
+        status: "queued",
+        error: input.error.slice(0, 2000),
+        retryInMs: Math.max(0, Math.trunc(input.retryInMs)),
+      },
+      createdAt: now,
+    });
+  });
+}
+
 export async function listIngestionEventsForWorkspace(input: {
   workspaceId: string;
   sinceIso?: string | null;
@@ -388,6 +426,7 @@ export async function getFileForIngestion(workspaceId: string, fileId: string) {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
+    storageKey: row.storageKey,
     storageUrl: row.storageUrl,
     name: row.name,
     mimeType: row.mimeType ?? null,

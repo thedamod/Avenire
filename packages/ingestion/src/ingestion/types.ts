@@ -21,7 +21,7 @@ export type CanonicalChunk = {
         content: Array<
           | { type: 'text'; text: string }
           | { type: 'image_url'; image_url: string }
-          | { type: 'image_base64'; image_base64: string }
+          | { type: 'image_base64'; image_base64: string; mimeType?: string }
         >;
       };
   metadata: {
@@ -70,6 +70,7 @@ export type IngestVideoInput = {
   keyframes?: Array<{
     timestampMs: number;
     imageBase64?: string;
+    imageMimeType?: string;
     labels?: string[];
     ocrText?: string;
     caption?: string;

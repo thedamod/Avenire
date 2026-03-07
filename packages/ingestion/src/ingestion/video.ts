@@ -146,6 +146,7 @@ const buildVideoResource = (params: {
   keyframes?: Array<{
     timestampMs: number;
     imageBase64?: string;
+    imageMimeType?: string;
     labels?: string[];
     ocrText?: string;
     caption?: string;
@@ -243,7 +244,11 @@ const buildVideoResource = (params: {
         type: 'multimodal',
         content: [
           { type: 'text', text: contextText },
-          { type: 'image_base64', image_base64: frame.imageBase64 },
+          {
+            type: 'image_base64',
+            image_base64: frame.imageBase64,
+            mimeType: frame.imageMimeType || 'image/jpeg',
+          },
         ],
       },
       metadata: {

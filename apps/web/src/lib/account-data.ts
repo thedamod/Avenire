@@ -1,1 +1,1 @@
-export { deleteAuthUserById } from "../../../../packages/database/src";
+export { deleteAuthUserById } from "@avenire/database";

@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
 import { headers } from "next/headers";
 import { getChatBySlugForUser } from "@/lib/chat-data";
+import { resolveWorkspaceForUser } from "@/lib/file-data";
 import {
   clearActiveStreamId,
   getActiveStreamId,
@@ -22,7 +23,14 @@ export async function GET(
   }
 
   const { id } = await context.params;
-  const chat = await getChatBySlugForUser(session.user.id, id);
+  const activeOrganizationId =
+    (session as { session?: { activeOrganizationId?: string | null } }).session
+      ?.activeOrganizationId ?? null;
+  const workspace = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
+  if (!workspace) {
+    return new Response(null, { status: 404 });
+  }
+  const chat = await getChatBySlugForUser(session.user.id, id, workspace.workspaceId);
   if (!chat) {
     return new Response(null, { status: 404 });
   }

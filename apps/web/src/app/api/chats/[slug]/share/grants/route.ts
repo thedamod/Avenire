@@ -1,4 +1,4 @@
-import { grantResourceToUserByEmail, resolveWorkspaceForUser } from "@/lib/file-data";
+import { grantResourceToUserByEmail } from "@/lib/file-data";
 import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -24,24 +24,19 @@ export async function POST(
   }
 
   const { slug } = await context.params;
-  const isOwner = await isChatOwnerForUser(session.user.id, slug);
-  if (!isOwner) {
-    void apiLogger.requestFailed(403, "Read-only chat", { slug });
-    return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
-  }
   const chat = await getChatBySlugForUser(session.user.id, slug);
   if (!chat) {
     void apiLogger.requestFailed(404, "Chat not found", { slug });
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
   }
-
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const ws = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
-  if (!ws) {
-    void apiLogger.requestFailed(404, "Workspace not found", { slug });
-    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  const isOwner = await isChatOwnerForUser(session.user.id, slug, chat.workspaceId);
+  if (!isOwner) {
+    void apiLogger.requestFailed(403, "Read-only chat", { slug });
+    return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
+  }
+  if (!chat.workspaceId) {
+    void apiLogger.requestFailed(400, "Chat workspace missing", { slug });
+    return NextResponse.json({ error: "Chat workspace missing" }, { status: 400 });
   }
 
   const body = (await request.json().catch(() => ({}))) as { email?: string };
@@ -51,12 +46,12 @@ export async function POST(
   }
 
   const grant = await grantResourceToUserByEmail({
-    workspaceId: ws.workspaceId,
+    workspaceId: chat.workspaceId,
     resourceType: "chat",
     resourceId: chat.slug,
     email: body.email,
     createdBy: session.user.id,
-    permission: "read",
+    permission: "viewer",
   });
 
   if (!grant) {
@@ -67,7 +62,7 @@ export async function POST(
   void apiLogger.meter("meter.share.created", {
     resourceType: "chat",
     slug,
-    workspaceUuid: ws.workspaceId,
+    workspaceUuid: chat.workspaceId,
   });
   void apiLogger.featureUsed("chat.sharing.grant.created", { slug });
   void apiLogger.requestSucceeded(201, { slug });

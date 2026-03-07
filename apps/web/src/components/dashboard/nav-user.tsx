@@ -1,19 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Route } from "next";
 import {
-  BadgeCheck,
-  Bell,
   Building2,
   Check,
   ChevronsUpDown,
-  CreditCard,
   LogOut,
+  Mail,
   Plus,
-  Settings,
-  Shield,
-  Sparkles,
+  UserPlus,
 } from "lucide-react";
 import { authClient } from "@avenire/auth/client";
 import { Avatar, AvatarFallback, AvatarImage } from "@avenire/ui/components/avatar";
@@ -34,6 +30,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@avenire/ui/components/dropdown-menu";
 import { Input } from "@avenire/ui/components/input";
@@ -53,28 +52,23 @@ type WorkspaceSummary = {
   name: string;
 };
 
-function getInitials(name: string) {
-  const parts = name
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-
-  if (parts.length === 0) {
-    return "U";
-  }
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-
-  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
-}
+type WorkspaceInvitation = {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  inviterName: string | null;
+  inviterEmail: string;
+};
 
 export function NavUser({
   user,
   workspaces = [],
+  invitations = [],
   activeWorkspaceId,
   onSwitchWorkspace,
   onCreateWorkspace,
+  onAcceptInvitation,
+  onDeclineInvitation,
 }: {
   user: {
     name: string;
@@ -82,9 +76,12 @@ export function NavUser({
     avatar?: string;
   };
   workspaces?: WorkspaceSummary[];
+  invitations?: WorkspaceInvitation[];
   activeWorkspaceId?: string | null;
   onSwitchWorkspace?: (workspace: WorkspaceSummary) => void;
   onCreateWorkspace?: (name: string) => Promise<void> | void;
+  onAcceptInvitation?: (invitationId: string) => Promise<void> | void;
+  onDeclineInvitation?: (invitationId: string) => Promise<void> | void;
 }) {
   const { isMobile } = useSidebar();
   const router = useRouter();
@@ -99,6 +96,11 @@ export function NavUser({
   useEffect(() => {
     setAvatarSrc(user.avatar || fallbackAvatar);
   }, [fallbackAvatar, user.avatar]);
+
+  const activeWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.workspaceId === activeWorkspaceId) ?? null,
+    [activeWorkspaceId, workspaces],
+  );
 
   return (
     <>
@@ -129,89 +131,96 @@ export function NavUser({
                 <ChevronsUpDown className="ml-auto size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent
-                className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+                className="w-(--radix-dropdown-menu-trigger-width) min-w-64 rounded-lg"
                 side={isMobile ? "bottom" : "right"}
                 align="end"
                 sideOffset={4}
               >
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel className="p-0 font-normal">
-                    <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                      <Avatar className="h-8 w-8 rounded-lg">
-                        <AvatarImage
-                          src={avatarSrc}
-                          alt={user.name}
-                          onError={() => setAvatarSrc(fallbackAvatar)}
-                        />
-                        <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
-                      </Avatar>
-                      <div className="grid flex-1 text-left text-sm leading-tight">
-                        <span className="truncate font-medium">{user.name}</span>
-                        <span className="truncate text-xs">{user.email}</span>
-                      </div>
-                    </div>
-                  </DropdownMenuLabel>
-                </DropdownMenuGroup>
-
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="text-muted-foreground text-xs">
-                    Workspaces
-                  </DropdownMenuLabel>
-                  {workspaces.map((workspace) => (
-                    <DropdownMenuItem
-                      key={workspace.workspaceId}
-                      onSelect={() => onSwitchWorkspace?.(workspace)}
-                    >
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
                       <Building2 className="size-4" />
-                      <span className="truncate">{workspace.name}</span>
-                      {workspace.workspaceId === activeWorkspaceId ? (
-                        <Check className="ml-auto size-4" />
-                      ) : null}
-                    </DropdownMenuItem>
-                  ))}
-                  <DialogTrigger render={<DropdownMenuItem />}>
-                    <Plus className="size-4" />
-                    Create workspace
-                  </DialogTrigger>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate">Switch Workspace</p>
+                        <p className="truncate text-[10px] text-muted-foreground">
+                          {activeWorkspace?.name ?? "No active workspace"}
+                        </p>
+                      </div>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="min-w-64">
+                      {workspaces.map((workspace) => (
+                        <DropdownMenuItem
+                          key={workspace.workspaceId}
+                          onClick={() => onSwitchWorkspace?.(workspace)}
+                          onSelect={() => onSwitchWorkspace?.(workspace)}
+                        >
+                          <Building2 className="size-4" />
+                          <span className="truncate">{workspace.name}</span>
+                          {workspace.workspaceId === activeWorkspaceId ? (
+                            <Check className="ml-auto size-4" />
+                          ) : null}
+                        </DropdownMenuItem>
+                      ))}
+                      <DialogTrigger render={<DropdownMenuItem />}>
+                        <Plus className="size-4" />
+                        Create workspace
+                      </DialogTrigger>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <UserPlus className="size-4" />
+                      <div className="min-w-0 flex-1">
+                        <p>Workspace invites</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {invitations.length} pending
+                        </p>
+                      </div>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="min-w-72">
+                      {invitations.length === 0 ? (
+                        <DropdownMenuItem disabled>
+                          <Mail className="size-4" />
+                          No pending invites
+                        </DropdownMenuItem>
+                      ) : (
+                        invitations.map((invite) => (
+                          <div className="rounded-md border border-border/60 p-2" key={invite.id}>
+                            <p className="truncate font-medium text-xs">{invite.organizationName}</p>
+                            <p className="truncate text-[11px] text-muted-foreground">
+                              {invite.inviterName ?? invite.inviterEmail}
+                            </p>
+                            <div className="mt-2 flex gap-2">
+                              <Button
+                                className="h-6 px-2 text-xs"
+                                onClick={() => {
+                                  void onAcceptInvitation?.(invite.id);
+                                }}
+                                size="sm"
+                                type="button"
+                              >
+                                Accept
+                              </Button>
+                              <Button
+                                className="h-6 px-2 text-xs"
+                                onClick={() => {
+                                  void onDeclineInvitation?.(invite.id);
+                                }}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                Decline
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
                 </DropdownMenuGroup>
 
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem
-                    onSelect={() => router.push("/pricing" as Route)}
-                  >
-                    <Sparkles />
-                    Upgrade to Pro
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem
-                    onSelect={() => router.push("/settings?tab=account" as Route)}
-                  >
-                    <BadgeCheck />
-                    Account
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => router.push("/settings?tab=billing" as Route)}
-                  >
-                    <CreditCard />
-                    Billing
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => router.push("/settings?tab=security" as Route)}
-                  >
-                    <Shield />
-                    Security
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => router.push("/settings" as Route)}
-                  >
-                    <Settings />
-                    Settings
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={() => {

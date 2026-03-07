@@ -7,11 +7,13 @@ import {
   getFileForIngestion,
   markIngestionJobFailed,
   markIngestionJobSucceeded,
+  retryIngestionJob,
   replaceFileTranscriptCues,
 } from "@avenire/database";
 import { assertRequiredSecrets, ingestStoredFile } from "@avenire/ingestion";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { publishWorkspaceStreamEvent } from "./workspace-event-stream";
 
 // Prefer backend-local env; keep repo root as fallback.
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -27,6 +29,18 @@ const workerConcurrency = Math.max(
   1,
   Number.parseInt(process.env.INGESTION_WORKER_CONCURRENCY ?? "3", 10),
 );
+const maxIngestionAttempts = Math.max(
+  1,
+  Number.parseInt(process.env.INGESTION_WORKER_MAX_ATTEMPTS ?? "3", 10),
+);
+const retryBaseMs = Math.max(
+  250,
+  Number.parseInt(process.env.INGESTION_WORKER_RETRY_BASE_MS ?? "1200", 10),
+);
+const retryMaxMs = Math.max(
+  retryBaseMs,
+  Number.parseInt(process.env.INGESTION_WORKER_RETRY_MAX_MS ?? "30000", 10),
+);
 
 assertRequiredSecrets();
 
@@ -38,6 +52,40 @@ let lastTickAt: string | null = null;
 let lastError: string | null = null;
 let lastJobDurationMs: number | null = null;
 
+async function publishIngestionEvent(input: {
+  workspaceId: string;
+  jobId: string;
+  eventType: string;
+  payload?: Record<string, unknown>;
+}) {
+  await publishWorkspaceStreamEvent({
+    workspaceUuid: input.workspaceId,
+    type: "ingestion.job",
+    payload: {
+      createdAt: new Date().toISOString(),
+      eventType: input.eventType,
+      jobId: input.jobId,
+      payload: input.payload ?? {},
+      workspaceId: input.workspaceId,
+    },
+  });
+}
+
+async function appendAndPublishIngestionEvent(input: {
+  workspaceId: string;
+  jobId: string;
+  eventType: string;
+  payload?: Record<string, unknown>;
+}) {
+  await appendIngestionJobEvent({
+    workspaceId: input.workspaceId,
+    jobId: input.jobId,
+    eventType: input.eventType,
+    payload: input.payload,
+  });
+  await publishIngestionEvent(input);
+}
+
 async function processClaimedJob(
   job: NonNullable<Awaited<ReturnType<typeof claimNextIngestionJob>>>,
 ) {
@@ -46,7 +94,17 @@ async function processClaimedJob(
   activeJobs += 1;
 
   try {
-    await appendIngestionJobEvent({
+    await publishIngestionEvent({
+      workspaceId: job.workspaceId,
+      jobId: job.id,
+      eventType: "job.running",
+      payload: {
+        status: "running",
+        attempts: job.attempts,
+      },
+    });
+
+    await appendAndPublishIngestionEvent({
       workspaceId: job.workspaceId,
       jobId: job.id,
       eventType: "job.processing",
@@ -63,7 +121,7 @@ async function processClaimedJob(
     }
 
     stage = "ingest";
-    await appendIngestionJobEvent({
+    await appendAndPublishIngestionEvent({
       workspaceId: job.workspaceId,
       jobId: job.id,
       eventType: "job.processing",
@@ -79,6 +137,7 @@ async function processClaimedJob(
       workspaceId: job.workspaceId,
       fileId: job.fileId,
       storageUrl: file.storageUrl,
+      storageKey: file.storageKey,
       fileName: file.name,
       mimeType: file.mimeType,
       metadata: file.metadata,
@@ -105,6 +164,16 @@ async function processClaimedJob(
       payload: {
         resources: result.resources.length,
         chunks: chunkCount,
+        fileId: job.fileId,
+        durationMs: Date.now() - startedAtMs,
+      },
+    });
+    await publishIngestionEvent({
+      workspaceId: job.workspaceId,
+      jobId: job.id,
+      eventType: "job.succeeded",
+      payload: {
+        status: "succeeded",
         fileId: job.fileId,
         durationMs: Date.now() - startedAtMs,
       },
@@ -137,13 +206,49 @@ async function processClaimedJob(
     });
 
     try {
-      await markIngestionJobFailed({
-        workspaceId: job.workspaceId,
-        jobId: job.id,
-        error: enrichedMessage,
-      });
-    } catch (error){
-    console.error(error)
+      if (job.attempts < maxIngestionAttempts) {
+        const retryInMs = Math.min(
+          retryMaxMs,
+          retryBaseMs * 2 ** Math.max(0, job.attempts - 1),
+        );
+        await retryIngestionJob({
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          error: enrichedMessage,
+          retryInMs,
+        });
+        await publishIngestionEvent({
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          eventType: "job.retry_scheduled",
+          payload: {
+            status: "queued",
+            error: enrichedMessage,
+            attempts: job.attempts,
+            maxAttempts: maxIngestionAttempts,
+            retryInMs,
+          },
+        });
+      } else {
+        await markIngestionJobFailed({
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          error: enrichedMessage,
+        });
+        await publishIngestionEvent({
+          workspaceId: job.workspaceId,
+          jobId: job.id,
+          eventType: "job.failed",
+          payload: {
+            status: "failed",
+            error: enrichedMessage,
+            attempts: job.attempts,
+            maxAttempts: maxIngestionAttempts,
+          },
+        });
+      }
+    } catch (error) {
+      console.error(error);
     }
   } finally {
     activeJobs = Math.max(0, activeJobs - 1);

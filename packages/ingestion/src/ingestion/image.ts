@@ -82,7 +82,9 @@ export const ingestImage = async (input: {
 }): Promise<CanonicalResource> => {
   const source = input.url?.trim() || `image:inline:${crypto.randomUUID()}`;
 
-  let imagePart: { type: 'image_url'; image_url: string } | { type: 'image_base64'; image_base64: string };
+  let imagePart:
+    | { type: 'image_url'; image_url: string }
+    | { type: 'image_base64'; image_base64: string; mimeType?: string };
 
   if (input.url) {
     const imageUrl = assertSafeUrl(input.url).toString();
@@ -91,12 +93,17 @@ export const ingestImage = async (input: {
       image_url: imageUrl,
     };
   } else if (input.base64) {
+    const dataUrlMatch = input.base64.match(
+      /^data:(?<mime>[-\w.+/]+\/[-\w.+]+);base64,(?<payload>.*)$/i,
+    );
+    const mimeType = dataUrlMatch?.groups?.mime?.toLowerCase();
     const bytes = decodeBase64ToBytes(input.base64);
     assertMaxSize('image base64 payload', bytes.byteLength, config.maxInlineBytes);
     const imageBase64 = Buffer.from(bytes).toString('base64');
     imagePart = {
       type: 'image_base64',
       image_base64: imageBase64,
+      mimeType,
     };
   } else {
     throw new Error('Image ingestion requires either `url` or `base64`.');
@@ -105,7 +112,7 @@ export const ingestImage = async (input: {
   const imageDescription = await describeImageWithMistral({
     imageDataUrl:
       imagePart.type === 'image_base64'
-        ? `data:image/jpeg;base64,${imagePart.image_base64}`
+        ? `data:${imagePart.mimeType || 'image/jpeg'};base64,${imagePart.image_base64}`
         : undefined,
     imageUrl: imagePart.type === 'image_url' ? imagePart.image_url : undefined,
     title: input.title,
