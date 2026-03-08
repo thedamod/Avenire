@@ -1,4 +1,5 @@
 import {
+  getFileAssetByContentHash,
   getFileAssetByStorageKey,
   isSharedFilesVirtualFolderId,
   listWorkspaceMembers,
@@ -12,6 +13,7 @@ import { NextResponse } from "next/server";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 import { consumeUploadUnits } from "@/lib/billing";
 import { createApiLogger } from "@/lib/observability";
+import { enqueueIngestionJob, hasSuccessfulIngestionForFile } from "@/lib/ingestion-data";
 import { optimizeAndReuploadVideo } from "@/lib/video-optimization";
 
 function classifyStoredFileType(mimeType: string | null) {
@@ -25,6 +27,11 @@ function classifyStoredFileType(mimeType: string | null) {
   if (mimeType.startsWith("text/")) return "text";
   if (mimeType.startsWith("audio/")) return "audio";
   return "other";
+}
+
+function normalizeSha256(value: string | null | undefined) {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
 export async function POST(
@@ -65,6 +72,8 @@ export async function POST(
     mimeType?: string | null;
     sizeBytes?: number;
     metadata?: Record<string, unknown>;
+    contentHashSha256?: string | null;
+    hashComputedBy?: "client" | "server" | null;
   };
 
   if (
@@ -92,17 +101,37 @@ export async function POST(
     );
   }
 
-  const existing = await getFileAssetByStorageKey(
-    workspaceUuid,
-    body.storageKey
-  );
+  const normalizedHash = normalizeSha256(body.contentHashSha256);
+  const existingByHashRaw = normalizedHash
+    ? await getFileAssetByContentHash(workspaceUuid, normalizedHash)
+    : null;
+  const existingByHash =
+    existingByHashRaw?.hashVerificationStatus === "verified"
+      ? existingByHashRaw
+      : null;
+  const existing =
+    existingByHash ??
+    (await getFileAssetByStorageKey(workspaceUuid, body.storageKey));
   if (existing) {
+    const hasSucceeded = await hasSuccessfulIngestionForFile(
+      workspaceUuid,
+      existing.id
+    ).catch(() => false);
+    const maybeJob = hasSucceeded
+      ? null
+      : await enqueueIngestionJob({
+          workspaceId: workspaceUuid,
+          fileId: existing.id,
+        }).catch(() => null);
     void apiLogger.requestSucceeded(200, {
       workspaceUuid,
       fileId: existing.id,
       deduplicated: true,
     });
-    return NextResponse.json({ file: existing }, { status: 200 });
+    return NextResponse.json(
+      { file: existing, ingestionJob: maybeJob },
+      { status: 200 }
+    );
   }
 
   let file;
@@ -115,6 +144,9 @@ export async function POST(
       mimeType: body.mimeType,
       sizeBytes: body.sizeBytes,
       metadata: body.metadata,
+      contentHashSha256: normalizedHash,
+      hashComputedBy: normalizedHash ? body.hashComputedBy ?? "client" : null,
+      hashVerificationStatus: normalizedHash ? "pending" : null,
     });
   } catch {
     return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
@@ -199,6 +231,24 @@ export async function POST(
     reason: "tree.changed",
   });
 
+  const hasSucceededIngestion = await hasSuccessfulIngestionForFile(
+    workspaceUuid,
+    storedFile.id
+  ).catch(() => false);
+  const ingestionJob = hasSucceededIngestion
+    ? null
+    : await enqueueIngestionJob({
+        workspaceId: workspaceUuid,
+        fileId: storedFile.id,
+      }).catch((error) => {
+        console.error("Failed to enqueue ingestion job", {
+          workspaceUuid,
+          fileId: storedFile.id,
+          error,
+        });
+        return null;
+      });
+
   void apiLogger.meter("meter.upload.filesystem.registered", {
     workspaceUuid,
     fileId: storedFile.id,
@@ -222,5 +272,5 @@ export async function POST(
     sizeBytes: storedFile.sizeBytes,
   });
 
-  return NextResponse.json({ file: storedFile }, { status: 201 });
+  return NextResponse.json({ file: storedFile, ingestionJob }, { status: 201 });
 }

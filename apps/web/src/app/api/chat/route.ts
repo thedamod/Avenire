@@ -32,6 +32,7 @@ import {
 const DEFAULT_CHAT_TITLE = "New Chat";
 const LOG_PREFIX = "[api/chat]";
 const DEFAULT_CHAT_TOKENS_PER_CREDIT = 4000;
+const DEFAULT_CHAT_MODEL: FermionModelName = "fermion-agent";
 
 function logInfo(message: string, meta?: Record<string, unknown>) {
   if (meta) {
@@ -290,7 +291,7 @@ export async function POST(request: Request) {
 
       logInfo("Starting model stream", {
         chatId: chatSlug,
-        model: body.selectedModel ?? body.selectedReasoningModel ?? "fermion-sprint",
+        model: body.selectedModel ?? body.selectedReasoningModel ?? DEFAULT_CHAT_MODEL,
       });
 
       let result: Awaited<ReturnType<typeof streamChat>>;
@@ -305,7 +306,7 @@ export async function POST(request: Request) {
         await clearActiveStreamId(chatSlug, streamId);
         logError("Failed to start model stream", {
           chatId: chatSlug,
-          model: body.selectedModel ?? body.selectedReasoningModel ?? "fermion-sprint",
+          model: body.selectedModel ?? body.selectedReasoningModel ?? DEFAULT_CHAT_MODEL,
           error,
         });
         void apiLogger.requestFailed(500, error, { chatId: chatSlug });
@@ -354,7 +355,9 @@ export async function POST(request: Request) {
                 const requiredCredits = getRequiredChatCredits(totalTokens);
                 const additionalCredits = Math.max(0, requiredCredits - 1);
                 const modelName =
-                  body.selectedModel ?? body.selectedReasoningModel ?? "fermion-sprint";
+                  body.selectedModel ??
+                  body.selectedReasoningModel ??
+                  DEFAULT_CHAT_MODEL;
 
                 if (additionalCredits > 0) {
                   const meteredUsage = await consumeChatUnits(session.user.id, additionalCredits);
@@ -444,7 +447,8 @@ export async function POST(request: Request) {
 
   void apiLogger.requestSucceeded(200, {
     chatId: chatSlug,
-    selectedModel: body.selectedModel ?? body.selectedReasoningModel ?? "fermion-sprint",
+    selectedModel:
+      body.selectedModel ?? body.selectedReasoningModel ?? DEFAULT_CHAT_MODEL,
     messageCount: originalMessages.length,
   });
 

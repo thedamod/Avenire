@@ -1436,6 +1436,8 @@ interface SeekState {
  
 interface MediaPlayerSeekProps
   extends React.ComponentProps<typeof SliderPrimitive.Root> {
+  activeRangeIndex?: number;
+  highlightRanges?: Array<{ endTime?: number; startTime: number }>;
   withTime?: boolean;
   withoutChapter?: boolean;
   withoutTooltip?: boolean;
@@ -1450,6 +1452,8 @@ interface MediaPlayerSeekProps
  
 function MediaPlayerSeek(props: MediaPlayerSeekProps) {
   const {
+    activeRangeIndex,
+    highlightRanges,
     withTime = false,
     withoutChapter = false,
     withoutTooltip = false,
@@ -2020,10 +2024,14 @@ function MediaPlayerSeek(props: MediaPlayerSeekProps) {
         return;
       }
 
-      if (event.button !== 0) {
+      const isMousePrimaryClick =
+        (event.pointerType === "mouse" && event.button === 0) ||
+        (event.pointerType !== "mouse" && event.isPrimary);
+      if (!isMousePrimaryClick) {
         return;
       }
 
+      event.preventDefault();
       const nextTime = getSeekTimeFromClientX(event.clientX);
       if (nextTime === null) {
         return;
@@ -2099,6 +2107,63 @@ function MediaPlayerSeek(props: MediaPlayerSeekProps) {
       );
     });
   }, [chapterCues, seekableEnd, withoutChapter]);
+
+  const retrievalRangesOverlay = React.useMemo(() => {
+    if (!(highlightRanges && highlightRanges.length > 0 && seekableEnd > 0)) {
+      return null;
+    }
+
+    return highlightRanges.map((range, index) => {
+      const start = Math.max(0, Math.min(seekableEnd, range.startTime));
+      const end =
+        typeof range.endTime === "number"
+          ? Math.max(start, Math.min(seekableEnd, range.endTime))
+          : Math.min(seekableEnd, start + 0.75);
+      const left = (start / seekableEnd) * 100;
+      const width = Math.max(0.4, ((end - start) / seekableEnd) * 100);
+      const isActive = typeof activeRangeIndex === "number" && activeRangeIndex === index;
+
+      return (
+        <button
+          aria-label={`Seek to highlighted segment ${index + 1}`}
+          aria-disabled={isDisabled || undefined}
+          className={cn(
+            "absolute top-0 h-full rounded-full border border-white/40 transition-opacity",
+            isDisabled
+              ? "cursor-not-allowed bg-zinc-400/35 opacity-50"
+              : isActive
+                ? "bg-amber-400/85 opacity-100"
+                : "bg-amber-300/55 opacity-80"
+          )}
+          disabled={isDisabled}
+          key={`retrieval-range-${index}-${start}-${end}`}
+          onClick={(event) => {
+            if (isDisabled) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            onSeekCommit(start);
+          }}
+          onPointerDown={(event) => {
+            if (isDisabled) {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            onSeekCommit(start);
+          }}
+          style={{
+            left: `${left}%`,
+            width: `${width}%`,
+            zIndex: 6,
+          }}
+          tabIndex={isDisabled ? -1 : 0}
+          type="button"
+        />
+      );
+    });
+  }, [activeRangeIndex, highlightRanges, onSeekCommit, seekableEnd]);
  
   const spriteStyle = React.useMemo<React.CSSProperties>(() => {
     if (!thumbnail?.coords || !thumbnail?.src) {
@@ -2168,6 +2233,7 @@ function MediaPlayerSeek(props: MediaPlayerSeekProps) {
                 width: `${bufferedProgress * 100}%`,
               }}
             />
+            {retrievalRangesOverlay}
             <SliderPrimitive.Indicator className="absolute h-full bg-primary will-change-[width]" />
             {seekState.isHovering && seekableEnd > 0 && (
               <div

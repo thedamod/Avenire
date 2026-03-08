@@ -1,4 +1,5 @@
 import { listWorkspaceFiles, listWorkspaceFolders } from "@/lib/file-data";
+import { getIngestionFlagsByFileIds } from "@/lib/ingestion-data";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 import { NextResponse } from "next/server";
 
@@ -21,5 +22,15 @@ export async function GET(
     listWorkspaceFolders(workspaceUuid, user.id),
     listWorkspaceFiles(workspaceUuid, user.id),
   ]);
-  return NextResponse.json({ folders, files });
+  const ingestionFlags = await getIngestionFlagsByFileIds(
+    workspaceUuid,
+    files.map((file) => file.id)
+  );
+  return NextResponse.json({
+    folders,
+    files: files.map((file) => ({
+      ...file,
+      isIngested: ingestionFlags[file.id] ?? false,
+    })),
+  });
 }

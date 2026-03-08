@@ -4,6 +4,7 @@ export {
   createResourceShareLink,
   findAuthUserByEmail,
   getFileAssetById,
+  getFileAssetByContentHash,
   getFileAssetByStorageKey,
   getFolderWithAncestors,
   grantAllChatsFromUserToUser,

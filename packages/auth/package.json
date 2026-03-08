@@ -39,6 +39,6 @@
     "@avenire/typescript-config": "workspace:*",
     "@better-auth/cli": "1.4.21",
     "@types/react": "latest",
-    "typescript": "latest"
+    "typescript": "5.9.3"
   }
 }

@@ -8,8 +8,23 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  vector,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { organization, user } from "./auth-schema";
+
+const resolveEmbeddingDimensions = (): number => {
+  const parsed = Number.parseInt(
+    process.env.EMBEDDING_DIMENSIONS ??
+      process.env.COHERE_EMBEDDING_DIMENSIONS ??
+      process.env.VOYAGE_EMBEDDING_DIMENSIONS ??
+      "1024",
+    10
+  );
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1024;
+};
+
+export const ingestionEmbeddingDimensions = resolveEmbeddingDimensions();
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -140,6 +155,10 @@ export const fileAsset = pgTable(
       .notNull()
       .$type<Record<string, unknown>>()
       .default({}),
+    contentHashSha256: text("content_hash_sha256"),
+    hashComputedBy: text("hash_computed_by"),
+    hashVerificationStatus: text("hash_verification_status"),
+    hashVerifiedAt: timestamp("hash_verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
     deletedAt: timestamp("deleted_at"),
@@ -152,6 +171,10 @@ export const fileAsset = pgTable(
     uniqueIndex("file_asset_workspace_storage_key_uidx").on(
       table.workspaceId,
       table.storageKey
+    ),
+    index("file_asset_workspace_hash_idx").on(
+      table.workspaceId,
+      table.contentHashSha256
     ),
   ]
 );
@@ -319,5 +342,180 @@ export const sudoChallenge = pgTable(
   },
   (table) => [
     index("sudo_challenge_user_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
+export const ingestionResource = pgTable(
+  "ingestion_resource",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id").references(() => fileAsset.id, {
+      onDelete: "set null",
+    }),
+    sourceType: text("source_type").notNull(),
+    source: text("source").notNull(),
+    provider: text("provider"),
+    title: text("title"),
+    metadata: jsonb("metadata")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("ingestion_resource_workspace_source_uidx").on(
+      table.workspaceId,
+      table.sourceType,
+      table.source
+    ),
+    index("ingestion_resource_workspace_idx").on(table.workspaceId),
+    index("ingestion_resource_file_idx").on(table.fileId),
+  ]
+);
+
+export const ingestionChunk = pgTable(
+  "ingestion_chunk",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    resourceId: uuid("resource_id")
+      .notNull()
+      .references(() => ingestionResource.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull(),
+    kind: text("kind").notNull().default("generic"),
+    content: text("content").notNull(),
+    page: integer("page"),
+    startMs: integer("start_ms"),
+    endMs: integer("end_ms"),
+    metadata: jsonb("metadata")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("ingestion_chunk_resource_idx").on(table.resourceId),
+    uniqueIndex("ingestion_chunk_resource_order_uidx").on(
+      table.resourceId,
+      table.chunkIndex
+    ),
+  ]
+);
+
+export const ingestionEmbedding = pgTable(
+  "ingestion_embedding",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    chunkId: uuid("chunk_id")
+      .notNull()
+      .references(() => ingestionChunk.id, { onDelete: "cascade" }),
+    model: text("model").notNull(),
+    embedding: vector("embedding", {
+      dimensions: ingestionEmbeddingDimensions,
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("ingestion_embedding_chunk_idx").on(table.chunkId),
+    index("ingestion_embedding_model_idx").on(table.model),
+  ]
+);
+
+export const ingestionJob = pgTable(
+  "ingestion_job",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => fileAsset.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("queued"),
+    sourceType: text("source_type"),
+    attempts: integer("attempts").notNull().default(0),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("ingestion_job_workspace_idx").on(table.workspaceId),
+    index("ingestion_job_file_idx").on(table.fileId),
+    uniqueIndex("ingestion_job_workspace_file_active_uidx")
+      .on(table.workspaceId, table.fileId)
+      .where(sql`${table.status} IN ('queued', 'running')`),
+    index("ingestion_job_status_idx").on(table.status),
+    index("ingestion_job_status_created_idx").on(table.status, table.createdAt),
+  ]
+);
+
+export const ingestionJobEvent = pgTable(
+  "ingestion_job_event",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => ingestionJob.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    payload: jsonb("payload")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("ingestion_job_event_job_idx").on(table.jobId),
+    index("ingestion_job_event_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt
+    ),
+  ]
+);
+
+export const fileTranscriptCue = pgTable(
+  "file_transcript_cue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => fileAsset.id, { onDelete: "cascade" }),
+    startMs: integer("start_ms").notNull(),
+    endMs: integer("end_ms").notNull(),
+    text: text("text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("file_transcript_cue_workspace_file_idx").on(
+      table.workspaceId,
+      table.fileId
+    ),
+    index("file_transcript_cue_file_time_idx").on(table.fileId, table.startMs),
   ]
 );

@@ -368,8 +368,8 @@ export function ChatWorkspace({
           id={chatSlug}
           initialMessages={initialMessages}
           isReadonly={isReadonly}
-          selectedModel="fermion-sprint"
-          selectedReasoningModel="fermion-reasoning"
+          selectedModel="fermion-agent"
+          selectedReasoningModel="fermion-agent-reasoning"
         />
       </div>
     </div>

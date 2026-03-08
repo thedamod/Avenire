@@ -17,6 +17,7 @@
     "format": "biome format --write ."
   },
   "dependencies": {
+    "@ai-sdk/baseten": "^1.0.36",
     "@ai-sdk/google": "latest",
     "@ai-sdk/groq": "latest",
     "@ai-sdk/mistral": "^3.0.21",
@@ -26,7 +27,7 @@
   "devDependencies": {
     "@avenire/env-types": "workspace:*",
     "@avenire/typescript-config": "workspace:*",
-    "typescript": "latest"
+    "typescript": "5.9.3"
   },
   "engines": {
     "bun": ">=1.0.0"

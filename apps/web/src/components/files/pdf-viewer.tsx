@@ -4,15 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AnnotationLayer,
   CanvasLayer,
+  calculateHighlightRects,
   Page,
   Pages,
   Root,
+  useSearch,
   TextLayer,
   Thumbnail,
   Thumbnails,
+  HighlightLayer,
   usePdf,
   usePdfJump,
 } from "@anaralabs/lector";
+import type { SearchResult } from "@anaralabs/lector";
 import { GlobalWorkerOptions } from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { Badge } from "@avenire/ui/components/badge";
@@ -36,13 +40,27 @@ GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-function PDFViewerContent({ source }: { source: string }) {
+function PDFViewerContent({
+  source,
+  fallbackHighlightText,
+  highlightPage,
+  highlightText,
+}: {
+  source: string;
+  fallbackHighlightText?: string | null;
+  highlightPage?: number | null;
+  highlightText?: string | null;
+}) {
   const currentPage = usePdf((state) => state.currentPage);
   const totalPages = usePdf((state) => state.pdfDocumentProxy?.numPages ?? 0);
   const pdfProxy = usePdf((state) => state.pdfDocumentProxy);
   const updateZoom = usePdf((state) => state.updateZoom);
   const zoomLevel = usePdf((state) => state.zoom);
   const { jumpToPage } = usePdfJump();
+  const { jumpToHighlightRects } = usePdfJump();
+  const { search, textContent } = useSearch();
+  const setHighlight = usePdf((state) => state.setHighlight);
+  const getPdfPageProxy = usePdf((state) => state.getPdfPageProxy);
 
   const [showThumbnails, setShowThumbnails] = useState(false);
   const [pageInput, setPageInput] = useState("");
@@ -185,6 +203,101 @@ function PDFViewerContent({ source }: { source: string }) {
     updateZoom((zoom) => Math.min(5, Number((zoom + 0.1).toFixed(2))));
   }, [updateZoom]);
 
+  useEffect(() => {
+    if (!(highlightPage || highlightText?.trim() || fallbackHighlightText?.trim())) {
+      setHighlight([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const normalizeSearchText = (value: string): string =>
+      value
+        .replace(/\s+/g, " ")
+        .replace(/\p{C}+/gu, " ")
+        .trim();
+
+    const buildSearchQueries = (): string[] => {
+      const candidates: string[] = [];
+      const primary = normalizeSearchText(highlightText ?? "");
+      const fallback = normalizeSearchText(fallbackHighlightText ?? "");
+
+      if (primary.length > 0) {
+        candidates.push(primary);
+        if (primary.length > 180) {
+          candidates.push(primary.slice(0, 180).trim());
+        }
+      }
+
+      if (fallback.length > 0) {
+        candidates.push(fallback);
+      }
+
+      return Array.from(new Set(candidates.filter((value) => value.length > 0)));
+    };
+
+    const applyHighlight = async () => {
+      if (typeof highlightPage === "number" && highlightPage > 0) {
+        jumpToPage(highlightPage, { align: "center", behavior: "smooth" });
+      }
+      if ((textContent?.length ?? 0) === 0) {
+        return;
+      }
+      const queries = buildSearchQueries();
+      if (queries.length === 0) {
+        return;
+      }
+
+      for (const query of queries) {
+        const resultSet = search(query, { limit: 20, threshold: 0.35 });
+        const candidates: SearchResult[] = [
+          ...(resultSet.exactMatches ?? []),
+          ...(resultSet.fuzzyMatches ?? []),
+        ];
+
+        const selected =
+          (typeof highlightPage === "number" && highlightPage > 0
+            ? candidates.find((item) => item.pageNumber === highlightPage)
+            : undefined) ?? candidates[0];
+
+        if (!(selected && !cancelled)) {
+          continue;
+        }
+
+        const pageProxy = getPdfPageProxy(selected.pageNumber);
+        const rects = await calculateHighlightRects(pageProxy, {
+          pageNumber: selected.pageNumber,
+          text: selected.text,
+          matchIndex: selected.matchIndex,
+          searchText: query,
+        });
+
+        if (!(rects.length > 0) || cancelled) {
+          continue;
+        }
+
+        setHighlight(rects);
+        jumpToHighlightRects(rects, "pixels", "center", -50);
+        return;
+      }
+    };
+
+    void applyHighlight();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    fallbackHighlightText,
+    getPdfPageProxy,
+    highlightPage,
+    highlightText,
+    jumpToHighlightRects,
+    jumpToPage,
+    search,
+    setHighlight,
+    textContent,
+  ]);
+
   return (
     <>
       <div className="flex items-center justify-between gap-3 border-border border-b bg-muted/40 px-3 py-2 text-xs sm:px-4">
@@ -298,6 +411,7 @@ function PDFViewerContent({ source }: { source: string }) {
             <Page className="mx-auto w-fit rounded-md border border-border/40 bg-white shadow-sm">
               <CanvasLayer />
               <TextLayer />
+              <HighlightLayer />
               <AnnotationLayer />
             </Page>
           </Pages>
@@ -309,9 +423,15 @@ function PDFViewerContent({ source }: { source: string }) {
 
 function PDFViewer({
   source,
+  fallbackHighlightText,
+  highlightPage,
+  highlightText,
   className,
 }: {
   source: string;
+  fallbackHighlightText?: string | null;
+  highlightPage?: number | null;
+  highlightText?: string | null;
   className?: string;
 }) {
   return (
@@ -323,7 +443,12 @@ function PDFViewer({
       loader={<div className="p-4 text-muted-foreground text-sm">Loading PDF...</div>}
       source={source}
     >
-      <PDFViewerContent source={source} />
+      <PDFViewerContent
+        fallbackHighlightText={fallbackHighlightText}
+        highlightPage={highlightPage}
+        highlightText={highlightText}
+        source={source}
+      />
     </Root>
   );
 }

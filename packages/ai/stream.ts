@@ -8,7 +8,7 @@ export async function streamChat(input: {
   userName?: string;
   context?: string;
 }) {
-  const model = fermion.languageModel(input.selectedModel ?? "fermion-sprint");
+  const model = fermion.languageModel(input.selectedModel ?? "fermion-agent");
 
   const result = streamText({
     model,

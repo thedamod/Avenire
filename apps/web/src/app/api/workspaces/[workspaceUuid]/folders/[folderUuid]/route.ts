@@ -7,6 +7,7 @@ import {
   updateFolder,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
+import { getIngestionFlagsByFileIds } from "@/lib/ingestion-data";
 import { NextResponse } from "next/server";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
@@ -31,11 +32,18 @@ export async function GET(
   }
 
   const children = await listFolderContentsForUser(workspaceUuid, folderUuid, user.id);
+  const ingestionFlags = await getIngestionFlagsByFileIds(
+    workspaceUuid,
+    (children.files ?? []).map((file) => file.id)
+  );
   return NextResponse.json({
     folder: folder.folder,
     ancestors: folder.ancestors,
     folders: children.folders,
-    files: children.files,
+    files: (children.files ?? []).map((file) => ({
+      ...file,
+      isIngested: ingestionFlags[file.id] ?? false,
+    })),
   });
 }
 
