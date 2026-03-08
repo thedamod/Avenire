@@ -25,6 +25,7 @@ export interface ExplorerFolderRecord {
 }
 
 export interface ExplorerFileRecord {
+  contentHashSha256?: string | null;
   id: string;
   workspaceId: string;
   folderId: string;
@@ -33,6 +34,11 @@ export interface ExplorerFileRecord {
   name: string;
   mimeType: string | null;
   sizeBytes: number;
+  uploadedBy?: string;
+  updatedBy?: string | null;
+  hashComputedBy?: string | null;
+  hashVerificationStatus?: string | null;
+  hashVerifiedAt?: string | null;
   isShared?: boolean;
   readOnly?: boolean;
   sourceWorkspaceId?: string;
@@ -133,6 +139,7 @@ function mapFile(row: typeof fileAsset.$inferSelect): ExplorerFileRecord {
   const sizeBytes = row.optimizedSizeBytes ?? row.sizeBytes;
 
   return {
+    contentHashSha256: row.contentHashSha256 ?? null,
     id: row.id,
     workspaceId: row.workspaceId,
     folderId: row.folderId,
@@ -141,6 +148,11 @@ function mapFile(row: typeof fileAsset.$inferSelect): ExplorerFileRecord {
     name: row.name,
     mimeType,
     sizeBytes,
+    uploadedBy: row.uploadedBy,
+    updatedBy: row.updatedBy ?? null,
+    hashComputedBy: row.hashComputedBy ?? null,
+    hashVerificationStatus: row.hashVerificationStatus ?? null,
+    hashVerifiedAt: row.hashVerifiedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -1261,7 +1273,10 @@ export async function registerFileAsset(
   workspaceId: string,
   userId: string,
   input: {
+    contentHashSha256?: string | null;
     folderId: string;
+    hashComputedBy?: "client" | "server" | null;
+    hashVerificationStatus?: "failed" | "pending" | "verified" | null;
     storageKey: string;
     storageUrl: string;
     name: string;
@@ -1298,7 +1313,11 @@ export async function registerFileAsset(
       mimeType: input.mimeType ?? null,
       sizeBytes: input.sizeBytes,
       uploadedBy: userId,
+      updatedBy: userId,
       metadata: input.metadata ?? {},
+      contentHashSha256: input.contentHashSha256 ?? null,
+      hashComputedBy: input.hashComputedBy ?? null,
+      hashVerificationStatus: input.hashVerificationStatus ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -1434,15 +1453,44 @@ export async function getFileAssetByStorageKey(
   return record ? mapFile(record) : null;
 }
 
+export async function getFileAssetByContentHash(
+  workspaceId: string,
+  contentHashSha256: string
+) {
+  const normalizedHash = contentHashSha256.trim().toLowerCase();
+  if (!normalizedHash) {
+    return null;
+  }
+
+  const [record] = await db
+    .select()
+    .from(fileAsset)
+    .where(
+      and(
+        eq(fileAsset.workspaceId, workspaceId),
+        eq(fileAsset.contentHashSha256, normalizedHash),
+        isNull(fileAsset.deletedAt)
+      )
+    )
+    .orderBy(desc(fileAsset.updatedAt))
+    .limit(1);
+
+  return record ? mapFile(record) : null;
+}
+
 export async function softDeleteFileAsset(
   workspaceId: string,
   fileId: string,
-  userId: string
+  userId?: string
 ) {
   const now = new Date();
   const [record] = await db
     .update(fileAsset)
-    .set({ deletedAt: now, updatedBy: userId, updatedAt: now })
+    .set({
+      deletedAt: now,
+      ...(userId ? { updatedBy: userId } : {}),
+      updatedAt: now,
+    })
     .where(
       and(
         eq(fileAsset.id, fileId),

@@ -21,7 +21,7 @@
   "devDependencies": {
     "@avenire/env-types": "workspace:*",
     "@avenire/typescript-config": "workspace:*",
-    "typescript": "latest"
+    "typescript": "5.9.3"
   },
   "engines": {
     "bun": ">=1.0.0"

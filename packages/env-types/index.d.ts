@@ -8,8 +8,14 @@ declare namespace NodeJS {
     AXIOM_TOKEN?: string;
     BETTER_AUTH_SECRET?: string;
     BETTER_AUTH_URL?: string;
+    BASETEN_API_KEY?: string;
+    COHERE_API_KEY?: string;
     DATABASE_URL?: string;
     EMAIL_FROM?: string;
+    FERMION_BASETEN_AGENT_MODEL?: string;
+    FERMION_BASETEN_REASONING_MODEL?: string;
+    FERMION_LIGHTWEIGHT_GROQ_MODEL?: string;
+    FERMION_LIGHTWEIGHT_MISTRAL_MODEL?: string;
     GEMINI_API_KEY?: string;
     GROQ_API_KEY?: string;
     NEXT_PUBLIC_APP_URL?: string;

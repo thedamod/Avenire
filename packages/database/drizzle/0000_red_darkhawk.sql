@@ -55,6 +55,10 @@ CREATE TABLE "file_asset" (
 	"uploaded_by" text NOT NULL,
 	"updated_by" text,
 	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"content_hash_sha256" text,
+	"hash_computed_by" text,
+	"hash_verification_status" text,
+	"hash_verified_at" timestamp with time zone,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	"deleted_at" timestamp
@@ -70,6 +74,73 @@ CREATE TABLE "file_folder" (
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	"deleted_at" timestamp
+);
+--> statement-breakpoint
+CREATE TABLE "file_transcript_cue" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"workspace_id" uuid NOT NULL,
+	"file_id" uuid NOT NULL,
+	"start_ms" integer NOT NULL,
+	"end_ms" integer NOT NULL,
+	"text" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "ingestion_chunk" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"resource_id" uuid NOT NULL,
+	"chunk_index" integer NOT NULL,
+	"kind" text DEFAULT 'generic' NOT NULL,
+	"content" text NOT NULL,
+	"page" integer,
+	"start_ms" integer,
+	"end_ms" integer,
+	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "ingestion_embedding" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"chunk_id" uuid NOT NULL,
+	"model" text NOT NULL,
+	"embedding" vector(1024) NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "ingestion_job" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"workspace_id" uuid NOT NULL,
+	"file_id" uuid NOT NULL,
+	"status" text DEFAULT 'queued' NOT NULL,
+	"source_type" text,
+	"attempts" integer DEFAULT 0 NOT NULL,
+	"error" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"started_at" timestamp with time zone,
+	"finished_at" timestamp with time zone,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "ingestion_job_event" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"job_id" uuid NOT NULL,
+	"workspace_id" uuid NOT NULL,
+	"event_type" text NOT NULL,
+	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "ingestion_resource" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"workspace_id" uuid NOT NULL,
+	"file_id" uuid,
+	"source_type" text NOT NULL,
+	"source" text NOT NULL,
+	"provider" text,
+	"title" text,
+	"metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "resource_share_grant" (
@@ -272,6 +343,16 @@ ALTER TABLE "file_asset" ADD CONSTRAINT "file_asset_updated_by_user_id_fk" FOREI
 ALTER TABLE "file_folder" ADD CONSTRAINT "file_folder_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "file_folder" ADD CONSTRAINT "file_folder_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "file_folder" ADD CONSTRAINT "file_folder_updated_by_user_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "file_transcript_cue" ADD CONSTRAINT "file_transcript_cue_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "file_transcript_cue" ADD CONSTRAINT "file_transcript_cue_file_id_file_asset_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."file_asset"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_chunk" ADD CONSTRAINT "ingestion_chunk_resource_id_ingestion_resource_id_fk" FOREIGN KEY ("resource_id") REFERENCES "public"."ingestion_resource"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_embedding" ADD CONSTRAINT "ingestion_embedding_chunk_id_ingestion_chunk_id_fk" FOREIGN KEY ("chunk_id") REFERENCES "public"."ingestion_chunk"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_job" ADD CONSTRAINT "ingestion_job_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_job" ADD CONSTRAINT "ingestion_job_file_id_file_asset_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."file_asset"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_job_event" ADD CONSTRAINT "ingestion_job_event_job_id_ingestion_job_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."ingestion_job"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_job_event" ADD CONSTRAINT "ingestion_job_event_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_resource" ADD CONSTRAINT "ingestion_resource_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_resource" ADD CONSTRAINT "ingestion_resource_file_id_file_asset_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."file_asset"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "resource_share_grant" ADD CONSTRAINT "resource_share_grant_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "resource_share_grant" ADD CONSTRAINT "resource_share_grant_grantee_user_id_user_id_fk" FOREIGN KEY ("grantee_user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "resource_share_grant" ADD CONSTRAINT "resource_share_grant_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -303,8 +384,24 @@ CREATE INDEX "chat_thread_branching_idx" ON "chat_thread" USING btree ("branchin
 CREATE INDEX "chat_thread_user_last_message_idx" ON "chat_thread" USING btree ("user_id","last_message_at");--> statement-breakpoint
 CREATE INDEX "file_asset_workspace_folder_idx" ON "file_asset" USING btree ("workspace_id","folder_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "file_asset_workspace_storage_key_uidx" ON "file_asset" USING btree ("workspace_id","storage_key");--> statement-breakpoint
+CREATE INDEX "file_asset_workspace_hash_idx" ON "file_asset" USING btree ("workspace_id","content_hash_sha256");--> statement-breakpoint
 CREATE INDEX "file_folder_workspace_parent_idx" ON "file_folder" USING btree ("workspace_id","parent_id");--> statement-breakpoint
 CREATE INDEX "file_folder_workspace_name_idx" ON "file_folder" USING btree ("workspace_id","name");--> statement-breakpoint
+CREATE INDEX "file_transcript_cue_workspace_file_idx" ON "file_transcript_cue" USING btree ("workspace_id","file_id");--> statement-breakpoint
+CREATE INDEX "file_transcript_cue_file_time_idx" ON "file_transcript_cue" USING btree ("file_id","start_ms");--> statement-breakpoint
+CREATE INDEX "ingestion_chunk_resource_idx" ON "ingestion_chunk" USING btree ("resource_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "ingestion_chunk_resource_order_uidx" ON "ingestion_chunk" USING btree ("resource_id","chunk_index");--> statement-breakpoint
+CREATE INDEX "ingestion_embedding_chunk_idx" ON "ingestion_embedding" USING btree ("chunk_id");--> statement-breakpoint
+CREATE INDEX "ingestion_embedding_model_idx" ON "ingestion_embedding" USING btree ("model");--> statement-breakpoint
+CREATE INDEX "ingestion_job_workspace_idx" ON "ingestion_job" USING btree ("workspace_id");--> statement-breakpoint
+CREATE INDEX "ingestion_job_file_idx" ON "ingestion_job" USING btree ("file_id");--> statement-breakpoint
+CREATE INDEX "ingestion_job_status_idx" ON "ingestion_job" USING btree ("status");--> statement-breakpoint
+CREATE INDEX "ingestion_job_status_created_idx" ON "ingestion_job" USING btree ("status","created_at");--> statement-breakpoint
+CREATE INDEX "ingestion_job_event_job_idx" ON "ingestion_job_event" USING btree ("job_id");--> statement-breakpoint
+CREATE INDEX "ingestion_job_event_workspace_created_idx" ON "ingestion_job_event" USING btree ("workspace_id","created_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "ingestion_resource_workspace_source_uidx" ON "ingestion_resource" USING btree ("workspace_id","source_type","source");--> statement-breakpoint
+CREATE INDEX "ingestion_resource_workspace_idx" ON "ingestion_resource" USING btree ("workspace_id");--> statement-breakpoint
+CREATE INDEX "ingestion_resource_file_idx" ON "ingestion_resource" USING btree ("file_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "resource_share_grant_unique" ON "resource_share_grant" USING btree ("resource_type","resource_id","grantee_user_id");--> statement-breakpoint
 CREATE INDEX "resource_share_grant_workspace_idx" ON "resource_share_grant" USING btree ("workspace_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "resource_share_link_token_hash_uidx" ON "resource_share_link" USING btree ("token_hash");--> statement-breakpoint

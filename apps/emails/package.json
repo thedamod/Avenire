@@ -23,6 +23,6 @@
     "@avenire/env-types": "workspace:*",
     "@avenire/typescript-config": "workspace:*",
     "@types/react": "latest",
-    "typescript": "latest"
+    "typescript": "5.9.3"
   }
 }

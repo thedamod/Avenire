@@ -5,13 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:ingestion": "tsx watch src/ingestion-worker.ts",
     "build": "tsc --noEmit",
     "start": "tsx src/server.ts",
+    "start:ingestion": "tsx src/ingestion-worker.ts",
     "lint": "biome check .",
     "check-types": "tsc --noEmit",
     "format": "biome format --write ."
   },
   "dependencies": {
+    "@avenire/database": "workspace:*",
+    "@avenire/ingestion": "workspace:*",
     "@hono/node-server": "^1.14.4",
     "hono": "^4.8.3",
     "dotenv": "latest",
@@ -20,7 +24,7 @@
   "devDependencies": {
     "@avenire/env-types": "workspace:*",
     "@avenire/typescript-config": "workspace:*",
-    "@types/node": "latest",
-    "typescript": "latest"
+    "@types/node": "25.3.5",
+    "typescript": "5.9.3"
   }
 }

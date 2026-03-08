@@ -4,6 +4,7 @@ import {
   softDeleteFileAsset,
   updateFileAsset,
 } from "@/lib/file-data";
+import { UTApi } from "@avenire/storage";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { listWorkspaceMembers } from "@/lib/file-data";
 import { NextResponse } from "next/server";
@@ -87,6 +88,15 @@ export async function DELETE(
   const deletedFile = await softDeleteFileAsset(workspaceUuid, fileUuid, user.id);
   if (!deletedFile) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
+  }
+
+  if (process.env.UPLOADTHING_TOKEN && existingFile.storageKey) {
+    try {
+      const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+      await utapi.deleteFiles([existingFile.storageKey]);
+    } catch {
+      // Best effort physical cleanup; logical delete has already succeeded.
+    }
   }
 
   await publishFilesInvalidationEvent({
