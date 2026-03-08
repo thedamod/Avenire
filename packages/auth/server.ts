@@ -1,4 +1,4 @@
-import { db } from "@avenire/database";
+import { createWorkspaceForUser, db } from "@avenire/database";
 import {
   account,
   invitation,
@@ -32,14 +32,15 @@ const appUrl = process.env.BETTER_AUTH_URL?.trim();
 if (!appUrl) {
   throw new Error("Missing BETTER_AUTH_URL. Set BETTER_AUTH_URL for auth server configuration.");
 }
+const trustedOriginsFromEnv =
+  process.env.BETTER_AUTH_TRUSTED_ORIGINS
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean) ?? [];
 const emailer = new Emailer();
-const slugifyWorkspace = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-    .slice(0, 40);
-const trustedOrigins = Array.from(new Set([appUrl, "https://avenire.space"]));
+const trustedOrigins = Array.from(
+  new Set([appUrl, ...trustedOriginsFromEnv]),
+);
 const generatedBetterAuthSchema = {
   user,
   session,
@@ -141,14 +142,10 @@ export const auth = betterAuth({
       try {
         const workspaceNameBase =
           newSession.user.name ?? newSession.user.email.split("@")[0] ?? "workspace";
-        const slugBase = slugifyWorkspace(workspaceNameBase) || "workspace";
-        await auth.api.createOrganization({
-          body: {
-            userId: newSession.user.id,
-            name: `${workspaceNameBase}'s Workspace`,
-            slug: `${slugBase}-${newSession.user.id.slice(0, 6)}`
-          }
-        });
+        await createWorkspaceForUser(
+          newSession.user.id,
+          `${workspaceNameBase}'s Workspace`
+        );
       } catch (error) {
         console.error("Failed to create default workspace", error);
       }

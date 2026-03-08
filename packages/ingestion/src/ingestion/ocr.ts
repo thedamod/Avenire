@@ -284,9 +284,7 @@ export const ingestPdfs = async (
   urls: string[],
   includeImageBase64 = false,
 ): Promise<CanonicalResource[]> => {
-  const safeUrls = await Promise.all(
-    urls.map(async (url) => (await assertSafeUrl(url)).toString())
-  );
+  const safeUrls = urls.map(url => assertSafeUrl(url).toString());
   const docs: OcrDocument[] = safeUrls.map(documentUrl => ({
     type: 'document_url',
     documentUrl,

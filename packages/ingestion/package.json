@@ -3,20 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
     "./types": "./src/ingestion/types.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc --noEmit",
     "lint": "biome check .",
     "check-types": "tsc --noEmit",
     "format": "biome format --write ."
   },
   "dependencies": {
     "@ai-sdk/groq": "^3.0.26",
+    "@avenire/ai": "workspace:*",
     "@avenire/database": "workspace:*",
     "@mistralai/mistralai": "^1.14.1",
     "@tavily/core": "^0.7.2",
@@ -29,7 +28,7 @@
   "devDependencies": {
     "@avenire/env-types": "workspace:*",
     "@avenire/typescript-config": "workspace:*",
-    "@types/node": "25.3.5",
-    "typescript": "5.9.3"
+    "@types/node": "latest",
+    "typescript": "latest"
   }
 }

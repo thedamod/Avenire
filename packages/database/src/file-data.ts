@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { db } from "./client";
-import { member, organization, user as authUser } from "./auth-schema";
+import { invitation, member, organization, user as authUser } from "./auth-schema";
 import {
   chatThread,
   fileAsset,
@@ -12,9 +12,12 @@ import {
 } from "./schema";
 
 export type ShareResourceType = "chat" | "file" | "folder";
+export type SharePermission = "viewer" | "editor";
 
 export interface ExplorerFolderRecord {
+  bannerUrl?: string | null;
   id: string;
+  iconColor?: string | null;
   workspaceId: string;
   parentId: string | null;
   name: string;
@@ -26,6 +29,7 @@ export interface ExplorerFolderRecord {
 
 export interface ExplorerFileRecord {
   contentHashSha256?: string | null;
+  isIngested?: boolean;
   id: string;
   workspaceId: string;
   folderId: string;
@@ -34,8 +38,8 @@ export interface ExplorerFileRecord {
   name: string;
   mimeType: string | null;
   sizeBytes: number;
-  uploadedBy?: string;
-  updatedBy?: string | null;
+  uploadedBy: string;
+  updatedBy: string | null;
   hashComputedBy?: string | null;
   hashVerificationStatus?: string | null;
   hashVerifiedAt?: string | null;
@@ -46,12 +50,36 @@ export interface ExplorerFileRecord {
   updatedAt: string;
 }
 
+export interface TrashItemRecord {
+  id: string;
+  kind: "file" | "folder";
+  name: string;
+  workspaceId: string;
+  folderId: string | null;
+  sizeBytes: number | null;
+  deletedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ShareRecipientSuggestion {
   email: string;
   name: string | null;
   count: number;
   lastSharedAt: string | null;
   source: "frequent" | "workspace-member";
+}
+
+export interface WorkspaceInvitationRecord {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  inviterName: string | null;
+  inviterEmail: string;
+  role: string;
+  status: string;
+  expiresAt: string;
+  createdAt: string;
 }
 
 const SHARED_FILES_FOLDER_PREFIX = "__shared_files__:";
@@ -123,7 +151,9 @@ export interface WorkspaceMemberRecord {
 
 function mapFolder(row: typeof fileFolder.$inferSelect): ExplorerFolderRecord {
   return {
+    bannerUrl: row.bannerUrl ?? null,
     id: row.id,
+    iconColor: row.iconColor ?? null,
     workspaceId: row.workspaceId,
     parentId: row.parentId,
     name: row.name,
@@ -163,6 +193,7 @@ async function listSharedFileRecordsForUser(userId: string) {
     .select({
       file: fileAsset,
       grantCreatedAt: resourceShareGrant.createdAt,
+      permission: resourceShareGrant.permission,
     })
     .from(resourceShareGrant)
     .innerJoin(
@@ -185,7 +216,7 @@ async function listSharedFileRecordsForUser(userId: string) {
     ...mapFile(row.file),
     createdAt: row.grantCreatedAt.toISOString(),
     isShared: true,
-    readOnly: true,
+    readOnly: row.permission !== "editor",
     sourceWorkspaceId: row.file.workspaceId,
   }));
 }
@@ -263,6 +294,107 @@ export async function listWorkspaceMembers(workspaceId: string) {
   }));
 }
 
+export async function listPendingInvitationsForEmail(email: string): Promise<WorkspaceInvitationRecord[]> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return [];
+  }
+
+  const rows = await db
+    .select({
+      id: invitation.id,
+      organizationId: invitation.organizationId,
+      organizationName: organization.name,
+      inviterName: authUser.name,
+      inviterEmail: authUser.email,
+      role: invitation.role,
+      status: invitation.status,
+      expiresAt: invitation.expiresAt,
+      createdAt: invitation.createdAt,
+    })
+    .from(invitation)
+    .innerJoin(organization, eq(organization.id, invitation.organizationId))
+    .innerJoin(authUser, eq(authUser.id, invitation.inviterId))
+    .where(
+      and(
+        eq(invitation.email, normalizedEmail),
+        eq(invitation.status, "pending"),
+        sql`${invitation.expiresAt} > now()`,
+      ),
+    )
+    .orderBy(desc(invitation.createdAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    organizationId: row.organizationId,
+    organizationName: row.organizationName,
+    inviterName: row.inviterName ?? null,
+    inviterEmail: row.inviterEmail,
+    role: row.role ?? "member",
+    status: row.status,
+    expiresAt: row.expiresAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
+export async function respondToInvitationForUser(input: {
+  invitationId: string;
+  userId: string;
+  userEmail: string;
+  action: "accept" | "decline";
+}) {
+  const normalizedEmail = input.userEmail.trim().toLowerCase();
+  const [invite] = await db
+    .select()
+    .from(invitation)
+    .where(and(eq(invitation.id, input.invitationId), eq(invitation.email, normalizedEmail)))
+    .limit(1);
+
+  if (!invite) {
+    return { ok: false as const, error: "Invitation not found" };
+  }
+
+  if (invite.status !== "pending") {
+    return { ok: false as const, error: "Invitation is no longer pending" };
+  }
+
+  if (input.action === "decline") {
+    await db.update(invitation).set({ status: "declined" }).where(eq(invitation.id, invite.id));
+    return { ok: true as const, action: "declined" as const, organizationId: invite.organizationId };
+  }
+
+  if (invite.expiresAt.getTime() <= Date.now()) {
+    await db.update(invitation).set({ status: "expired" }).where(eq(invitation.id, invite.id));
+    return { ok: false as const, error: "Invitation expired" };
+  }
+
+  const [existingMembership] = await db
+    .select({ id: member.id })
+    .from(member)
+    .where(and(eq(member.organizationId, invite.organizationId), eq(member.userId, input.userId)))
+    .limit(1);
+
+  if (!existingMembership) {
+    await db.insert(member).values({
+      id: randomUUID(),
+      organizationId: invite.organizationId,
+      userId: input.userId,
+      role: invite.role ?? "member",
+      createdAt: new Date(),
+    });
+  }
+
+  await db.update(invitation).set({ status: "accepted" }).where(eq(invitation.id, invite.id));
+  const ws = await ensureWorkspaceForOrganization(invite.organizationId);
+
+  return {
+    ok: true as const,
+    action: "accepted" as const,
+    organizationId: invite.organizationId,
+    workspaceId: ws.id,
+  };
+}
+
 export async function addWorkspaceMemberByEmail(input: {
   workspaceId: string;
   email: string;
@@ -336,6 +468,84 @@ export async function addWorkspaceMemberByEmail(input: {
       role: created.role,
     },
   };
+}
+
+export async function createWorkspaceInvitationByEmail(input: {
+  workspaceId: string;
+  email: string;
+  inviterUserId: string;
+  role?: "member" | "admin" | "owner";
+  expiresInDays?: number;
+}) {
+  const organizationId = await getWorkspaceOrganizationId(input.workspaceId);
+  if (!organizationId) {
+    return { status: "workspace-not-found" as const };
+  }
+
+  const normalizedEmail = input.email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { status: "invalid-email" as const };
+  }
+
+  const [existingMember] = await db
+    .select({ id: member.id })
+    .from(member)
+    .innerJoin(authUser, eq(authUser.id, member.userId))
+    .where(
+      and(
+        eq(member.organizationId, organizationId),
+        eq(authUser.email, normalizedEmail),
+      )
+    )
+    .limit(1);
+
+  if (existingMember) {
+    return { status: "already-member" as const };
+  }
+
+  const now = new Date();
+  const expiresAt = new Date(
+    now.getTime() + (input.expiresInDays ?? 7) * 24 * 60 * 60 * 1000
+  );
+
+  const [existingInvite] = await db
+    .select({ id: invitation.id })
+    .from(invitation)
+    .where(
+      and(
+        eq(invitation.organizationId, organizationId),
+        eq(invitation.email, normalizedEmail),
+        eq(invitation.status, "pending"),
+      )
+    )
+    .orderBy(desc(invitation.createdAt))
+    .limit(1);
+
+  if (existingInvite) {
+    await db
+      .update(invitation)
+      .set({
+        inviterId: input.inviterUserId,
+        role: input.role ?? "member",
+        expiresAt,
+      })
+      .where(eq(invitation.id, existingInvite.id));
+    return { status: "invited" as const, invitationId: existingInvite.id };
+  }
+
+  const invitationId = randomUUID();
+  await db.insert(invitation).values({
+    id: invitationId,
+    organizationId,
+    email: normalizedEmail,
+    role: input.role ?? "member",
+    status: "pending",
+    expiresAt,
+    createdAt: now,
+    inviterId: input.inviterUserId,
+  });
+
+  return { status: "invited" as const, invitationId };
 }
 
 export async function listWorkspaceShareSuggestions(input: {
@@ -483,14 +693,9 @@ export async function ensureWorkspaceForOrganization(organizationId: string) {
   });
 }
 
-export async function ensureWorkspaceRootFolder(
-  workspaceId: string,
-  userId: string
-) {
+export async function ensureWorkspaceRootFolder(workspaceId: string, userId: string) {
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`
-    );
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
 
     const [existing] = await tx
       .select()
@@ -499,8 +704,8 @@ export async function ensureWorkspaceRootFolder(
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt)
-        )
+          isNull(fileFolder.deletedAt),
+        ),
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -533,8 +738,8 @@ export async function ensureWorkspaceRootFolder(
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt)
-        )
+          isNull(fileFolder.deletedAt),
+        ),
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -1131,12 +1336,20 @@ export async function createFolder(
     return null;
   }
 
-  const parentValidation = await validateFolderParentId({
-    workspaceId,
-    parentId,
-  });
-  if (parentValidation.status !== "valid") {
-    return null;
+  const [existing] = await db
+    .select()
+    .from(fileFolder)
+    .where(
+      and(
+        eq(fileFolder.workspaceId, workspaceId),
+        eq(fileFolder.parentId, parentId),
+        isNull(fileFolder.deletedAt),
+        sql`LOWER(${fileFolder.name}) = ${trimmedName.toLowerCase()}`,
+      ),
+    )
+    .limit(1);
+  if (existing) {
+    return mapFolder(existing);
   }
 
   const now = new Date();
@@ -1158,25 +1371,28 @@ export async function createFolder(
 export async function updateFolder(
   workspaceId: string,
   folderId: string,
-  userId: string,
-  updates: { name?: string; parentId?: string | null }
+  actorUserId: string,
+  updates: {
+    bannerUrl?: string | null;
+    iconColor?: string | null;
+    name?: string;
+    parentId?: string | null;
+  },
 ) {
-  let nextParentId: string | null | undefined;
-  if (typeof updates.parentId !== "undefined") {
-    const parentValidation = await validateFolderParentId({
-      workspaceId,
-      parentId: updates.parentId,
-      currentFolderId: folderId,
-    });
-    if (parentValidation.status !== "valid") {
-      return null;
-    }
-    nextParentId = parentValidation.parentId;
-  }
+  const normalizedIconColor =
+    typeof updates.iconColor === "string"
+      ? normalizeHexColor(updates.iconColor)
+      : updates.iconColor === null
+        ? null
+        : undefined;
 
   const [folder] = await db
     .update(fileFolder)
     .set({
+      ...(typeof updates.bannerUrl === "string" ? { bannerUrl: updates.bannerUrl.trim() || null } : {}),
+      ...(updates.bannerUrl === null ? { bannerUrl: null } : {}),
+      ...(typeof normalizedIconColor === "string" ? { iconColor: normalizedIconColor } : {}),
+      ...(normalizedIconColor === null ? { iconColor: null } : {}),
       ...(typeof updates.name === "string"
         ? { name: updates.name.trim().slice(0, 160) || "Untitled Folder" }
         : {}),
@@ -1198,11 +1414,15 @@ export async function updateFolder(
   return folder ? mapFolder(folder) : null;
 }
 
-export async function softDeleteFolder(
-  workspaceId: string,
-  folderId: string,
-  userId: string
-) {
+function normalizeHexColor(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (/^#([0-9a-f]{6})$/.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
+}
+
+export async function softDeleteFolder(workspaceId: string, folderId: string) {
   const now = new Date();
 
   const descendants = await collectDescendantFolderIds(workspaceId, folderId);
@@ -1469,8 +1689,8 @@ export async function getFileAssetByContentHash(
       and(
         eq(fileAsset.workspaceId, workspaceId),
         eq(fileAsset.contentHashSha256, normalizedHash),
-        isNull(fileAsset.deletedAt)
-      )
+        isNull(fileAsset.deletedAt),
+      ),
     )
     .orderBy(desc(fileAsset.updatedAt))
     .limit(1);
@@ -1478,12 +1698,7 @@ export async function getFileAssetByContentHash(
   return record ? mapFile(record) : null;
 }
 
-export async function softDeleteFileAsset(
-  workspaceId: string,
-  fileId: string,
-  userId?: string
-) {
-  const now = new Date();
+export async function softDeleteFileAsset(workspaceId: string, fileId: string) {
   const [record] = await db
     .update(fileAsset)
     .set({
@@ -1503,11 +1718,244 @@ export async function softDeleteFileAsset(
   return record ? mapFile(record) : null;
 }
 
+export async function listTrashedItems(workspaceId: string): Promise<TrashItemRecord[]> {
+  const [folders, files] = await Promise.all([
+    db
+      .select()
+      .from(fileFolder)
+      .where(and(eq(fileFolder.workspaceId, workspaceId), isNotNull(fileFolder.deletedAt)))
+      .orderBy(desc(fileFolder.deletedAt)),
+    db
+      .select()
+      .from(fileAsset)
+      .where(and(eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)))
+      .orderBy(desc(fileAsset.deletedAt)),
+  ]);
+
+  const folderItems: TrashItemRecord[] = folders
+    .filter((row) => row.deletedAt)
+    .map((row) => ({
+      id: row.id,
+      kind: "folder",
+      name: row.name,
+      workspaceId: row.workspaceId,
+      folderId: row.parentId,
+      sizeBytes: null,
+      deletedAt: row.deletedAt!.toISOString(),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+
+  const fileItems: TrashItemRecord[] = files
+    .filter((row) => row.deletedAt)
+    .map((row) => ({
+      id: row.id,
+      kind: "file",
+      name: row.name,
+      workspaceId: row.workspaceId,
+      folderId: row.folderId,
+      sizeBytes: row.sizeBytes,
+      deletedAt: row.deletedAt!.toISOString(),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    }));
+
+  return [...folderItems, ...fileItems].sort(
+    (a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime(),
+  );
+}
+
+async function getWorkspaceRootFolderId(workspaceId: string): Promise<string | null> {
+  const [root] = await db
+    .select({ id: fileFolder.id })
+    .from(fileFolder)
+    .where(
+      and(eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.parentId), isNull(fileFolder.deletedAt)),
+    )
+    .limit(1);
+  return root?.id ?? null;
+}
+
+export async function restoreFileAsset(workspaceId: string, fileId: string) {
+  const [row] = await db
+    .select({
+      id: fileAsset.id,
+      folderId: fileAsset.folderId,
+    })
+    .from(fileAsset)
+    .where(
+      and(eq(fileAsset.id, fileId), eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)),
+    )
+    .limit(1);
+
+  if (!row) {
+    return false;
+  }
+
+  const [folder] = await db
+    .select({ id: fileFolder.id })
+    .from(fileFolder)
+    .where(
+      and(eq(fileFolder.id, row.folderId), eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.deletedAt)),
+    )
+    .limit(1);
+
+  const fallbackFolderId = folder?.id ?? (await getWorkspaceRootFolderId(workspaceId));
+  if (!fallbackFolderId) {
+    return false;
+  }
+
+  const [restored] = await db
+    .update(fileAsset)
+    .set({ deletedAt: null, folderId: fallbackFolderId, updatedAt: new Date() })
+    .where(and(eq(fileAsset.id, fileId), eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)))
+    .returning({ id: fileAsset.id });
+
+  return Boolean(restored);
+}
+
+async function collectDescendantFolderIdsIncludingDeleted(workspaceId: string, rootFolderId: string) {
+  const descendants: string[] = [];
+  let frontier = [rootFolderId];
+
+  while (frontier.length > 0) {
+    const children = await db
+      .select({ id: fileFolder.id })
+      .from(fileFolder)
+      .where(and(eq(fileFolder.workspaceId, workspaceId), inArray(fileFolder.parentId, frontier)));
+
+    const next = children.map((child) => child.id);
+    descendants.push(...next);
+    frontier = next;
+  }
+
+  return descendants;
+}
+
+export async function restoreFolder(workspaceId: string, folderId: string) {
+  const [row] = await db
+    .select({
+      id: fileFolder.id,
+      parentId: fileFolder.parentId,
+    })
+    .from(fileFolder)
+    .where(
+      and(eq(fileFolder.id, folderId), eq(fileFolder.workspaceId, workspaceId), isNotNull(fileFolder.deletedAt)),
+    )
+    .limit(1);
+
+  if (!row) {
+    return false;
+  }
+
+  const descendants = await collectDescendantFolderIdsIncludingDeleted(workspaceId, folderId);
+  const folderIds = [folderId, ...descendants];
+  const now = new Date();
+
+  let nextParentId = row.parentId;
+  if (row.parentId) {
+    const [parent] = await db
+      .select({
+        id: fileFolder.id,
+      })
+      .from(fileFolder)
+      .where(
+        and(eq(fileFolder.id, row.parentId), eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.deletedAt)),
+      )
+      .limit(1);
+    if (!parent) {
+      nextParentId = null;
+    }
+  }
+
+  await db
+    .update(fileFolder)
+    .set({ deletedAt: null, updatedAt: now })
+    .where(and(eq(fileFolder.workspaceId, workspaceId), inArray(fileFolder.id, folderIds)));
+
+  await db
+    .update(fileFolder)
+    .set({ parentId: nextParentId, updatedAt: now })
+    .where(and(eq(fileFolder.workspaceId, workspaceId), eq(fileFolder.id, folderId)));
+
+  await db
+    .update(fileAsset)
+    .set({ deletedAt: null, updatedAt: now })
+    .where(and(eq(fileAsset.workspaceId, workspaceId), inArray(fileAsset.folderId, folderIds)));
+
+  return true;
+}
+
+export async function permanentlyDeleteFileAsset(workspaceId: string, fileId: string) {
+  const [record] = await db
+    .delete(fileAsset)
+    .where(
+      and(eq(fileAsset.id, fileId), eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)),
+    )
+    .returning({ id: fileAsset.id, storageKey: fileAsset.storageKey });
+
+  return record ?? null;
+}
+
+export async function permanentlyDeleteFolder(workspaceId: string, folderId: string) {
+  const [folder] = await db
+    .select({ id: fileFolder.id })
+    .from(fileFolder)
+    .where(and(eq(fileFolder.id, folderId), eq(fileFolder.workspaceId, workspaceId), isNotNull(fileFolder.deletedAt)))
+    .limit(1);
+  if (!folder) {
+    return [];
+  }
+
+  const descendants = await collectDescendantFolderIdsIncludingDeleted(workspaceId, folderId);
+  const folderIds = [folderId, ...descendants];
+
+  const files = await db
+    .select({ storageKey: fileAsset.storageKey })
+    .from(fileAsset)
+    .where(and(eq(fileAsset.workspaceId, workspaceId), inArray(fileAsset.folderId, folderIds)));
+
+  await db.delete(fileAsset).where(and(eq(fileAsset.workspaceId, workspaceId), inArray(fileAsset.folderId, folderIds)));
+  await db.delete(fileFolder).where(and(eq(fileFolder.workspaceId, workspaceId), inArray(fileFolder.id, folderIds)));
+
+  return files.map((row) => row.storageKey);
+}
+
+export async function purgeTrashOlderThan(cutoff: Date) {
+  const staleFiles = await db
+    .select({
+      id: fileAsset.id,
+      workspaceId: fileAsset.workspaceId,
+      storageKey: fileAsset.storageKey,
+    })
+    .from(fileAsset)
+    .where(and(isNotNull(fileAsset.deletedAt), lte(fileAsset.deletedAt, cutoff)));
+
+  if (staleFiles.length > 0) {
+    await db.delete(fileAsset).where(inArray(fileAsset.id, staleFiles.map((row) => row.id)));
+  }
+
+  const staleFolders = await db
+    .select({ id: fileFolder.id })
+    .from(fileFolder)
+    .where(and(isNotNull(fileFolder.deletedAt), lte(fileFolder.deletedAt, cutoff)));
+
+  if (staleFolders.length > 0) {
+    await db.delete(fileFolder).where(inArray(fileFolder.id, staleFolders.map((row) => row.id)));
+  }
+
+  return {
+    fileCount: staleFiles.length,
+    folderCount: staleFolders.length,
+    storageKeys: staleFiles.map((row) => row.storageKey),
+  };
+}
+
 export async function grantResourceToUserByEmail(input: {
   workspaceId: string;
   resourceType: ShareResourceType;
   resourceId: string;
-  permission?: "read";
+  permission?: SharePermission;
   email: string;
   createdBy: string;
 }) {
@@ -1533,17 +1981,21 @@ export async function grantResourceToUserByEmail(input: {
       resourceType: input.resourceType,
       resourceId: input.resourceId,
       granteeUserId: grantee.id,
-      permission: input.permission ?? "read",
+      permission:
+        input.resourceType === "chat"
+          ? "viewer"
+          : (input.permission ?? "viewer"),
       createdBy: input.createdBy,
       createdAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [
-        resourceShareGrant.resourceType,
-        resourceShareGrant.resourceId,
-        resourceShareGrant.granteeUserId,
-      ],
-      set: { permission: input.permission ?? "read" },
+      target: [resourceShareGrant.resourceType, resourceShareGrant.resourceId, resourceShareGrant.granteeUserId],
+      set: {
+        permission:
+          input.resourceType === "chat"
+            ? "viewer"
+            : (input.permission ?? "viewer"),
+      },
     })
     .returning();
 
@@ -1559,7 +2011,7 @@ export async function grantResourceToUserId(input: {
   workspaceId: string;
   resourceType: ShareResourceType;
   resourceId: string;
-  permission?: "read";
+  permission?: SharePermission;
   granteeUserId: string;
   createdBy: string;
 }) {
@@ -1570,7 +2022,10 @@ export async function grantResourceToUserId(input: {
       resourceType: input.resourceType,
       resourceId: input.resourceId,
       granteeUserId: input.granteeUserId,
-      permission: input.permission ?? "read",
+      permission:
+        input.resourceType === "chat"
+          ? "viewer"
+          : (input.permission ?? "viewer"),
       createdBy: input.createdBy,
       createdAt: new Date(),
     })
@@ -1580,7 +2035,12 @@ export async function grantResourceToUserId(input: {
         resourceShareGrant.resourceId,
         resourceShareGrant.granteeUserId,
       ],
-      set: { permission: input.permission ?? "read" },
+      set: {
+        permission:
+          input.resourceType === "chat"
+            ? "viewer"
+            : (input.permission ?? "viewer"),
+      },
     })
     .returning();
 
@@ -1618,7 +2078,12 @@ export async function grantAllChatsFromUserToUser(input: {
   const chats = await db
     .select({ slug: chatThread.slug })
     .from(chatThread)
-    .where(eq(chatThread.userId, input.ownerUserId));
+    .where(
+      and(
+        eq(chatThread.userId, input.ownerUserId),
+        eq(chatThread.workspaceId, input.workspaceId),
+      )
+    );
 
   if (chats.length === 0) {
     return 0;
@@ -1632,9 +2097,9 @@ export async function grantAllChatsFromUserToUser(input: {
         resourceId: chat.slug,
         granteeUserId: input.granteeUserId,
         createdBy: input.createdBy,
-        permission: "read",
-      })
-    )
+        permission: "viewer",
+      }),
+    ),
   );
 
   return chats.length;
@@ -1678,7 +2143,7 @@ export async function createResourceShareLink(input: {
       resourceType: input.resourceType,
       resourceId: input.resourceId,
       tokenHash,
-      permission: "read",
+      permission: "viewer",
       allowPublic,
       expiresAt,
       createdBy: input.createdBy,
@@ -1759,4 +2224,145 @@ export async function canUserAccessSharedResource(input: {
     .limit(1);
 
   return Boolean(grant);
+}
+
+async function hasEditorGrantForFolder(input: {
+  workspaceId: string;
+  folderId: string;
+  userId: string;
+}) {
+  const folders = await db
+    .select({ id: fileFolder.id, parentId: fileFolder.parentId })
+    .from(fileFolder)
+    .where(
+      and(
+        eq(fileFolder.workspaceId, input.workspaceId),
+        isNull(fileFolder.deletedAt),
+      )
+    );
+
+  const parentById = new Map(folders.map((folder) => [folder.id, folder.parentId]));
+  const folderLineage = new Set<string>();
+  let cursor: string | null = input.folderId;
+  while (cursor) {
+    folderLineage.add(cursor);
+    cursor = parentById.get(cursor) ?? null;
+  }
+
+  if (folderLineage.size === 0) {
+    return false;
+  }
+
+  const grants = await db
+    .select({ resourceId: resourceShareGrant.resourceId })
+    .from(resourceShareGrant)
+    .where(
+      and(
+        eq(resourceShareGrant.workspaceId, input.workspaceId),
+        eq(resourceShareGrant.resourceType, "folder"),
+        eq(resourceShareGrant.granteeUserId, input.userId),
+        eq(resourceShareGrant.permission, "editor"),
+      )
+    );
+
+  return grants.some((grant) => folderLineage.has(grant.resourceId));
+}
+
+export async function userCanEditFile(input: {
+  workspaceId: string;
+  fileId: string;
+  userId: string;
+}) {
+  if (await userCanAccessWorkspace(input.userId, input.workspaceId)) {
+    return true;
+  }
+
+  const [directGrant] = await db
+    .select({ id: resourceShareGrant.id })
+    .from(resourceShareGrant)
+    .where(
+      and(
+        eq(resourceShareGrant.workspaceId, input.workspaceId),
+        eq(resourceShareGrant.resourceType, "file"),
+        eq(resourceShareGrant.resourceId, input.fileId),
+        eq(resourceShareGrant.granteeUserId, input.userId),
+        eq(resourceShareGrant.permission, "editor"),
+      )
+    )
+    .limit(1);
+
+  if (directGrant) {
+    return true;
+  }
+
+  const [file] = await db
+    .select({ folderId: fileAsset.folderId })
+    .from(fileAsset)
+    .where(
+      and(
+        eq(fileAsset.workspaceId, input.workspaceId),
+        eq(fileAsset.id, input.fileId),
+        isNull(fileAsset.deletedAt),
+      )
+    )
+    .limit(1);
+
+  if (!file) {
+    return false;
+  }
+
+  return hasEditorGrantForFolder({
+    workspaceId: input.workspaceId,
+    folderId: file.folderId,
+    userId: input.userId,
+  });
+}
+
+export async function userCanEditFolder(input: {
+  workspaceId: string;
+  folderId: string;
+  userId: string;
+}) {
+  if (await userCanAccessWorkspace(input.userId, input.workspaceId)) {
+    return true;
+  }
+
+  return hasEditorGrantForFolder({
+    workspaceId: input.workspaceId,
+    folderId: input.folderId,
+    userId: input.userId,
+  });
+}
+
+export async function userCanViewFolder(input: {
+  workspaceId: string;
+  folderId: string;
+  userId: string;
+}) {
+  if (await userCanAccessWorkspace(input.userId, input.workspaceId)) {
+    return true;
+  }
+
+  const [directGrant] = await db
+    .select({ id: resourceShareGrant.id })
+    .from(resourceShareGrant)
+    .where(
+      and(
+        eq(resourceShareGrant.workspaceId, input.workspaceId),
+        eq(resourceShareGrant.resourceType, "folder"),
+        eq(resourceShareGrant.resourceId, input.folderId),
+        eq(resourceShareGrant.granteeUserId, input.userId),
+      )
+    )
+    .limit(1);
+
+  if (directGrant) {
+    return true;
+  }
+
+  return hasEditorGrantForFolder({
+    workspaceId: input.workspaceId,
+    folderId: input.folderId,
+    userId: input.userId,
+  });
 }

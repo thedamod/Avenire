@@ -38,58 +38,14 @@ const extractViaTavily = async (
   };
 };
 
-const extractViaFirecrawl = async (
-  url: string,
-): Promise<{ title: string | null; content: string }> => {
-  if (!config.firecrawlApiKey) {
-    throw new Error('FIRECRAWL_API_KEY is required for firecrawl extraction.');
-  }
-
-  const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.firecrawlApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      url,
-      formats: ['markdown'],
-      onlyMainContent: true,
-    }),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Firecrawl scrape failed (${response.status}): ${detail}`);
-  }
-
-  const json = (await response.json()) as {
-    success: boolean;
-    data?: { markdown?: string; metadata?: { title?: string } };
-  };
-
-  const content = json.data?.markdown?.trim() ?? '';
-  if (!content) {
-    throw new Error(`Firecrawl returned empty content for ${url}`);
-  }
-
-  return {
-    title: json.data?.metadata?.title ?? null,
-    content,
-  };
-};
-
 const fallbackExtract = async (
   url: string,
 ): Promise<{ title: string | null; content: string }> => {
-  if (config.linkExtractionProvider === 'firecrawl') {
-    return extractViaFirecrawl(url);
-  }
   return extractViaTavily(url);
 };
 
 export const ingestLink = async (inputUrl: string): Promise<CanonicalResource> => {
-  const safeUrl = await assertSafeUrl(inputUrl);
+  const safeUrl = assertSafeUrl(inputUrl);
   const providerExtraction = await extractFromSupportedProvider(safeUrl.toString());
 
   if (providerExtraction) {

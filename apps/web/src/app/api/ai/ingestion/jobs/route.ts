@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getFileAssetById } from "@/lib/file-data";
 import { enqueueIngestionJob } from "@/lib/ingestion-data";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 const enqueueSchema = z.object({
@@ -31,18 +31,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const file = await getFileAssetById(
-    parsed.data.workspaceUuid,
-    parsed.data.fileUuid
-  );
-  if (!file) {
-    return NextResponse.json({ error: "File not found" }, { status: 404 });
-  }
-
   const job = await enqueueIngestionJob({
     workspaceId: parsed.data.workspaceUuid,
-    fileId: file.id,
+    fileId: parsed.data.fileUuid,
     sourceType: parsed.data.sourceType,
+  });
+
+  await publishWorkspaceStreamEvent({
+    workspaceUuid: parsed.data.workspaceUuid,
+    type: "ingestion.job",
+    payload: {
+      createdAt: new Date().toISOString(),
+      eventType: "job.queued",
+      jobId: job.id,
+      payload: {
+        status: "queued",
+        sourceType: parsed.data.sourceType ?? null,
+      },
+      workspaceId: parsed.data.workspaceUuid,
+    },
   });
 
   return NextResponse.json({ job }, { status: 202 });

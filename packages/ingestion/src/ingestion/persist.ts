@@ -1,5 +1,4 @@
 import {
-  deleteStaleIngestionChunks,
   insertIngestionChunks,
   insertIngestionEmbeddings,
   upsertIngestionResource,
@@ -192,10 +191,6 @@ export const persistCanonicalResource = async (
     workspaceId,
     resourceSource: resource.source,
     chunkCount: resource.chunks.length,
-  });
-  await deleteStaleIngestionChunks({
-    resourceId,
-    keepChunkIndexes: resource.chunks.map((chunk) => chunk.chunkIndex),
   });
 
   return {

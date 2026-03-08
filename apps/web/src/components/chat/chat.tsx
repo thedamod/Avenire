@@ -3,9 +3,15 @@
 import { useChat } from "@ai-sdk/react";
 import type { UIMessage } from "@avenire/ai/message-types";
 import { Button } from "@avenire/ui/components/button";
-import { DefaultChatTransport } from "ai";
+import {
+  convertFileListToFileUIParts,
+  DefaultChatTransport,
+  type FileUIPart,
+} from "ai";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion, useInView } from "motion/react";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
@@ -19,9 +25,13 @@ import { Overview } from "@/components/chat/overview";
 import { SuggestedActions } from "@/components/chat/suggested-actions";
 import { useScrollToBottom } from "@/components/chat/use-scroll-to-bottom";
 import {
+  CHAT_CREATED_EVENT,
   CHAT_NAME_UPDATED_EVENT,
+  CHAT_STREAM_FINISHED_EVENT,
+  type ChatCreatedDetail,
   type ChatNameUpdatedDetail,
 } from "@/lib/chat-events";
+import { normalizeMediaType } from "@/lib/media-type";
 
 type ChatErrorType =
   | "NETWORK_ERROR"
@@ -60,6 +70,7 @@ interface ChatProps {
   isReadonly: boolean;
   selectedModel: string;
   selectedReasoningModel: string;
+  workspaceUuid: string;
 }
 
 export function Chat({
@@ -68,7 +79,13 @@ export function Chat({
   selectedModel,
   selectedReasoningModel,
   isReadonly,
+  workspaceUuid,
 }: ChatProps) {
+  const router = useRouter();
+  const [chatId, setChatId] = useState(id);
+  const [pendingNavigationChatId, setPendingNavigationChatId] = useState<
+    string | null
+  >(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [input, setInput] = useState("");
   const MAX_FILES = 3;
@@ -86,6 +103,11 @@ export function Chat({
     });
   }, []);
 
+  useEffect(() => {
+    setChatId(id);
+    setPendingNavigationChatId(null);
+  }, [id]);
+
   const {
     messages,
     setMessages,
@@ -100,7 +122,7 @@ export function Chat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
       body: {
-        chatId: id,
+        chatId,
         selectedModel,
         selectedReasoningModel,
       },
@@ -109,40 +131,101 @@ export function Chat({
     messages: initialMessages,
     onError: handleError,
     onData: (dataPart) => {
-      if (dataPart.type !== "data-chatName") {
+      if (dataPart.type === "data-chatCreated") {
+        const detail = dataPart.data as ChatCreatedDetail;
+        if (!(detail?.id && detail?.fromId)) {
+          return;
+        }
+        setChatId(detail.id);
+        setPendingNavigationChatId(detail.id);
+        window.dispatchEvent(
+          new CustomEvent<ChatCreatedDetail>(CHAT_CREATED_EVENT, {
+            detail,
+          }),
+        );
         return;
       }
 
-      const detail = dataPart.data as ChatNameUpdatedDetail;
-      if (!detail?.id || !detail?.name) {
-        return;
+      if (dataPart.type === "data-chatName") {
+        const detail = dataPart.data as ChatNameUpdatedDetail;
+        if (!(detail?.id && detail?.name)) {
+          return;
+        }
+        window.dispatchEvent(
+          new CustomEvent<ChatNameUpdatedDetail>(CHAT_NAME_UPDATED_EVENT, {
+            detail,
+          }),
+        );
       }
-
-      window.dispatchEvent(
-        new CustomEvent<ChatNameUpdatedDetail>(CHAT_NAME_UPDATED_EVENT, {
-          detail,
-        }),
-      );
     },
   });
 
   useEffect(() => {
-    void resumeStream();
-  }, [resumeStream]);
+    if (id === "new") {
+      return;
+    }
+    resumeStream().catch(() => undefined);
+  }, [id, resumeStream]);
 
-  const handleSubmit = (files: Attachment[]) => {
-    const fileArray = files
+  useEffect(() => {
+    if (status !== "ready") {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent(CHAT_STREAM_FINISHED_EVENT, {
+        detail: { chatId },
+      }),
+    );
+
+    if (pendingNavigationChatId) {
+      router.replace(`/dashboard/chats/${pendingNavigationChatId}` as Route);
+      router.refresh();
+      setPendingNavigationChatId(null);
+    }
+  }, [chatId, pendingNavigationChatId, router, status]);
+
+  const handleSubmit = async (files: Attachment[]) => {
+    const localFiles = files
       .map((attachment) => attachment.file)
       .filter((file): file is File => Boolean(file));
 
-    if (fileArray.length > 0) {
-      const dataTransfer = new DataTransfer();
-      for (const file of fileArray) {
-        dataTransfer.items.add(file);
+    const workspaceFileParts: FileUIPart[] = files
+      .filter((attachment) => attachment.source === "workspace")
+      .flatMap((attachment) => {
+        if (!attachment.url || attachment.url.trim().length === 0) {
+          return [];
+        }
+        return [
+          {
+            type: "file",
+            mediaType: normalizeMediaType(attachment.contentType),
+            filename: attachment.name,
+            url: attachment.url,
+          } satisfies FileUIPart,
+        ];
+      });
+
+    if (localFiles.length > 0 || workspaceFileParts.length > 0) {
+      let localFileParts: FileUIPart[] = [];
+      if (localFiles.length > 0) {
+        const dataTransfer = new DataTransfer();
+        for (const file of localFiles) {
+          dataTransfer.items.add(file);
+        }
+        localFileParts = (await convertFileListToFileUIParts(dataTransfer.files)).map(
+          (part) => ({
+            ...part,
+            mediaType: normalizeMediaType(part.mediaType),
+          }),
+        );
       }
-      append({ text: input, files: dataTransfer.files });
+
+      await append({
+        text: input,
+        files: [...localFileParts, ...workspaceFileParts],
+      });
     } else {
-      append({ text: input });
+      await append({ text: input });
     }
 
     setInput("");
@@ -175,31 +258,12 @@ export function Chat({
 
   const isEmptyState = messages.length === 0;
 
-  const inputCard = (centered = false) => (
-    <div
-      className={`flex min-h-36 w-full flex-col gap-2 rounded-2xl bg-transparent p-3 pb-1 backdrop-blur-sm ${
-        centered ? "rounded-b-2xl" : "rounded-b-none"
-      }`}
-    >
-      <MultimodalInput
-        attachments={attachments}
-        centered={centered}
-        handleSubmit={handleSubmit}
-        input={input}
-        setAttachments={setAttachments}
-        setInput={setInput}
-        status={status}
-        stop={stop}
-      />
-    </div>
-  );
-
   return (
     <div {...getRootProps()} className="relative flex h-full min-h-0 flex-col">
-      <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col bg-background transition-all duration-300">
+      <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col transition-all duration-300">
         {!isEmptyState && (
           <Messages
-            chatId={id}
+            chatId={chatId}
             error={error}
             isReadonly={isReadonly}
             messages={messages}
@@ -222,11 +286,21 @@ export function Chat({
                 key="composer-center"
                 transition={{ duration: 0.24, ease: "easeOut" }}
               >
-                <div className="w-full max-w-3xl flex flex-col items-center justify-center">
-                  <div className="mb-6">
+                <div className="flex w-full max-w-3xl flex-col items-center justify-center gap-6 px-3 sm:px-5">
+                  <div>
                     <Overview />
                   </div>
-                  {inputCard(true)}
+                  <MultimodalInput
+                    attachments={attachments}
+                    centered
+                    handleSubmit={handleSubmit}
+                    input={input}
+                    setAttachments={setAttachments}
+                    setInput={setInput}
+                    status={status}
+                    stop={stop}
+                    workspaceUuid={workspaceUuid}
+                  />
                   {attachments.length === 0 && (
                     <SuggestedActions
                       onAction={(text) => {
@@ -237,36 +311,47 @@ export function Chat({
                 </div>
               </motion.div>
             ) : (
-              <motion.form
-                  animate={{ opacity: 1, y: 0 }}                  
-                className="relative z-30 mx-auto w-full max-w-3xl px-2 pb-2"
+              <motion.div
+                animate={{ opacity: 1, y: 0 }}
+                className="shrink-0 px-3 pb-3 sm:px-5 sm:pb-4"
                 exit={{ opacity: 0, y: 12 }}
                 initial={{ opacity: 0, y: 20 }}
                 key="composer-bottom"
                 transition={{ duration: 0.22, ease: "easeOut" }}
               >
-                <motion.div
-                  animate={isInView ? "hidden" : "visible"}
-                  className="mb-2 flex justify-end"
-                  initial="hidden"
-                  transition={{ duration: 0.3, ease: "easeInOut" }}
-                  variants={{
-                    visible: { opacity: 1, y: 0 },
-                    hidden: { opacity: 0, y: 8 },
-                  }}
-                >
-                  <Button
-                    className="rounded-full bg-background/90 shadow-md backdrop-blur-md transition-shadow hover:shadow-lg"
-                    onClick={scroll}
-                    size="icon"
-                    type="button"
-                    variant="outline"
+                <div className="relative mx-auto w-full max-w-3xl">
+                  <motion.div
+                    animate={isInView ? "hidden" : "visible"}
+                    className="pointer-events-none absolute right-0 -top-11 z-10 flex justify-end"
+                    initial="hidden"
+                    transition={{ duration: 0.3, ease: "easeInOut" }}
+                    variants={{
+                      visible: { opacity: 1, y: 0 },
+                      hidden: { opacity: 0, y: 8 },
+                    }}
                   >
-                    <ChevronDown className="h-4 w-4" />
-                  </Button>
-                </motion.div>
-                {inputCard(false)}
-              </motion.form>
+                    <Button
+                      className="pointer-events-auto rounded-full border-border/80 bg-card/90 backdrop-blur-xs"
+                      onClick={scroll}
+                      size="icon"
+                      type="button"
+                      variant="outline"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </motion.div>
+                  <MultimodalInput
+                    attachments={attachments}
+                    handleSubmit={handleSubmit}
+                    input={input}
+                    setAttachments={setAttachments}
+                    setInput={setInput}
+                    status={status}
+                    stop={stop}
+                    workspaceUuid={workspaceUuid}
+                  />
+                </div>
+              </motion.div>
             )}
           </AnimatePresence>
         )}

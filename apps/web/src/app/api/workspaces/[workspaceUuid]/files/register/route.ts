@@ -1,37 +1,40 @@
+import { NextResponse } from "next/server";
 import {
-  getFileAssetByContentHash,
-  getFileAssetByStorageKey,
   isSharedFilesVirtualFolderId,
-  listWorkspaceMembers,
-  registerFileAsset,
-  softDeleteFileAsset,
-  updateFileAssetStorageMetadata,
+  userCanEditFolder,
+  updateFileAsset,
 } from "@/lib/file-data";
 import { UTApi } from "@avenire/storage";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
-import { NextResponse } from "next/server";
-import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
-import { consumeUploadUnits } from "@/lib/billing";
 import { createApiLogger } from "@/lib/observability";
-import { enqueueIngestionJob, hasSuccessfulIngestionForFile } from "@/lib/ingestion-data";
+import {
+  deleteUploadThingFile,
+  registerWorkspaceUploadedFile,
+} from "@/lib/upload-registration";
 import { optimizeAndReuploadVideo } from "@/lib/video-optimization";
+import { getSessionUser } from "@/lib/workspace";
 
 function classifyStoredFileType(mimeType: string | null) {
   if (!mimeType) {
     return "unknown";
   }
 
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("video/")) return "video";
-  if (mimeType === "application/pdf") return "pdf";
-  if (mimeType.startsWith("text/")) return "text";
-  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+  if (mimeType === "application/pdf") {
+    return "pdf";
+  }
+  if (mimeType.startsWith("text/")) {
+    return "text";
+  }
+  if (mimeType.startsWith("audio/")) {
+    return "audio";
+  }
   return "other";
-}
-
-function normalizeSha256(value: string | null | undefined) {
-  const normalized = (value ?? "").trim().toLowerCase();
-  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
 export async function POST(
@@ -53,16 +56,6 @@ export async function POST(
   }
 
   const { workspaceUuid } = await context.params;
-  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
-  if (!canAccess) {
-    void apiLogger.requestFailed(403, "Forbidden", { workspaceUuid });
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  const members = await listWorkspaceMembers(workspaceUuid);
-  const currentMember = members.find((member) => member.userId === user.id);
-  if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const body = (await request.json().catch(() => ({}))) as {
     folderId?: string;
@@ -77,10 +70,7 @@ export async function POST(
   };
 
   if (
-    !body.folderId ||
-    !body.storageKey ||
-    !body.storageUrl ||
-    !body.name ||
+    !(body.folderId && body.storageKey && body.storageUrl && body.name) ||
     typeof body.sizeBytes !== "number"
   ) {
     void apiLogger.requestFailed(400, "Missing file metadata", {
@@ -100,43 +90,21 @@ export async function POST(
       { status: 400 }
     );
   }
-
-  const normalizedHash = normalizeSha256(body.contentHashSha256);
-  const existingByHashRaw = normalizedHash
-    ? await getFileAssetByContentHash(workspaceUuid, normalizedHash)
-    : null;
-  const existingByHash =
-    existingByHashRaw?.hashVerificationStatus === "verified"
-      ? existingByHashRaw
-      : null;
-  const existing =
-    existingByHash ??
-    (await getFileAssetByStorageKey(workspaceUuid, body.storageKey));
-  if (existing) {
-    const hasSucceeded = await hasSuccessfulIngestionForFile(
-      workspaceUuid,
-      existing.id
-    ).catch(() => false);
-    const maybeJob = hasSucceeded
-      ? null
-      : await enqueueIngestionJob({
-          workspaceId: workspaceUuid,
-          fileId: existing.id,
-        }).catch(() => null);
-    void apiLogger.requestSucceeded(200, {
-      workspaceUuid,
-      fileId: existing.id,
-      deduplicated: true,
-    });
-    return NextResponse.json(
-      { file: existing, ingestionJob: maybeJob },
-      { status: 200 }
-    );
+  const canEdit = await userCanEditFolder({
+    workspaceId: workspaceUuid,
+    folderId: body.folderId,
+    userId: user.id,
+  });
+  if (!canEdit) {
+    void apiLogger.requestFailed(403, "Read-only folder", { workspaceUuid });
+    return NextResponse.json({ error: "Read-only folder" }, { status: 403 });
   }
 
-  let file;
+  let registrationResult: Awaited<ReturnType<typeof registerWorkspaceUploadedFile>>;
   try {
-    file = await registerFileAsset(workspaceUuid, user.id, {
+    registrationResult = await registerWorkspaceUploadedFile({
+      workspaceUuid,
+      userId: user.id,
       folderId: body.folderId,
       storageKey: body.storageKey,
       storageUrl: body.storageUrl,
@@ -144,110 +112,91 @@ export async function POST(
       mimeType: body.mimeType,
       sizeBytes: body.sizeBytes,
       metadata: body.metadata,
-      contentHashSha256: normalizedHash,
-      hashComputedBy: normalizedHash ? body.hashComputedBy ?? "client" : null,
-      hashVerificationStatus: normalizedHash ? "pending" : null,
+      contentHashSha256: body.contentHashSha256,
+      hashComputedBy: body.hashComputedBy,
     });
-  } catch {
-    return NextResponse.json({ error: "Invalid folder" }, { status: 400 });
+  } catch (error) {
+    const isRateLimit =
+      (error as { code?: string } | null | undefined)?.code ===
+      "UPLOAD_RATE_LIMIT";
+    const retryAfter =
+      (error as { retryAfter?: string | null } | null | undefined)?.retryAfter ??
+      null;
+    if (isRateLimit) {
+      void apiLogger.rateLimited("upload", retryAfter, { workspaceUuid });
+      return NextResponse.json(
+        {
+          error: "Upload usage limit reached",
+          retryAfter,
+        },
+        { status: 429 }
+      );
+    }
+    void apiLogger.requestFailed(500, error, { workspaceUuid });
+    return NextResponse.json({ error: "Failed to register file" }, { status: 500 });
   }
 
-  const usage = await consumeUploadUnits(user.id, 1);
-  if (!usage.ok) {
-    await softDeleteFileAsset(workspaceUuid, file.id, user.id);
-    const retryAfter = usage.retryAfter?.toISOString() ?? null;
-    void apiLogger.rateLimited("upload", retryAfter, {
-      workspaceUuid,
-      fileId: file.id,
-    });
-    return NextResponse.json(
-      {
-        error: "Upload usage limit reached",
-        retryAfter,
-      },
-      { status: 429 }
-    );
-  }
+  const storedFile = registrationResult.file;
+  const ingestionJob = registrationResult.ingestionJob;
 
-  let storedFile = file;
-  if (storedFile.mimeType?.startsWith("video/")) {
-    const originalStorageKey = storedFile.storageKey;
-    const optimized = await optimizeAndReuploadVideo({
+  const enableAsyncMediaOptimization =
+    (process.env.ENABLE_ASYNC_MEDIA_OPTIMIZATION ?? "false").toLowerCase() !==
+    "false";
+  if (
+    registrationResult.status === "created" &&
+    enableAsyncMediaOptimization &&
+    storedFile.mimeType?.startsWith("video/")
+  ) {
+    void optimizeAndReuploadVideo({
       sourceUrl: storedFile.storageUrl,
       sourceName: storedFile.name,
-    }).catch(() => null);
+    })
+      .then(async (optimized) => {
+        if (!optimized) {
+          return;
+        }
 
-    if (optimized) {
-      try {
-        const updated = await updateFileAssetStorageMetadata(
+        const previousStorageKey = storedFile.storageKey;
+        const updated = await updateFileAsset(
           workspaceUuid,
           storedFile.id,
           user.id,
           {
-            optimizedStorageKey: optimized.storageKey,
-            optimizedStorageUrl: optimized.storageUrl,
-            optimizedName: optimized.name,
-            optimizedMimeType: optimized.mimeType,
-            optimizedSizeBytes: optimized.sizeBytes,
+            storageKey: optimized.storageKey,
+            storageUrl: optimized.storageUrl,
+            name: optimized.name,
+            mimeType: optimized.mimeType,
+            sizeBytes: optimized.sizeBytes,
           }
         );
 
-        if (updated) {
-          storedFile = updated;
-          if (
-            process.env.UPLOADTHING_TOKEN &&
-            originalStorageKey &&
-            originalStorageKey !== optimized.storageKey
-          ) {
-            const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-            await utapi.deleteFiles(originalStorageKey).catch(() => undefined);
-          }
-        } else if (process.env.UPLOADTHING_TOKEN) {
-          const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-          await utapi.deleteFiles(optimized.storageKey).catch(() => undefined);
+        if (!updated) {
+          await deleteUploadThingFile(optimized.storageKey);
+          return;
         }
-      } catch (error) {
-        if (process.env.UPLOADTHING_TOKEN) {
-          const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-          await utapi.deleteFiles(optimized.storageKey).catch(() => undefined);
+
+        if (optimized.storageKey !== previousStorageKey) {
+          await deleteUploadThingFile(previousStorageKey);
         }
-        void apiLogger.error("files.video_optimization.failed", {
+
+        await publishFilesInvalidationEvent({
           workspaceUuid,
-          fileId: storedFile.id,
-          optimizedStorageKey: optimized.storageKey,
-          error: error instanceof Error ? error.message : String(error),
+          folderId: body.folderId,
+          reason: "file.updated",
         });
-      }
-    }
-  }
-
-  await publishFilesInvalidationEvent({
-    workspaceUuid,
-    folderId: body.folderId,
-    reason: "file.created",
-  });
-  await publishFilesInvalidationEvent({
-    workspaceUuid,
-    reason: "tree.changed",
-  });
-
-  const hasSucceededIngestion = await hasSuccessfulIngestionForFile(
-    workspaceUuid,
-    storedFile.id
-  ).catch(() => false);
-  const ingestionJob = hasSucceededIngestion
-    ? null
-    : await enqueueIngestionJob({
-        workspaceId: workspaceUuid,
-        fileId: storedFile.id,
-      }).catch((error) => {
-        console.error("Failed to enqueue ingestion job", {
+        await publishFilesInvalidationEvent({
+          workspaceUuid,
+          reason: "tree.changed",
+        });
+      })
+      .catch((error) => {
+        console.warn("Async video optimization skipped", {
           workspaceUuid,
           fileId: storedFile.id,
           error,
         });
-        return null;
       });
+  }
 
   void apiLogger.meter("meter.upload.filesystem.registered", {
     workspaceUuid,
@@ -268,9 +217,17 @@ export async function POST(
   void apiLogger.requestSucceeded(201, {
     workspaceUuid,
     fileId: storedFile.id,
+    deduplicated: registrationResult.status === "deduplicated",
     mimeType: storedFile.mimeType,
     sizeBytes: storedFile.sizeBytes,
   });
 
-  return NextResponse.json({ file: storedFile, ingestionJob }, { status: 201 });
+  return NextResponse.json(
+    {
+      file: storedFile,
+      ingestionJob,
+      deduplicated: registrationResult.status === "deduplicated",
+    },
+    { status: registrationResult.status === "deduplicated" ? 200 : 201 }
+  );
 }

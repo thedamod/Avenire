@@ -1,4 +1,4 @@
-import { listWorkspaceShareSuggestions, resolveWorkspaceForUser } from "@/lib/file-data";
+import { listWorkspaceShareSuggestions } from "@/lib/file-data";
 import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -18,21 +18,17 @@ export async function GET(
   if (!chat) {
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
   }
-  if (chat.ownerUserId !== session.user.id) {
+  const isOwner = await isChatOwnerForUser(session.user.id, slug, chat.workspaceId);
+  if (!isOwner) {
     return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
   }
-
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const ws = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
-  if (!ws) {
+  if (!chat.workspaceId) {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
   }
 
   const query = new URL(request.url).searchParams.get("q") ?? "";
   const suggestions = await listWorkspaceShareSuggestions({
-    workspaceId: ws.workspaceId,
+    workspaceId: chat.workspaceId,
     userId: session.user.id,
     userEmail: session.user.email,
     query,
