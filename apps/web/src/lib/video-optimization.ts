@@ -33,10 +33,94 @@ interface OptimizedVideoUpload {
   sizeBytes: number;
 }
 
-const VIDEO_OPT_FETCH_TIMEOUT_MS = Math.max(
-  5000,
-  Number.parseInt(process.env.VIDEO_OPT_FETCH_TIMEOUT_MS ?? "25000", 10),
-);
+const METADATA_IPV4 = new Set(["169.254.169.254", "100.100.100.200"]);
+
+function isPrivateOrLocalIpv4(ip: string) {
+  const parts = ip.split(".").map((part) => Number.parseInt(part, 10));
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)
+  ) {
+    return true;
+  }
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a === 0
+  );
+}
+
+function isPrivateOrLocalIpv6(ip: string) {
+  const normalized = ip.toLowerCase();
+  if (normalized === "::1" || normalized === "::") {
+    return true;
+  }
+  if (
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
+  ) {
+    return true;
+  }
+  if (normalized.startsWith("fc") || normalized.startsWith("fd")) {
+    return true;
+  }
+  if (normalized.startsWith("::ffff:")) {
+    const mappedV4 = normalized.slice(7);
+    return isPrivateOrLocalIpv4(mappedV4) || METADATA_IPV4.has(mappedV4);
+  }
+  return false;
+}
+
+function isDisallowedAddress(address: string) {
+  const version = isIP(address);
+  if (version === 4) {
+    return METADATA_IPV4.has(address) || isPrivateOrLocalIpv4(address);
+  }
+  if (version === 6) {
+    return isPrivateOrLocalIpv6(address);
+  }
+  return true;
+}
+
+async function validateSourceUrl(sourceUrl: string) {
+  const parsed = new URL(sourceUrl);
+
+  if (!isTrustedStorageUrl(sourceUrl)) {
+    throw new Error("Source URL host is not allowed");
+  }
+
+  const normalizedHost = parsed.hostname.trim().toLowerCase();
+  if (
+    !normalizedHost ||
+    normalizedHost === "localhost" ||
+    normalizedHost.endsWith(".localhost")
+  ) {
+    throw new Error("Source URL hostname is not allowed");
+  }
+
+  if (isIP(normalizedHost) !== 0 && isDisallowedAddress(normalizedHost)) {
+    throw new Error("Source URL IP address is not allowed");
+  }
+
+  const resolved = await lookup(normalizedHost, { all: true, verbatim: true });
+  if (
+    resolved.length === 0 ||
+    resolved.some((entry) => isDisallowedAddress(entry.address))
+  ) {
+    throw new Error("Source URL resolved to a disallowed address");
+  }
+
+  parsed.hash = "";
+  return parsed.toString();
+}
 
 function buildMp4Name(sourceName: string) {
   const trimmed = sourceName.trim();
@@ -114,15 +198,8 @@ export async function optimizeAndReuploadVideo(
   const transcodePath = join(tempDir, "transcoded.mp4");
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-    }, VIDEO_OPT_FETCH_TIMEOUT_MS);
-
-    const response = await fetch(input.sourceUrl, {
-      signal: controller.signal,
-    }).finally(() => {
-      clearTimeout(timer);
+    const response = await fetch(sourceUrl, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
     });
     if (!response.ok || !response.body) {
       return null;
@@ -229,8 +306,6 @@ export async function optimizeAndReuploadVideo(
       mimeType: "video/mp4",
       sizeBytes: optimizedStats.size,
     };
-  } catch {
-    return null;
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

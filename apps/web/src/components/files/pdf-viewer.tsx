@@ -19,6 +19,7 @@ import {
 import type { SearchResult } from "@anaralabs/lector";
 import { GlobalWorkerOptions } from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
+import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
 import { Input } from "@avenire/ui/components/input";
 import { ScrollArea } from "@avenire/ui/components/scroll-area";
@@ -69,7 +70,6 @@ function PDFViewerContent({
 
   const pageInputRef = useRef<HTMLInputElement | null>(null);
   const zoomInputRef = useRef<HTMLInputElement | null>(null);
-  const viewerRef = useRef<HTMLDivElement | null>(null);
 
   const didNudgeZoom = useRef(false);
   const fileName = useMemo(() => {
@@ -163,24 +163,13 @@ function PDFViewerContent({
     setIsZoomInputDirty(false);
   }, [isZoomInputDirty, resolvedZoomInput, updateZoom, zoomInput]);
 
-  const handleDownload = useCallback(async () => {
-    try {
-      const response = await fetch(source);
-      if (!response.ok) {
-        throw new Error("Download failed");
-      }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch {
-      window.open(source, "_blank", "noopener,noreferrer");
-    }
+  const handleDownload = useCallback(() => {
+    const link = document.createElement("a");
+    link.href = source;
+    link.download = fileName;
+    link.rel = "noopener noreferrer";
+    link.target = "_blank";
+    link.click();
   }, [fileName, source]);
 
   const handlePrint = useCallback(() => {
@@ -225,7 +214,7 @@ function PDFViewerContent({
     const normalizeSearchText = (value: string): string =>
       value
         .replace(/\s+/g, " ")
-        .replace(/[^\x20-\x7E]/g, " ")
+        .replace(/\p{C}+/gu, " ")
         .trim();
 
     const buildSearchQueries = (): string[] => {
@@ -309,23 +298,8 @@ function PDFViewerContent({
     textContent,
   ]);
 
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!viewer) {
-      return;
-    }
-    const links = viewer.querySelectorAll<HTMLAnchorElement>(".annotationLayer a[href]");
-    for (const link of links) {
-      if (!link.getAttribute("href")?.startsWith("#")) {
-        link.target = "_blank";
-        link.rel = "noreferrer noopener";
-      }
-      link.classList.add("pdf-viewer-link");
-    }
-  }, [currentPage, pdfProxy, textContent]);
-
   return (
-    <div className="flex h-full flex-col" ref={viewerRef}>
+    <>
       <div className="flex items-center justify-between gap-3 border-border border-b bg-muted/40 px-3 py-2 text-xs sm:px-4">
         <div className="flex min-w-0 items-center gap-2">
           <Button
@@ -337,9 +311,9 @@ function PDFViewerContent({
           >
             <PanelLeft className="size-4" />
           </Button>
-          <span className="max-w-[15rem] truncate font-medium text-foreground">
+          <Badge className="max-w-[15rem] truncate" variant="secondary">
             {fileName}
-          </span>
+          </Badge>
         </div>
 
         <div className="flex flex-1 items-center justify-center gap-2">
@@ -443,19 +417,7 @@ function PDFViewerContent({
           </Pages>
         </div>
       </div>
-      <style jsx global>{`
-        .annotationLayer a.pdf-viewer-link {
-          color: var(--color-primary);
-          text-decoration: underline;
-          text-underline-offset: 0.18em;
-          border-radius: 0.375rem;
-        }
-
-        .annotationLayer a.pdf-viewer-link:hover {
-          background: color-mix(in oklab, var(--color-primary) 10%, transparent);
-        }
-      `}</style>
-    </div>
+    </>
   );
 }
 

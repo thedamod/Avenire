@@ -3,22 +3,17 @@ import { motion } from "motion/react";
 export const Overview = () => {
   return (
     <motion.div
-      animate={{ opacity: 1, y: 0 }}
-      className="mx-auto w-full max-w-3xl px-2"
-      exit={{ opacity: 0, y: 8 }}
-      initial={{ opacity: 0, y: 12 }}
       key="overview"
-      transition={{ duration: 0.18, ease: "easeOut" }}
+      className="max-w-3xl mx-auto px-2"
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.98 }}
+      transition={{ delay: 0.5 }}
     >
-      <div className="mx-auto max-w-xl rounded-xl border border-border/70 bg-card px-5 py-4 text-center">
-        <p className="font-medium text-foreground text-sm">
-          Ask about your workspace
-        </p>
-        <p className="mt-1 text-muted-foreground text-sm">
-          Search across uploaded material, attach files, or type{" "}
-          <span className="font-medium text-foreground">@</span> to cite a
-          workspace file.
-        </p>
+      <div className="rounded-xl py-2 px-6 flex flex-col gap-8 leading-relaxed text-center max-w-xl overflow-visible">
+        <h1 className="scroll-m-20 text-4xl font-extrabold tracking-tight leading-[1.2] lg:text-5xl text-grad">
+          Hey there!
+        </h1>
       </div>
     </motion.div>
   );

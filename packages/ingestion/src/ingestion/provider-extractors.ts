@@ -7,8 +7,46 @@ export type ProviderExtracted = {
   mediaUrls: string[];
 };
 
+const MAX_REDIRECTS = 5;
+
+const isRedirectStatus = (status: number): boolean =>
+  status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+
+const fetchWithSafeRedirects = async (
+  inputUrl: string | URL,
+  init?: RequestInit,
+): Promise<Response> => {
+  let currentUrl = await assertSafeUrl(
+    typeof inputUrl === 'string' ? inputUrl : inputUrl.toString(),
+  );
+
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    const response = await fetch(currentUrl, {
+      ...init,
+      redirect: 'manual',
+    });
+
+    if (!isRedirectStatus(response.status)) {
+      return response;
+    }
+
+    const location = response.headers.get('location');
+    if (!location) {
+      throw new Error(`Redirect response missing location header for ${currentUrl.toString()}`);
+    }
+
+    if (redirectCount === MAX_REDIRECTS) {
+      throw new Error(`Too many redirects while fetching ${currentUrl.toString()}`);
+    }
+
+    currentUrl = await assertSafeUrl(new URL(location, currentUrl).toString());
+  }
+
+  throw new Error(`Too many redirects while fetching ${currentUrl.toString()}`);
+};
+
 const fetchText = async (url: string): Promise<string> => {
-  const response = await fetch(url, {
+  const response = await fetchWithSafeRedirects(url, {
     headers: {
       'user-agent':
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
@@ -25,12 +63,17 @@ const fetchText = async (url: string): Promise<string> => {
 
 const getOgValue = (html: string, property: string): string | null => {
   const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(
-    `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
+  const metaTagPattern = new RegExp(
+    `<meta[^>]*\\b(?:property|name)=["']${escaped}["'][^>]*>`,
     'i',
   );
-  const match = html.match(pattern);
-  return match?.[1]?.trim() ?? null;
+  const metaTag = html.match(metaTagPattern)?.[0];
+  if (!metaTag) {
+    return null;
+  }
+
+  const contentMatch = metaTag.match(/\bcontent=["']([^"']+)["']/i);
+  return contentMatch?.[1]?.trim() ?? null;
 };
 
 const isSocialHost = (host: string, values: string[]): boolean => {
@@ -43,6 +86,11 @@ const extractYouTube = async (url: URL): Promise<ProviderExtracted> => {
   oembedUrl.searchParams.set('format', 'json');
 
   const response = await fetch(oembedUrl);
+  if (!response.ok) {
+    throw new Error(
+      `YouTube oEmbed request failed (${response.status} ${response.statusText})`,
+    );
+  }
   const json = (await response.json().catch(() => ({}))) as {
     title?: string;
     author_name?: string;
@@ -88,13 +136,16 @@ const extractReddit = async (url: URL): Promise<ProviderExtracted> => {
     ? new URL(url.toString())
     : new URL(`${url.origin}${pathname}.json`);
 
-  const response = await fetch(jsonUrl, {
+  const response = await fetchWithSafeRedirects(jsonUrl, {
     headers: {
       'user-agent':
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
       accept: 'application/json',
     },
   });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${jsonUrl.toString()}: ${response.status}`);
+  }
 
   const payload = (await response.json().catch(() => null)) as any;
   const post = payload?.[0]?.data?.children?.[0]?.data;
@@ -151,7 +202,7 @@ const extractFromOgTags = async (
 export const extractFromSupportedProvider = async (
   inputUrl: string,
 ): Promise<ProviderExtracted | null> => {
-  const url = assertSafeUrl(inputUrl);
+  const url = await assertSafeUrl(inputUrl);
   const host = url.hostname.toLowerCase();
 
   if (isSocialHost(host, ['youtube.com', 'youtu.be', 'm.youtube.com'])) {

@@ -1,5 +1,3 @@
-import { apollo } from "@avenire/ai";
-import { rerank } from "ai";
 import { config } from '../config';
 import {
   embedMultimodal,
@@ -78,9 +76,9 @@ const getPreferredSourceTypes = (intent: {
 const tokenize = (value: string): string[] =>
   value
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter(token => token.length > 2);
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/u)
+    .filter((token) => token.length > 2);
 
 const lexicalOverlapScore = (query: string, content: string): number => {
   const queryTokens = tokenize(query);
@@ -116,7 +114,7 @@ const isLikelyNoisyText = (content: string): boolean => {
     return true;
   }
 
-  const printable = normalized.replace(/[^\x20-\x7E]/g, "");
+  const printable = normalized.replace(/\p{C}/gu, "");
   const printableRatio = printable.length / normalized.length;
   return printableRatio < 0.8;
 };
@@ -297,34 +295,18 @@ export const retrieveRelevantChunks = async (
         ]
       : sortedCandidates;
 
-  const rerankCandidateCount = Math.max(
+  const rerankCandidateCount = Math.min(
+    config.retrievalRerankCandidateLimit,
     limit * 2,
-    Math.min(config.retrievalRerankCandidateLimit, candidateLimit),
+    candidateLimit,
   );
   const rerankCandidates = sortedByModalityPreference.slice(0, rerankCandidateCount);
 
-  const reranked = await rerank({
-    model: apollo.rerankingModel("apollo-reranking"),
-    documents: rerankCandidates.map(candidate => candidate.content),
-    query,
-    topN: limit,
-  })
-    .then(({ ranking }) =>
-      ranking.map(item => ({
-        ...rerankCandidates[item.originalIndex],
-        rerankScore: item.score,
-      })),
-    )
-    .catch(async error => {
-      // Keep retrieval available if provider reranking fails.
-      const fallback = await rerankByCohereWithQueryEmbedding(
-        queryEmbedding,
-        rerankCandidates,
-        limit,
-      );
-      return fallback;
-    })
-    .catch(error => {
+  const reranked = await rerankByCohereWithQueryEmbedding(
+    queryEmbedding,
+    rerankCandidates,
+    limit,
+  ).catch(error => {
     console.warn(
       JSON.stringify({
         event: 'retrieval_rerank_fallback',

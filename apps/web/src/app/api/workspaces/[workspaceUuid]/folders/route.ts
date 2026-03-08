@@ -1,11 +1,11 @@
 import {
   createFolder,
   isSharedFilesVirtualFolderId,
-  userCanEditFolder,
+  listWorkspaceMembers,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/workspace";
+import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 export async function POST(
   request: Request,
@@ -17,6 +17,16 @@ export async function POST(
   }
 
   const { workspaceUuid } = await context.params;
+  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const members = await listWorkspaceMembers(workspaceUuid);
+  const currentMember = members.find((member) => member.userId === user.id);
+  if (!currentMember || !["owner", "admin"].includes(currentMember.role)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const body = (await request.json().catch(() => ({}))) as {
     parentId?: string | null;
     name?: string;
@@ -27,14 +37,6 @@ export async function POST(
   }
   if (body.parentId && isSharedFilesVirtualFolderId(body.parentId, workspaceUuid)) {
     return NextResponse.json({ error: "Cannot create items in Shared Files" }, { status: 400 });
-  }
-  const canEdit = await userCanEditFolder({
-    workspaceId: workspaceUuid,
-    folderId: body.parentId,
-    userId: user.id,
-  });
-  if (!canEdit) {
-    return NextResponse.json({ error: "Read-only folder" }, { status: 403 });
   }
 
   const folder = await createFolder(workspaceUuid, body.parentId, body.name, user.id);

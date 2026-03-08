@@ -48,8 +48,10 @@ export async function PATCH(
 
   const { slug } = await context.params;
   const chat = await getChatBySlugForUser(user.id, slug);
-  const isOwner = await isChatOwnerForUser(user.id, slug, chat?.workspaceId);
-  if (!isOwner) {
+  if (!chat) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (chat.ownerUserId !== user.id) {
     return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
   }
   const body = (await request.json().catch(() => ({}))) as {
@@ -57,16 +59,16 @@ export async function PATCH(
     pinned?: boolean;
   };
 
-  const updated = await updateChatForUser(user.id, slug, {
+  const updatedChat = await updateChatForUser(user.id, slug, {
     title: body.title,
     pinned: body.pinned
-  }, chat?.workspaceId);
+  });
 
-  if (!updated) {
+  if (!updatedChat) {
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ chat: updated });
+  return NextResponse.json({ chat: updatedChat });
 }
 
 export async function POST(
@@ -80,12 +82,14 @@ export async function POST(
   }
 
   const { slug } = await context.params;
-  const existing = await getChatBySlugForUser(user.id, slug);
-  const isOwner = await isChatOwnerForUser(user.id, slug, existing?.workspaceId);
-  if (!isOwner) {
+  const existingChat = await getChatBySlugForUser(user.id, slug);
+  if (!existingChat) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (existingChat.ownerUserId !== user.id) {
     return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
   }
-  const chat = await branchChatForUser(user.id, slug, existing?.workspaceId);
+  const chat = await branchChatForUser(user.id, slug);
 
   if (!chat) {
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
@@ -105,12 +109,14 @@ export async function DELETE(
   }
 
   const { slug } = await context.params;
-  const existing = await getChatBySlugForUser(user.id, slug);
-  const isOwner = await isChatOwnerForUser(user.id, slug, existing?.workspaceId);
-  if (!isOwner) {
+  const existingChat = await getChatBySlugForUser(user.id, slug);
+  if (!existingChat) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (existingChat.ownerUserId !== user.id) {
     return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
   }
-  const deleted = await deleteChatForUser(user.id, slug, existing?.workspaceId);
+  const deleted = await deleteChatForUser(user.id, slug);
 
   if (!deleted) {
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });

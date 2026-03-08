@@ -1,8 +1,8 @@
-export function APOLLO_PROMPT(userName?: string | null, context?: string) {
+export function FERMION_PROMPT(userName?: string | null, context?: string) {
   return [
     `You are Avenire AI assistant${userName ? ` for ${userName}` : ""}.`,
     "Keep responses concise, correct, and helpful.",
-    context ? `Context:\n${context}` : "",
+    context ? `Context:\n${context}` : ""
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -21,7 +21,7 @@ export function RETRIEVAL_SUMMARY_PROMPT(input: {
       ? input.citations
           .map(
             (citation, index) =>
-              `(${index + 1}) [${citation.workspacePath}](workspace-file://${citation.fileId})`,
+              `(${index + 1}) [${citation.workspacePath}](workspace-file://${citation.fileId})`
           )
           .join("\n")
       : "None";
@@ -37,9 +37,7 @@ export function RETRIEVAL_SUMMARY_PROMPT(input: {
     "Citations:",
     citationLines,
     "Snippets:",
-    input.snippets
-      .map((snippet, index) => `(${index + 1}) ${snippet}`)
-      .join("\n"),
+    input.snippets.map((snippet, index) => `(${index + 1}) ${snippet}`).join("\n"),
   ].join("\n\n");
 }
 
@@ -60,8 +58,6 @@ export function RETRIEVAL_MATCH_VALIDATOR_PROMPT(input: {
     `Query: ${input.query}`,
     `Candidate answer: ${input.answer}`,
     "Snippets:",
-    input.snippets
-      .map((snippet, index) => `(${index + 1}) ${snippet}`)
-      .join("\n"),
+    input.snippets.map((snippet, index) => `(${index + 1}) ${snippet}`).join("\n"),
   ].join("\n\n");
 }

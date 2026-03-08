@@ -1,8 +1,7 @@
 "use client";
 
-import { Button } from "@avenire/ui/components/button";
-import { motion } from "motion/react";
 import { memo } from "react";
+import { motion } from "motion/react";
 
 interface SuggestedActionsProps {
   onAction: (text: string) => void;
@@ -35,32 +34,28 @@ function PureSuggestedActions({ onAction }: SuggestedActionsProps) {
 
   return (
     <div
-      className="mx-auto mt-2 grid w-full max-w-3xl gap-2 px-3 sm:grid-cols-2 sm:px-0"
       data-testid="suggested-actions"
+      className="w-full max-w-3xl mx-auto mt-3 flex flex-col gap-2"
     >
       {suggestedActions.map((suggestedAction, index) => (
         <motion.div
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full"
-          exit={{ opacity: 0, y: 20 }}
           initial={{ opacity: 0, y: 20 }}
-          key={`suggested-action-${suggestedAction.title}-${index}`}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
           transition={{ delay: 0.05 * index }}
+          key={`suggested-action-${suggestedAction.title}-${index}`}
+          className="w-full"
         >
-          <Button
-            className="h-auto w-full justify-start rounded-2xl border border-border/80 bg-card px-4 py-3 text-left text-muted-foreground text-sm hover:bg-accent/40 hover:text-foreground"
+          <button
+            type="button"
             onClick={() => {
               onAction(suggestedAction.action);
             }}
-            type="button"
-            variant="outline"
+            className="block text-left px-1 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border-b border-border/40"
           >
             <span className="font-medium">{suggestedAction.title}</span>
-            <span className="truncate text-muted-foreground/80">
-              {" "}
-              - {suggestedAction.label}
-            </span>
-          </Button>
+            <span className="truncate"> - {suggestedAction.label}</span>
+          </button>
         </motion.div>
       ))}
     </div>

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { UTApi } from "@avenire/storage";
 import { z } from "zod";
 import {
   getFileAssetById,
@@ -6,13 +7,11 @@ import {
   isSharedFilesVirtualFolderId,
   softDeleteFileAsset,
   softDeleteFolder,
-  userCanEditFile,
-  userCanEditFolder,
   updateFileAsset,
   updateFolder,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
-import { getSessionUser } from "@/lib/workspace";
+import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 const itemSchema = z.object({
   id: z.string().uuid(),
@@ -38,6 +37,21 @@ type MutationResult = {
   error?: string;
 };
 
+async function deletePhysicalFileIfNeeded(
+  storageKey: string | null | undefined
+) {
+  if (!(storageKey && process.env.UPLOADTHING_TOKEN)) {
+    return;
+  }
+
+  try {
+    const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+    await utapi.deleteFiles([storageKey]);
+  } catch {
+    // Best effort physical cleanup.
+  }
+}
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ workspaceUuid: string }> }
@@ -48,8 +62,14 @@ export async function POST(
   }
 
   const { workspaceUuid } = await context.params;
+  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  const parsed = requestSchema.safeParse(await request.json().catch(() => ({})));
+  const parsed = requestSchema.safeParse(
+    await request.json().catch(() => ({}))
+  );
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
@@ -64,16 +84,6 @@ export async function POST(
       { status: 400 }
     );
   }
-  if (payload.operation === "move") {
-    const canEditTarget = await userCanEditFolder({
-      workspaceId: workspaceUuid,
-      folderId: payload.targetFolderId,
-      userId: user.id,
-    });
-    if (!canEditTarget) {
-      return NextResponse.json({ error: "Read-only target folder" }, { status: 403 });
-    }
-  }
 
   const results: MutationResult[] = [];
 
@@ -81,20 +91,6 @@ export async function POST(
     for (const item of payload.items) {
       try {
         if (item.kind === "file") {
-          const canEdit = await userCanEditFile({
-            workspaceId: workspaceUuid,
-            fileId: item.id,
-            userId: user.id,
-          });
-          if (!canEdit) {
-            results.push({
-              id: item.id,
-              kind: item.kind,
-              status: "failed",
-              error: "Read-only file",
-            });
-            continue;
-          }
           const file = await getFileAssetById(workspaceUuid, item.id);
           if (!file) {
             results.push({
@@ -117,11 +113,16 @@ export async function POST(
             continue;
           }
 
+          await deletePhysicalFileIfNeeded(file.storageKey);
           results.push({ id: item.id, kind: item.kind, status: "ok" });
           continue;
         }
 
-        const folder = await getFolderWithAncestors(workspaceUuid, item.id, user.id);
+        const folder = await getFolderWithAncestors(
+          workspaceUuid,
+          item.id,
+          user.id
+        );
         if (!folder || isSharedFilesVirtualFolderId(item.id, workspaceUuid)) {
           results.push({
             id: item.id,
@@ -131,22 +132,22 @@ export async function POST(
           });
           continue;
         }
-        const canEdit = await userCanEditFolder({
-          workspaceId: workspaceUuid,
-          folderId: item.id,
-          userId: user.id,
-        });
-        if (!canEdit) {
+
+        const deletedFolder = await softDeleteFolder(
+          workspaceUuid,
+          item.id,
+          user.id
+        );
+        if (!deletedFolder) {
           results.push({
             id: item.id,
             kind: item.kind,
             status: "failed",
-            error: "Read-only folder",
+            error: "Folder not found",
           });
           continue;
         }
 
-        await softDeleteFolder(workspaceUuid, item.id);
         results.push({ id: item.id, kind: item.kind, status: "ok" });
       } catch (error) {
         results.push({
@@ -161,23 +162,14 @@ export async function POST(
     for (const item of payload.items) {
       try {
         if (item.kind === "file") {
-          const canEdit = await userCanEditFile({
-            workspaceId: workspaceUuid,
-            fileId: item.id,
-            userId: user.id,
-          });
-          if (!canEdit) {
-            results.push({
-              id: item.id,
-              kind: item.kind,
-              status: "failed",
-              error: "Read-only file",
-            });
-            continue;
-          }
-          const updated = await updateFileAsset(workspaceUuid, item.id, user.id, {
-            folderId: payload.targetFolderId,
-          });
+          const updated = await updateFileAsset(
+            workspaceUuid,
+            item.id,
+            user.id,
+            {
+              folderId: payload.targetFolderId,
+            }
+          );
 
           if (!updated) {
             results.push({
@@ -193,20 +185,6 @@ export async function POST(
           continue;
         }
 
-        const canEdit = await userCanEditFolder({
-          workspaceId: workspaceUuid,
-          folderId: item.id,
-          userId: user.id,
-        });
-        if (!canEdit) {
-          results.push({
-            id: item.id,
-            kind: item.kind,
-            status: "failed",
-            error: "Read-only folder",
-          });
-          continue;
-        }
         const updated = await updateFolder(workspaceUuid, item.id, user.id, {
           parentId: payload.targetFolderId,
         });

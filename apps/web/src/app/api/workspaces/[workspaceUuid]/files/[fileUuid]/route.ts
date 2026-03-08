@@ -2,13 +2,13 @@ import {
   getFileAssetById,
   isSharedFilesVirtualFolderId,
   softDeleteFileAsset,
-  userCanEditFile,
   updateFileAsset,
 } from "@/lib/file-data";
+import { UTApi } from "@avenire/storage";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { listWorkspaceMembers } from "@/lib/file-data";
 import { NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/workspace";
+import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 export async function PATCH(
   request: Request,
@@ -20,13 +20,9 @@ export async function PATCH(
   }
 
   const { workspaceUuid, fileUuid } = await context.params;
-  const canEdit = await userCanEditFile({
-    workspaceId: workspaceUuid,
-    fileId: fileUuid,
-    userId: user.id,
-  });
-  if (!canEdit) {
-    return NextResponse.json({ error: "Read-only file" }, { status: 403 });
+  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const members = await listWorkspaceMembers(workspaceUuid);
   const currentMember = members.find((member) => member.userId === user.id);
@@ -74,13 +70,9 @@ export async function DELETE(
   }
 
   const { workspaceUuid, fileUuid } = await context.params;
-  const canEdit = await userCanEditFile({
-    workspaceId: workspaceUuid,
-    fileId: fileUuid,
-    userId: user.id,
-  });
-  if (!canEdit) {
-    return NextResponse.json({ error: "Read-only file" }, { status: 403 });
+  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const members = await listWorkspaceMembers(workspaceUuid);
   const currentMember = members.find((member) => member.userId === user.id);
@@ -88,14 +80,23 @@ export async function DELETE(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const existing = await getFileAssetById(workspaceUuid, fileUuid);
-  if (!existing) {
+  const existingFile = await getFileAssetById(workspaceUuid, fileUuid);
+  if (!existingFile) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
-  const ok = await softDeleteFileAsset(workspaceUuid, fileUuid);
-  if (!ok) {
+  const deletedFile = await softDeleteFileAsset(workspaceUuid, fileUuid, user.id);
+  if (!deletedFile) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
+  }
+
+  if (process.env.UPLOADTHING_TOKEN && existingFile.storageKey) {
+    try {
+      const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+      await utapi.deleteFiles([existingFile.storageKey]);
+    } catch {
+      // Best effort physical cleanup; logical delete has already succeeded.
+    }
   }
 
   await publishFilesInvalidationEvent({

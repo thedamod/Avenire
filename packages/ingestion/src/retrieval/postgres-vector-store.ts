@@ -6,6 +6,7 @@ import {
   retrieveWorkspaceChunks,
 } from "@avenire/database";
 import { eq, sql } from "drizzle-orm";
+import { config } from "../config";
 import type {
   CorpusStats,
   VectorSearchResult,
@@ -34,6 +35,7 @@ export class PostgresVectorStore implements VectorStore {
     const rows = await retrieveWorkspaceChunks({
       workspaceId: this.workspaceId,
       queryEmbedding,
+      model: config.cohereEmbedModel,
       limit: options.limit,
       sourceType: options.filter?.sourceType,
       provider: options.filter?.provider,

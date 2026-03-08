@@ -4,14 +4,12 @@ import {
   listFolderContentsForUser,
   listWorkspaceMembers,
   softDeleteFolder,
-  userCanEditFolder,
-  userCanViewFolder,
   updateFolder,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { getIngestionFlagsByFileIds } from "@/lib/ingestion-data";
 import { NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/workspace";
+import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 export async function GET(
   _request: Request,
@@ -23,12 +21,8 @@ export async function GET(
   }
 
   const { workspaceUuid, folderUuid } = await context.params;
-  const canView = await userCanViewFolder({
-    workspaceId: workspaceUuid,
-    folderId: folderUuid,
-    userId: user.id,
-  });
-  if (!canView) {
+  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
+  if (!canAccess) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -63,13 +57,9 @@ export async function PATCH(
   }
 
   const { workspaceUuid, folderUuid } = await context.params;
-  const canEdit = await userCanEditFolder({
-    workspaceId: workspaceUuid,
-    folderId: folderUuid,
-    userId: user.id,
-  });
-  if (!canEdit) {
-    return NextResponse.json({ error: "Read-only folder" }, { status: 403 });
+  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (isSharedFilesVirtualFolderId(folderUuid, workspaceUuid)) {
     return NextResponse.json({ error: "Shared Files is read-only" }, { status: 400 });
@@ -81,8 +71,6 @@ export async function PATCH(
   }
 
   const body = (await request.json().catch(() => ({}))) as {
-    bannerUrl?: string | null;
-    iconColor?: string | null;
     name?: string;
     parentId?: string | null;
   };
@@ -97,8 +85,6 @@ export async function PATCH(
   const oldParentId = existing.folder.parentId;
 
   const folder = await updateFolder(workspaceUuid, folderUuid, user.id, {
-    bannerUrl: body.bannerUrl,
-    iconColor: body.iconColor,
     name: body.name,
     parentId: body.parentId,
   });
@@ -142,13 +128,9 @@ export async function DELETE(
   }
 
   const { workspaceUuid, folderUuid } = await context.params;
-  const canEdit = await userCanEditFolder({
-    workspaceId: workspaceUuid,
-    folderId: folderUuid,
-    userId: user.id,
-  });
-  if (!canEdit) {
-    return NextResponse.json({ error: "Read-only folder" }, { status: 403 });
+  const canAccess = await ensureWorkspaceAccessForUser(user.id, workspaceUuid);
+  if (!canAccess) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (isSharedFilesVirtualFolderId(folderUuid, workspaceUuid)) {
     return NextResponse.json({ error: "Shared Files is read-only" }, { status: 400 });

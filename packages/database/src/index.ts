@@ -1,7 +1,6 @@
 export * from "./account-data";
 export * from "./auth-schema";
 export * from "./billing-data";
-export * from "./chat-artifact-data";
 export * from "./chat-data";
 export * from "./client";
 export * from "./file-data";

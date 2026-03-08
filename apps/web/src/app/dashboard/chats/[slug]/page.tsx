@@ -11,7 +11,6 @@ import {
   getMessagesByChatSlugForUser,
   listChatsForUser,
 } from "@/lib/chat-data";
-import { resolveWorkspaceForUser } from "@/lib/file-data";
 import { buildPageMetadata } from "@/lib/page-metadata";
 
 export async function generateMetadata({
@@ -25,17 +24,7 @@ export async function generateMetadata({
   }
 
   const { slug } = await params;
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const workspace = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
-  if (!workspace) {
-    return buildPageMetadata({ title: "Chat" });
-  }
-  if (slug === "new") {
-    return buildPageMetadata({ title: "New Chat" });
-  }
-  const chat = await getChatBySlugForUser(session.user.id, slug, workspace.workspaceId);
+  const chat = await getChatBySlugForUser(session.user.id, slug);
 
   return buildPageMetadata({
     title: chat?.title?.trim() || "Chat",
@@ -54,40 +43,10 @@ export default async function DashboardChatPage({
   }
 
   const { slug } = await params;
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const workspace = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
-  if (!workspace) {
-    redirect("/dashboard/chats/new");
-  }
-  const chats = await listChatsForUser(session.user.id, workspace.workspaceId);
-
-  if (slug === "new") {
-    return (
-      <DashboardLayout
-        activeChatSlug=""
-        initialChats={chats}
-        user={{
-          name: session.user.name ?? "User",
-          email: session.user.email,
-          avatar: session.user.image ?? getFacehashUrl(session.user.name ?? session.user.email),
-        }}
-      >
-        <ChatWorkspace
-          chatSlug="new"
-          chatTitle="New Chat"
-          initialMessages={[]}
-          isReadonly={false}
-          workspaceUuid={workspace.workspaceId}
-        />
-      </DashboardLayout>
-    );
-  }
-
-  const [chat, initialMessages] = await Promise.all([
-    getChatBySlugForUser(session.user.id, slug, workspace.workspaceId),
-    getMessagesByChatSlugForUser(session.user.id, slug, workspace.workspaceId),
+  const [chat, chats, initialMessages] = await Promise.all([
+    getChatBySlugForUser(session.user.id, slug),
+    listChatsForUser(session.user.id),
+    getMessagesByChatSlugForUser(session.user.id, slug),
   ]);
 
   if (!chat) {
@@ -109,7 +68,6 @@ export default async function DashboardChatPage({
         chatTitle={chat.title}
         initialMessages={(initialMessages ?? []) as UIMessage[]}
         isReadonly={Boolean(chat.readOnly)}
-        workspaceUuid={workspace.workspaceId}
       />
     </DashboardLayout>
   );

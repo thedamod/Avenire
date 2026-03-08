@@ -1,13 +1,12 @@
 import {
-  type ApolloModelName,
-  apollo,
+  type FermionModelName,
+  fermion,
   generateText,
-  streamText,
+  gemini,
 } from "@avenire/ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getFileAssetById } from "@/lib/file-data";
-import { normalizeMediaType } from "@/lib/media-type";
 import { createApiLogger } from "@/lib/observability";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
@@ -15,39 +14,36 @@ const summarySchema = z.object({
   matches: z
     .array(
       z.object({
-        fileId: z.uuid("v4"),
+        fileId: z.string().uuid(),
         sourceType: z
           .enum(["pdf", "image", "video", "audio", "markdown", "link"])
           .optional(),
         snippet: z.string().min(1).optional(),
         title: z.string().min(1).optional(),
-      }),
+      })
     )
     .max(24)
     .optional(),
-  fileIds: z.array(z.uuid("v4")).max(10).optional(),
-  workspaceUuid: z.uuid("v4"),
+  fileIds: z.array(z.string().uuid()).max(10).optional(),
+  workspaceUuid: z.string().uuid(),
   query: z.string().min(1),
-  stream: z.boolean().optional(),
 });
 
 const FALLBACK_SUMMARY =
   "I could not find a reliable answer in the matched files. Try narrowing your question or selecting a more specific file.";
+const DEFAULT_RETRIEVAL_MODEL: FermionModelName = "fermion-agent";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 const DEFAULT_ATTACHMENT_LIMIT = 3;
 const DEFAULT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 const DOCUMENT_SOURCE_TYPES = new Set(["markdown", "pdf", "link"]);
 
-function summaryResponse(summary: string, stream?: boolean) {
-  if (stream) {
-    return new Response(summary, {
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "text/plain; charset=utf-8",
-      },
-    });
+function normalizeMediaType(value: string | null | undefined): string {
+  const raw = (value ?? "").trim().toLowerCase();
+  if (!raw) {
+    return "application/octet-stream";
   }
-  return NextResponse.json({ summary });
+  return raw.split(";")[0]?.trim() || "application/octet-stream";
 }
 
 function toPositiveInt(value: string | undefined, fallback: number): number {
@@ -70,9 +66,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const parsed = summarySchema.safeParse(
-    await request.json().catch(() => ({})),
-  );
+  const parsed = summarySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
     void apiLogger.requestFailed(400, "Invalid payload");
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -80,7 +74,7 @@ export async function POST(request: Request) {
 
   const canAccess = await ensureWorkspaceAccessForUser(
     user.id,
-    parsed.data.workspaceUuid,
+    parsed.data.workspaceUuid
   );
   if (!canAccess) {
     void apiLogger.requestFailed(403, "Forbidden", {
@@ -93,37 +87,40 @@ export async function POST(request: Request) {
     6,
     toPositiveInt(
       process.env.RETRIEVAL_SUMMARY_ATTACHMENT_LIMIT,
-      DEFAULT_ATTACHMENT_LIMIT,
-    ),
+      DEFAULT_ATTACHMENT_LIMIT
+    )
   );
   const attachmentMaxBytes = Math.max(
     256_000,
     toPositiveInt(
       process.env.RETRIEVAL_SUMMARY_ATTACHMENT_MAX_BYTES,
-      DEFAULT_ATTACHMENT_MAX_BYTES,
-    ),
+      DEFAULT_ATTACHMENT_MAX_BYTES
+    )
   );
   const fetchTimeoutMs = Math.max(
     2_000,
     toPositiveInt(
       process.env.RETRIEVAL_SUMMARY_FETCH_TIMEOUT_MS,
-      DEFAULT_FETCH_TIMEOUT_MS,
-    ),
+      DEFAULT_FETCH_TIMEOUT_MS
+    )
   );
-  
+  const fermionModelName =
+    (process.env.RETRIEVAL_SUMMARY_MODEL as FermionModelName | undefined) ??
+    DEFAULT_RETRIEVAL_MODEL;
+  const geminiModelName =
+    process.env.RETRIEVAL_SUMMARY_GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const useGeminiForAttachments = Boolean(process.env.GEMINI_API_KEY?.trim());
   const matches = parsed.data.matches ?? [];
   const matchedFileIds = matches.map((match) => match.fileId);
   const fallbackFileIds = parsed.data.fileIds ?? [];
-  const fileIds = Array.from(
-    new Set([...matchedFileIds, ...fallbackFileIds]),
-  ).slice(0, 12);
+  const fileIds = Array.from(new Set([...matchedFileIds, ...fallbackFileIds])).slice(0, 12);
 
   if (fileIds.length === 0 && matches.length === 0) {
     void apiLogger.requestSucceeded(200, {
       workspaceUuid: parsed.data.workspaceUuid,
       reason: "no-files",
     });
-    return summaryResponse(FALLBACK_SUMMARY, parsed.data.stream);
+    return NextResponse.json({ summary: FALLBACK_SUMMARY });
   }
 
   try {
@@ -156,9 +153,7 @@ export async function POST(request: Request) {
       }
       const snippet = match.snippet?.trim();
       if (snippet) {
-        group.snippets.push(
-          snippet.length > 650 ? `${snippet.slice(0, 650)}...` : snippet,
-        );
+        group.snippets.push(snippet.length > 650 ? `${snippet.slice(0, 650)}...` : snippet);
       }
       groupedMatches.set(match.fileId, group);
     }
@@ -166,9 +161,7 @@ export async function POST(request: Request) {
     const textualEvidence = Array.from(groupedMatches.entries())
       .filter(([, group]) => {
         const sourceType = group.sourceType ?? "";
-        return (
-          DOCUMENT_SOURCE_TYPES.has(sourceType) && group.snippets.length > 0
-        );
+        return DOCUMENT_SOURCE_TYPES.has(sourceType) && group.snippets.length > 0;
       })
       .slice(0, 8)
       .map(([fileId, group]) => {
@@ -176,9 +169,7 @@ export async function POST(request: Request) {
         const topSnippets = group.snippets.slice(0, 3);
         return [
           `Document file: ${title} (${fileId})`,
-          ...topSnippets.map(
-            (snippet, index) => `Chunk ${index + 1}: ${snippet}`,
-          ),
+          ...topSnippets.map((snippet, index) => `Chunk ${index + 1}: ${snippet}`),
         ].join("\n");
       });
 
@@ -191,11 +182,9 @@ export async function POST(request: Request) {
 
     const fileRecords = (
       await Promise.all(
-        attachmentCandidateIds
-          .slice(0, attachmentLimit * 2)
-          .map(async (fileId) =>
-            getFileAssetById(parsed.data.workspaceUuid, fileId),
-          ),
+        attachmentCandidateIds.slice(0, attachmentLimit * 2).map(async (fileId) =>
+          getFileAssetById(parsed.data.workspaceUuid, fileId)
+        )
       )
     ).filter((record): record is NonNullable<typeof record> => Boolean(record));
 
@@ -204,7 +193,7 @@ export async function POST(request: Request) {
         workspaceUuid: parsed.data.workspaceUuid,
         reason: "no-accessible-files",
       });
-      return summaryResponse(FALLBACK_SUMMARY, parsed.data.stream);
+      return NextResponse.json({ summary: FALLBACK_SUMMARY });
     }
 
     const attachedFiles = (
@@ -223,18 +212,14 @@ export async function POST(request: Request) {
             }
 
             const downloadedType = normalizeMediaType(
-              response.headers.get("content-type"),
+              response.headers.get("content-type")
             );
-            const mediaType =
-              normalizeMediaType(file.mimeType) === "application/octet-stream"
-                ? downloadedType
-                : normalizeMediaType(file.mimeType);
+            const mediaType = normalizeMediaType(file.mimeType) === "application/octet-stream"
+              ? downloadedType
+              : normalizeMediaType(file.mimeType);
 
             const bytes = new Uint8Array(await response.arrayBuffer());
-            if (
-              bytes.byteLength === 0 ||
-              bytes.byteLength > attachmentMaxBytes
-            ) {
+            if (bytes.byteLength === 0 || bytes.byteLength > attachmentMaxBytes) {
               return null;
             }
 
@@ -249,7 +234,7 @@ export async function POST(request: Request) {
           } finally {
             clearTimeout(timeout);
           }
-        }),
+        })
       )
     )
       .filter((part): part is NonNullable<typeof part> => Boolean(part))
@@ -261,68 +246,32 @@ export async function POST(request: Request) {
         reason: "attachments-empty",
         attemptedFiles: fileRecords.length,
       });
-      return summaryResponse(FALLBACK_SUMMARY, parsed.data.stream);
-    }
-
-    const summaryPrompt = [
-      "Answer the user's question using only the provided retrieval evidence.",
-      "For markdown/pdf/link files, use the provided retrieved chunks as the source of truth.",
-      "For attached media files, inspect the file content directly.",
-      "Provide short per-file descriptions in bullet points (1-2 lines each).",
-      "Do not claim details that are not present in evidence.",
-      "If evidence is insufficient, say what is missing.",
-      `User question: ${parsed.data.query}`,
-      textualEvidence.length > 0
-        ? `Retrieved document chunks:\n\n${textualEvidence.join("\n\n")}`
-        : "Retrieved document chunks: none",
-    ].join("\n");
-
-    if (parsed.data.stream) {
-      const result = streamText({
-        model: apollo.languageModel("apollo-sprint"),
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: summaryPrompt,
-              },
-              ...attachedFiles,
-            ],
-          },
-        ],
-        temperature: 0.2,
-        maxOutputTokens: 220,
-      });
-
-      void apiLogger.requestSucceeded(200, {
-        workspaceUuid: parsed.data.workspaceUuid,
-        modelName: "apollo-tiny",
-        provider: "apollo",
-        attachedFileCount: attachedFiles.length,
-        textualEvidenceCount: textualEvidence.length,
-        streaming: true,
-      });
-
-      return result.toTextStreamResponse({
-        headers: {
-          "Cache-Control": "no-store",
-          "Content-Type": "text/plain; charset=utf-8",
-        },
-      });
+      return NextResponse.json({ summary: FALLBACK_SUMMARY });
     }
 
     const generationStartedAt = performance.now();
     const { text } = await generateText({
-      model: apollo.languageModel("apollo-sprint"),
+      model: useGeminiForAttachments
+        ? gemini(geminiModelName)
+        : fermion.languageModel(fermionModelName),
       messages: [
         {
           role: "user",
           content: [
             {
               type: "text",
-              text: summaryPrompt,
+              text: [
+                "Answer the user's question using only the provided retrieval evidence.",
+                "For markdown/pdf/link files, use the provided retrieved chunks as the source of truth.",
+                "For attached media files, inspect the file content directly.",
+                "Provide short per-file descriptions in bullet points (1-2 lines each).",
+                "Do not claim details that are not present in evidence.",
+                "If evidence is insufficient, say what is missing.",
+                `User question: ${parsed.data.query}`,
+                textualEvidence.length > 0
+                  ? `Retrieved document chunks:\n\n${textualEvidence.join("\n\n")}`
+                  : "Retrieved document chunks: none",
+              ].join("\n"),
             },
             ...attachedFiles,
           ],
@@ -337,13 +286,13 @@ export async function POST(request: Request) {
     void apiLogger.requestSucceeded(200, {
       workspaceUuid: parsed.data.workspaceUuid,
       generationLatencyMs,
-      modelName: "apollo-tiny",
-      provider: "apollo",
+      modelName: useGeminiForAttachments ? geminiModelName : fermionModelName,
+      provider: useGeminiForAttachments ? "google" : "fermion",
       attachedFileCount: attachedFiles.length,
       textualEvidenceCount: textualEvidence.length,
     });
 
-    return summaryResponse(summary, parsed.data.stream);
+    return NextResponse.json({ summary });
   } catch (error) {
     void apiLogger.warn("retrieval.attachment_summary.fallback", {
       workspaceUuid: parsed.data.workspaceUuid,
@@ -353,9 +302,6 @@ export async function POST(request: Request) {
           : { message: "Unknown attachment summary error" },
       reason: "attachment-summary-error",
     });
-    if (parsed.data.stream) {
-      return summaryResponse(FALLBACK_SUMMARY, true);
-    }
-    return summaryResponse(FALLBACK_SUMMARY, false);
+    return NextResponse.json({ summary: FALLBACK_SUMMARY });
   }
 }

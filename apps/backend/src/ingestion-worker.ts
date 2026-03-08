@@ -7,13 +7,11 @@ import {
   getFileForIngestion,
   markIngestionJobFailed,
   markIngestionJobSucceeded,
-  retryIngestionJob,
   replaceFileTranscriptCues,
 } from "@avenire/database";
 import { assertRequiredSecrets, ingestStoredFile } from "@avenire/ingestion";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
-import { publishWorkspaceStreamEvent } from "./workspace-event-stream";
 
 // Prefer backend-local env; keep repo root as fallback.
 const here = fileURLToPath(new URL(".", import.meta.url));
@@ -29,18 +27,6 @@ const workerConcurrency = Math.max(
   1,
   Number.parseInt(process.env.INGESTION_WORKER_CONCURRENCY ?? "3", 10),
 );
-const maxIngestionAttempts = Math.max(
-  1,
-  Number.parseInt(process.env.INGESTION_WORKER_MAX_ATTEMPTS ?? "3", 10),
-);
-const retryBaseMs = Math.max(
-  250,
-  Number.parseInt(process.env.INGESTION_WORKER_RETRY_BASE_MS ?? "1200", 10),
-);
-const retryMaxMs = Math.max(
-  retryBaseMs,
-  Number.parseInt(process.env.INGESTION_WORKER_RETRY_MAX_MS ?? "30000", 10),
-);
 
 assertRequiredSecrets();
 
@@ -52,40 +38,6 @@ let lastTickAt: string | null = null;
 let lastError: string | null = null;
 let lastJobDurationMs: number | null = null;
 
-async function publishIngestionEvent(input: {
-  workspaceId: string;
-  jobId: string;
-  eventType: string;
-  payload?: Record<string, unknown>;
-}) {
-  await publishWorkspaceStreamEvent({
-    workspaceUuid: input.workspaceId,
-    type: "ingestion.job",
-    payload: {
-      createdAt: new Date().toISOString(),
-      eventType: input.eventType,
-      jobId: input.jobId,
-      payload: input.payload ?? {},
-      workspaceId: input.workspaceId,
-    },
-  });
-}
-
-async function appendAndPublishIngestionEvent(input: {
-  workspaceId: string;
-  jobId: string;
-  eventType: string;
-  payload?: Record<string, unknown>;
-}) {
-  await appendIngestionJobEvent({
-    workspaceId: input.workspaceId,
-    jobId: input.jobId,
-    eventType: input.eventType,
-    payload: input.payload,
-  });
-  await publishIngestionEvent(input);
-}
-
 async function processClaimedJob(
   job: NonNullable<Awaited<ReturnType<typeof claimNextIngestionJob>>>,
 ) {
@@ -94,17 +46,7 @@ async function processClaimedJob(
   activeJobs += 1;
 
   try {
-    await publishIngestionEvent({
-      workspaceId: job.workspaceId,
-      jobId: job.id,
-      eventType: "job.running",
-      payload: {
-        status: "running",
-        attempts: job.attempts,
-      },
-    });
-
-    await appendAndPublishIngestionEvent({
+    await appendIngestionJobEvent({
       workspaceId: job.workspaceId,
       jobId: job.id,
       eventType: "job.processing",
@@ -121,7 +63,7 @@ async function processClaimedJob(
     }
 
     stage = "ingest";
-    await appendAndPublishIngestionEvent({
+    await appendIngestionJobEvent({
       workspaceId: job.workspaceId,
       jobId: job.id,
       eventType: "job.processing",
@@ -137,20 +79,17 @@ async function processClaimedJob(
       workspaceId: job.workspaceId,
       fileId: job.fileId,
       storageUrl: file.storageUrl,
-      storageKey: file.storageKey,
       fileName: file.name,
       mimeType: file.mimeType,
       metadata: file.metadata,
     });
 
     stage = "persist-transcript";
-    if (result.transcriptCues.length > 0) {
-      await replaceFileTranscriptCues({
-        workspaceId: job.workspaceId,
-        fileId: job.fileId,
-        cues: result.transcriptCues,
-      });
-    }
+    await replaceFileTranscriptCues({
+      workspaceId: job.workspaceId,
+      fileId: job.fileId,
+      cues: result.transcriptCues,
+    });
 
     stage = "mark-success";
     const chunkCount = result.resources.reduce(
@@ -164,16 +103,6 @@ async function processClaimedJob(
       payload: {
         resources: result.resources.length,
         chunks: chunkCount,
-        fileId: job.fileId,
-        durationMs: Date.now() - startedAtMs,
-      },
-    });
-    await publishIngestionEvent({
-      workspaceId: job.workspaceId,
-      jobId: job.id,
-      eventType: "job.succeeded",
-      payload: {
-        status: "succeeded",
         fileId: job.fileId,
         durationMs: Date.now() - startedAtMs,
       },
@@ -205,50 +134,27 @@ async function processClaimedJob(
       stack: error instanceof Error ? error.stack : undefined,
     });
 
-    try {
-      if (job.attempts < maxIngestionAttempts) {
-        const retryInMs = Math.min(
-          retryMaxMs,
-          retryBaseMs * 2 ** Math.max(0, job.attempts - 1),
-        );
-        await retryIngestionJob({
-          workspaceId: job.workspaceId,
-          jobId: job.id,
-          error: enrichedMessage,
-          retryInMs,
-        });
-        await publishIngestionEvent({
-          workspaceId: job.workspaceId,
-          jobId: job.id,
-          eventType: "job.retry_scheduled",
-          payload: {
-            status: "queued",
-            error: enrichedMessage,
-            attempts: job.attempts,
-            maxAttempts: maxIngestionAttempts,
-            retryInMs,
-          },
-        });
-      } else {
+    let markError: unknown = null;
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      try {
         await markIngestionJobFailed({
           workspaceId: job.workspaceId,
           jobId: job.id,
           error: enrichedMessage,
         });
-        await publishIngestionEvent({
-          workspaceId: job.workspaceId,
-          jobId: job.id,
-          eventType: "job.failed",
-          payload: {
-            status: "failed",
-            error: enrichedMessage,
-            attempts: job.attempts,
-            maxAttempts: maxIngestionAttempts,
-          },
-        });
+        markError = null;
+        break;
+      } catch (error) {
+        markError = error;
+        if (attempt < 4) {
+          const backoffMs = 250 * Math.pow(2, attempt - 1);
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        }
       }
-    } catch (error) {
-      console.error(error);
+    }
+
+    if (markError) {
+      throw markError;
     }
   } finally {
     activeJobs = Math.max(0, activeJobs - 1);

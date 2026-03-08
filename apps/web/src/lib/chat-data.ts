@@ -1,4 +1,4 @@
-export type { ChatSummary } from "@avenire/database";
+export type { ChatSummary } from "../../../../packages/database/src";
 export {
   branchChatForUser,
   createChatForUser,
@@ -12,4 +12,4 @@ export {
   listChatsForUser,
   saveMessagesForChatSlug,
   updateChatForUser,
-} from "@avenire/database";
+} from "../../../../packages/database/src";

@@ -9,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@avenire/ui/components/card";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, SparklesIcon } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { memo } from "react";
 import type { Attachment } from "@/components/chat/attachment";
@@ -52,47 +52,11 @@ const categorizeError = (error: Error): MessageErrorType => {
 };
 
 interface MessagePart {
-  content?: string;
   filename?: string;
   mediaType?: string;
-  reasoning?: string;
-  reasoningText?: string;
   text?: string;
   type: string;
   url?: string;
-}
-
-const isReasoningPart = (part: MessagePart) =>
-  part.type === "reasoning" ||
-  part.type.startsWith("reasoning-") ||
-  (typeof part.reasoning === "string" && part.reasoning.length > 0) ||
-  (typeof part.reasoningText === "string" && part.reasoningText.length > 0);
-
-const getReasoningText = (part: MessagePart) => {
-  const candidates = [
-    part.text,
-    part.reasoning,
-    part.reasoningText,
-    part.content,
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate;
-    }
-  }
-
-  return "";
-};
-
-function AnimatedMarkdown({
-  content,
-  id,
-}: {
-  content: string;
-  id: string;
-}) {
-  return <Markdown content={content} id={id} />;
 }
 
 const toAttachment = (part: MessagePart): Partial<Attachment> | null => {
@@ -111,7 +75,7 @@ const PurePreviewMessage = ({
   chatId,
   message,
   error,
-  isLoading,
+  isLoading: _isLoading,
   status,
   setMessages: _setMessages,
   reload,
@@ -133,7 +97,7 @@ const PurePreviewMessage = ({
     <AnimatePresence>
       <motion.div
         animate={{ y: 0, opacity: 1 }}
-        className={cn("group/message mx-auto w-full max-w-3xl px-4", {
+        className={cn("group/message mx-auto max-w-3xl w-full px-4", {
           "justify-self-end": message.role === "user",
         })}
         data-role={message.role}
@@ -141,10 +105,10 @@ const PurePreviewMessage = ({
         initial={{ y: 5, opacity: 0 }}
         transition={{ duration: 0.2, ease: "easeOut" }}
       >
-        <div className="flex w-full flex-col gap-3 group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-[80%]">
+        <div className="flex w-full flex-col gap-3 group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl">
           {message.role === "assistant" && (
             <div className="flex flex-row items-center gap-2">
-              <div className="flex flex-col gap-4 text-muted-foreground text-xs uppercase tracking-[0.18em]">
+              <div className="flex flex-col gap-4 text-muted-foreground">
                 Apollo
               </div>
             </div>
@@ -173,7 +137,7 @@ const PurePreviewMessage = ({
           <div
             className={cn(
               "flex w-full flex-col gap-4",
-              message.role === "user" && "items-end"
+              message.role === "user" && "items-end",
             )}
           >
             {fileParts.length > 0 && (
@@ -199,17 +163,15 @@ const PurePreviewMessage = ({
             {parts.map((part, index) => {
               const key = `message-${message.id}-part-${index}`;
 
-              if (isReasoningPart(part)) {
+              if (part.type === "reasoning") {
                 return (
                   <Reasoning
                     className="w-full"
-                    isStreaming={status === "streaming" && isLoading}
+                    isStreaming={status === "streaming"}
                     key={key}
                   >
                     <ReasoningTrigger />
-                    <ReasoningContent>
-                      {getReasoningText(part)}
-                    </ReasoningContent>
+                    <ReasoningContent>{part.text ?? ""}</ReasoningContent>
                   </Reasoning>
                 );
               }
@@ -221,36 +183,30 @@ const PurePreviewMessage = ({
                       className={cn(
                         "flex w-full flex-col gap-4",
                         message.role === "user" &&
-                          "group relative rounded-2xl rounded-br-sm border border-border/80 bg-secondary px-4 py-3 text-secondary-foreground"
+                          "rounded-xl bg-accent-foreground px-3 py-2 text-accent",
                       )}
                       data-testid="message-content"
                     >
                       {message.role === "user" ? (
-                        <p className="text-[15px] leading-6">{part.text ?? ""}</p>
+                        <p className="text-sm">{part.text ?? ""}</p>
                       ) : (
-                        <AnimatedMarkdown
-                          content={part.text ?? ""}
-                          id={key}
-                        />
+                        <Markdown content={part.text ?? ""} id={key} />
                       )}
                     </div>
                   </div>
                 );
               }
+
               return null;
             })}
           </div>
 
-          {!isReadonly && message.role === "assistant" && !isLoading && (
+          {!isReadonly && message.role === "assistant" && (
             <ChatActions
               chatId={chatId}
               message={message}
               onRegenerate={
-                message.role === "assistant"
-                  ? () => {
-                      reload();
-                    }
-                  : undefined
+                message.role === "assistant" ? () => void reload() : undefined
               }
             />
           )}
@@ -266,7 +222,7 @@ export const PreviewMessage = memo(
     prev.message === next.message &&
     prev.error?.message === next.error?.message &&
     prev.isLoading === next.isLoading &&
-    prev.status === next.status
+    prev.status === next.status,
 );
 
 export const ThinkingMessage = memo(function ThinkingMessage() {

@@ -1,6 +1,6 @@
 import {
-  createWorkspaceInvitationByEmail,
   findAuthUserByEmail,
+  grantAllChatsFromUserToUser,
   listWorkspaceMembers,
   listWorkspacesForUser,
 } from "@/lib/file-data";
@@ -57,24 +57,43 @@ export async function POST(
   const normalizedEmail = body.email.trim().toLowerCase();
 
   const targetUser = await findAuthUserByEmail(normalizedEmail);
-  const invite = await createWorkspaceInvitationByEmail({
-    workspaceId: workspaceUuid,
-    email: normalizedEmail,
-    inviterUserId: user.id,
-    role: "member",
-    expiresInDays: 7,
-  });
-  if (invite.status === "workspace-not-found") {
-    void apiLogger.requestFailed(404, "Workspace not found", { workspaceUuid });
-    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  if (!targetUser) {
+    void apiLogger.requestFailed(404, "User not found", { workspaceUuid });
+    return NextResponse.json(
+      { error: "User not found. Ask them to sign up first." },
+      { status: 404 },
+    );
   }
-  if (invite.status === "invalid-email") {
-    void apiLogger.requestFailed(400, "Invalid email", { workspaceUuid });
-    return NextResponse.json({ error: "Invalid email" }, { status: 400 });
+
+  try {
+    await auth.api.addMember({
+      body: {
+        userId: targetUser.id,
+        organizationId: summary.organizationId,
+        role: "member",
+      },
+      headers: await headers(),
+    });
+  } catch (error) {
+    void apiLogger.requestFailed(400, error, { workspaceUuid });
+    return NextResponse.json(
+      { error: "Unable to add member", detail: error instanceof Error ? error.message : "Unknown error" },
+      { status: 400 },
+    );
   }
-  if (invite.status === "already-member") {
-    return NextResponse.json({ status: "already-member" }, { status: 200 });
-  }
+
+  await Promise.all(
+    members
+      .filter((member) => member.userId !== targetUser.id)
+      .map((member) =>
+        grantAllChatsFromUserToUser({
+          workspaceId: workspaceUuid,
+          ownerUserId: member.userId,
+          granteeUserId: targetUser.id,
+          createdBy: user.id,
+        }),
+      ),
+  );
 
   const workspaceName = summary?.name ?? "Workspace";
   const rootFolderId = summary?.rootFolderId ?? "";
@@ -118,13 +137,12 @@ export async function POST(
 
   return NextResponse.json(
     {
-      status: "invited",
-      member: targetUser ?? null,
-      invitationId: invite.invitationId,
+      status: "added",
+      member: targetUser,
       emailSent,
       workspaceUrl,
     },
-    { status: 200 },
+    { status: 201 },
   );
 }
 

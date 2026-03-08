@@ -25,7 +25,7 @@ Primary pillars:
 - [ ] Ingestion Pipeline
 	- [ ] [[Mistral OCR]]
 	- [ ] [[Cobalt Video Saver]]
-	- [ ] [[Cohere Embedding]]
+	- [ ] [[Voyage AI Embedding]]
 - [ ] Agent orchestration
 	- [ ] [[Tavily]]
 	- [ ] [[Introducing Sarvam Arya]]
@@ -66,7 +66,7 @@ Knowledge Store (Vector + Structured Graph)
 Components:
 - **Mistral OCR** → High-quality parsing for textbooks, notes, scanned PDFs
 - **Cobalt Video Saver** → Download + segment educational videos, extract transcripts + timestamps
-- **Cohere Embedding** → Dense semantic embeddings for deep retrieval and reasoning
+- **Voyage AI Embedding** → Dense semantic embeddings for deep retrieval and reasoning
 
 Output:
 - Unified multimodal knowledge base

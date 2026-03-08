@@ -1,7 +1,7 @@
 export type {
   IngestionJobRecord,
   IngestionJobStatus,
-} from "@avenire/database";
+} from "../../../../packages/database/src";
 export {
   appendIngestionJobEvent,
   enqueueIngestionJob,
@@ -10,5 +10,4 @@ export {
   hasSuccessfulIngestionForFile,
   listFileTranscriptCues,
   listIngestionEventsForWorkspace,
-  retryIngestionJob,
-} from "@avenire/database";
+} from "../../../../packages/database/src";

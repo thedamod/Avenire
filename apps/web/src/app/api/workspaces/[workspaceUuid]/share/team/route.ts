@@ -1,7 +1,8 @@
 import { listWorkspacesForUser } from "@/lib/file-data";
+import { grantAllChatsFromUserToUser } from "@/lib/file-data";
 import { auth, sendWorkspaceShareEmail } from "@avenire/auth/server";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
-import { NextResponse, after } from "next/server";
+import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { createApiLogger } from "@/lib/observability";
 import { resolveAppBaseUrl } from "@/lib/app-base-url";
@@ -74,59 +75,61 @@ export async function POST(
       email: member.user?.email ?? member.email ?? null,
     }))
     .filter((member) => member.userId !== user.id && typeof member.email === "string");
-  after(async () => {
-    let emailSentCount = 0;
-    await Promise.all(
-      recipients.map(async (member) => {
-        try {
-          await sendWorkspaceShareEmail({
-            toEmail: member.email as string,
-            workspaceName,
-            workspaceUrl,
-            sharedByName: user.name ?? undefined,
-          });
-          emailSentCount += 1;
-        } catch (error) {
-          const errorSummary =
-            error instanceof Error
-              ? { name: error.name, message: error.message }
-              : { value: String(error) };
-          console.error("Failed to send workspace share team email", {
-            workspaceUuid,
-            recipient: member.email as string,
-            error: errorSummary,
-          });
-          void apiLogger.error("error.integration", {
-            integration: "email",
-            workspaceUuid,
-            action: "sendWorkspaceShareEmail",
+  let emailSentCount = 0;
+
+  await Promise.all(
+    recipients.map(async (member) => {
+      try {
+        if (member.userId) {
+          await grantAllChatsFromUserToUser({
+            workspaceId: workspaceUuid,
+            ownerUserId: user.id,
+            granteeUserId: member.userId,
+            createdBy: user.id,
           });
         }
-      }),
-    );
+        await sendWorkspaceShareEmail({
+          toEmail: member.email as string,
+          workspaceName,
+          workspaceUrl,
+          sharedByName: user.name ?? undefined,
+        });
+        emailSentCount += 1;
+      } catch (error) {
+        console.error("Failed to send workspace share team email", {
+          workspaceUuid,
+          recipient: member.email as string,
+          error,
+        });
+        void apiLogger.error("error.integration", {
+          integration: "email",
+          workspaceUuid,
+          action: "sendWorkspaceShareEmail",
+        });
+      }
+    }),
+  );
 
-    void apiLogger.meter("meter.share.created", {
-      resourceType: "workspace-team",
-      workspaceUuid,
-      recipients: recipients.length,
-      emailSentCount,
-    });
-    void apiLogger.featureUsed("workspace.sharing.team", {
-      workspaceUuid,
-      recipients: recipients.length,
-      emailSentCount,
-    });
+  void apiLogger.meter("meter.share.created", {
+    resourceType: "workspace-team",
+    workspaceUuid,
+    recipients: recipients.length,
+    emailSentCount,
   });
-
+  void apiLogger.featureUsed("workspace.sharing.team", {
+    workspaceUuid,
+    recipients: recipients.length,
+    emailSentCount,
+  });
   void apiLogger.requestSucceeded(200, {
     workspaceUuid,
     recipients: recipients.length,
-    queued: true,
+    emailSentCount,
   });
 
   return NextResponse.json({
     recipients: recipients.length,
-    queued: true,
+    emailSentCount,
     workspaceUrl,
   });
 }

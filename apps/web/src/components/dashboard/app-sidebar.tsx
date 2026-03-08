@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "@avenire/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,8 +7,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@avenire/ui/components/dropdown-menu";
-import { ExpandableTabs } from "@avenire/ui/components/expandable-tabs";
 import { Input } from "@avenire/ui/components/input";
+import { ExpandableTabs } from "@avenire/ui/components/expandable-tabs";
 import {
   Sidebar,
   SidebarContent,
@@ -17,12 +16,10 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from "@avenire/ui/components/sidebar";
 import {
   Tooltip,
@@ -30,9 +27,16 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@avenire/ui/components/tooltip";
-import { useHotkey } from "@tanstack/react-hotkeys";
+import { cn } from "@avenire/ui/lib/utils";
 import {
+  FileArchive,
+  FileCode2,
+  FileImage,
+  FileMusic,
   FilePlus2,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
   Files,
   GitBranch,
   MessageSquare,
@@ -42,16 +46,15 @@ import {
   PinOff,
   PlusCircle,
   Search,
-  Settings,
   Sparkles,
   Trash2,
-  Waves,
 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   type ComponentProps,
   type ComponentType,
+  type DragEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -60,60 +63,30 @@ import {
   useState,
 } from "react";
 import { NavUser } from "@/components/dashboard/nav-user";
-import { TrashDialog } from "@/components/dashboard/trash-dialog";
-import { SettingsDialog } from "@/components/settings/settings-dialog";
+import {
+  FileTree,
+  FileTreeFile,
+  FileTreeFolder,
+} from "@/components/files/tree";
 import type { ChatSummary } from "@/lib/chat-data";
 import {
-  CHAT_CREATED_EVENT,
   CHAT_NAME_UPDATED_EVENT,
-  type ChatCreatedDetail,
   type ChatNameUpdatedDetail,
 } from "@/lib/chat-events";
-import { useDashboardOverlayStore } from "@/stores/dashboardOverlayStore";
+import {
+  DASHBOARD_FILES_FOCUS_SEARCH_EVENT,
+  DASHBOARD_FILES_NEW_NOTE_EVENT,
+  DASHBOARD_FILES_SYNC_EVENT,
+} from "@/lib/file-events";
 import {
   type DashboardView,
   useDashboardViewStore,
 } from "@/stores/dashboardViewStore";
-import { useFilesPinsStore } from "@/stores/filesPinsStore";
-import { useFilesUiStore } from "@/stores/filesUiStore";
-import { TreeView, type TreeDataItem } from "@/components/ui/tree-view";
 
 interface DashboardSidebarUser {
-  avatar?: string;
-  email: string;
   name: string;
-}
-
-function TreeIconImage({
-  alt,
-  className,
-  src,
-}: {
-  alt: string;
-  className?: string;
-  src: string;
-}) {
-  return <img alt={alt} aria-hidden="true" className={className} src={src} />;
-}
-
-function TreeFolderClosedIcon({ className }: { className?: string }) {
-  return (
-    <TreeIconImage
-      alt=""
-      className={className}
-      src="/icons/_folder.svg"
-    />
-  );
-}
-
-function TreeFolderOpenIcon({ className }: { className?: string }) {
-  return (
-    <TreeIconImage
-      alt=""
-      className={className}
-      src="/icons/_folder_open.svg"
-    />
-  );
+  email: string;
+  avatar?: string;
 }
 
 function SectionButton({
@@ -268,7 +241,7 @@ function ChatListSection({
                       </Tooltip>
                     </SidebarMenuButton>
 
-                    {chat.readOnly ? null : (
+                    {!chat.readOnly ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger
                           render={
@@ -321,7 +294,7 @@ function ChatListSection({
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    )}
+                    ) : null}
                   </>
                 )}
               </SidebarMenuItem>
@@ -341,108 +314,41 @@ async function parseResponse<T>(response: Response): Promise<T | null> {
   return (await response.json()) as T;
 }
 
-function readPreferredWorkspaceId() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return window.localStorage.getItem("preferredWorkspaceId");
-}
-
 function getTreeFileIcon(name: string) {
   const ext = name.includes(".")
     ? (name.split(".").pop()?.toLowerCase() ?? "")
     : "";
-  const iconByExtension: Record<string, string> = {
-    astro: "/icons/astro.svg",
-    avif: "/icons/image.svg",
-    bmp: "/icons/image.svg",
-    c: "/icons/c.svg",
-    cpp: "/icons/cpp.svg",
-    css: "/icons/css.svg",
-    csv: "/icons/csv.svg",
-    gif: "/icons/image.svg",
-    go: "/icons/go.svg",
-    html: "/icons/html.svg",
-    ico: "/icons/image.svg",
-    java: "/icons/java.svg",
-    jpeg: "/icons/image.svg",
-    jpg: "/icons/image.svg",
-    js: "/icons/javascript.svg",
-    json: "/icons/json.svg",
-    jsx: "/icons/react.svg",
-    md: "/icons/markdown.svg",
-    m4a: "/icons/audio.svg",
-    mkv: "/icons/video.svg",
-    mov: "/icons/video.svg",
-    mp3: "/icons/audio.svg",
-    mp4: "/icons/video.svg",
-    pdf: "/icons/pdf.svg",
-    php: "/icons/php.svg",
-    png: "/icons/image.svg",
-    py: "/icons/python.svg",
-    rb: "/icons/ruby.svg",
-    rs: "/icons/rust.svg",
-    scss: "/icons/scss.svg",
-    sql: "/icons/database.svg",
-    svg: "/icons/svg.svg",
-    tar: "/icons/zip.svg",
-    ts: "/icons/typescript.svg",
-    tsx: "/icons/react-typescript.svg",
-    txt: "/icons/text.svg",
-    wav: "/icons/audio.svg",
-    webm: "/icons/video.svg",
-    webp: "/icons/image.svg",
-    xls: "/icons/csv.svg",
-    xlsx: "/icons/csv.svg",
-    xml: "/icons/xml.svg",
-    yaml: "/icons/yaml.svg",
-    yml: "/icons/yaml.svg",
-    zip: "/icons/zip.svg",
-  };
 
-  return (
-    <TreeIconImage
-      alt=""
-      className="size-4 shrink-0"
-      src={iconByExtension[ext] ?? "/icons/_file.svg"}
-    />
-  );
+  if (imageExt.has(ext)) {
+    return <FileImage className="size-4 text-emerald-600" />;
+  }
+  if (videoExt.has(ext)) {
+    return <FileVideo className="size-4 text-violet-600" />;
+  }
+  if (audioExt.has(ext)) {
+    return <FileMusic className="size-4 text-indigo-600" />;
+  }
+  if (sheetExt.has(ext)) {
+    return <FileSpreadsheet className="size-4 text-lime-700" />;
+  }
+  if (codeExt.has(ext)) {
+    return <FileCode2 className="size-4 text-sky-600" />;
+  }
+  if (archiveExt.has(ext)) {
+    return <FileArchive className="size-4 text-amber-600" />;
+  }
+  return <FileText className="size-4 text-muted-foreground" />;
 }
 
-function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
+function getDragPreviewPixel(cacheRef: { current: HTMLImageElement | null }) {
+  if (cacheRef.current) {
+    return cacheRef.current;
   }
-
-  if (target.isContentEditable) {
-    return true;
-  }
-
-  const tagName = target.tagName.toLowerCase();
-  if (tagName === "textarea" || tagName === "select") {
-    return true;
-  }
-
-  if (tagName !== "input") {
-    return false;
-  }
-
-  const input = target as HTMLInputElement;
-  const ignoredInputTypes = new Set([
-    "button",
-    "checkbox",
-    "color",
-    "file",
-    "hidden",
-    "image",
-    "radio",
-    "range",
-    "reset",
-    "submit",
-  ]);
-
-  return !ignoredInputTypes.has(input.type.toLowerCase());
+  const pixel = new Image();
+  pixel.src =
+    "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+  cacheRef.current = pixel;
+  return pixel;
 }
 
 export function DashboardSidebar({
@@ -460,15 +366,6 @@ export function DashboardSidebar({
   const searchParams = useSearchParams();
   const view = useDashboardViewStore((state) => state.view);
   const setView = useDashboardViewStore((state) => state.setView);
-  const emitFilesIntent = useFilesUiStore((state) => state.emitIntent);
-  const emitFilesSync = useFilesUiStore((state) => state.emitSync);
-  const toggleUploadActivityOpen = useFilesUiStore(
-    (state) => state.toggleUploadActivityOpen
-  );
-  const filesSyncVersion = useFilesUiStore((state) => state.sync.version);
-  const filesSyncWorkspaceUuid = useFilesUiStore(
-    (state) => state.sync.workspaceUuid
-  );
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [editingChatSlug, setEditingChatSlug] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -481,21 +378,6 @@ export function DashboardSidebar({
       name: string;
     }>
   >([]);
-  const [invitations, setInvitations] = useState<
-    Array<{
-      id: string;
-      organizationId: string;
-      organizationName: string;
-      inviterName: string | null;
-      inviterEmail: string;
-    }>
-  >([]);
-  const settingsOpen = useDashboardOverlayStore((state) => state.settingsOpen);
-  const setSettingsOpen = useDashboardOverlayStore(
-    (state) => state.setSettingsOpen
-  );
-  const trashOpen = useDashboardOverlayStore((state) => state.trashOpen);
-  const setTrashOpen = useDashboardOverlayStore((state) => state.setTrashOpen);
   const [folderTree, setFolderTree] = useState<
     Array<{
       id: string;
@@ -510,9 +392,21 @@ export function DashboardSidebar({
   const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(
     new Set()
   );
+  const [hasSavedExpandedTreeState, setHasSavedExpandedTreeState] =
+    useState(false);
+  const [hydratedTreeStorageKey, setHydratedTreeStorageKey] = useState<
+    string | null
+  >(null);
+  const [treeDropFolderId, setTreeDropFolderId] = useState<string | null>(null);
+  const [draggedTreeItem, setDraggedTreeItem] = useState<{
+    id: string;
+    kind: "file" | "folder";
+  } | null>(null);
+  const [highlightedTreePath, setHighlightedTreePath] = useState<string | null>(
+    null
+  );
   const fileTreePanelRef = useRef<HTMLDivElement | null>(null);
-  const lastTreeRevealTargetRef = useRef<string | null>(null);
-  const processedSyncVersionRef = useRef(0);
+  const dragPreviewPixelRef = useRef<HTMLImageElement | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
   const treeRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -526,36 +420,9 @@ export function DashboardSidebar({
     return match?.[1] ?? undefined;
   }, [pathname]);
   const currentFileId = searchParams.get("file") ?? undefined;
-  const pinnedByWorkspace = useFilesPinsStore((state) => state.pinnedByWorkspace);
-  const pinnedItems = useMemo(
-    () => (workspaceUuid ? pinnedByWorkspace[workspaceUuid] ?? [] : []),
-    [pinnedByWorkspace, workspaceUuid]
-  );
-  const pinnedFolders = useMemo(
-    () =>
-      pinnedItems.filter(
-        (item) =>
-          item.kind === "folder" &&
-          folderTree.some((folder) => folder.id === item.id)
-      ),
-    [folderTree, pinnedItems]
-  );
-  const pinnedFiles = useMemo(
-    () =>
-      pinnedItems.filter(
-        (item) =>
-          item.kind === "file" &&
-          fileTree.some((file) => file.id === item.id)
-      ),
-    [fileTree, pinnedItems]
-  );
   const expandedTreeStorageKey = useMemo(
     () => (workspaceUuid ? `files-tree-expanded:${workspaceUuid}` : null),
     [workspaceUuid]
-  );
-  const expandedTreePathIds = useMemo(
-    () => Array.from(expandedTreePaths),
-    [expandedTreePaths]
   );
 
   useEffect(() => {
@@ -583,69 +450,9 @@ export function DashboardSidebar({
   }, [pathname, setView, view]);
 
   useEffect(() => {
-    const fileRouteMatch = pathname.match(/^\/dashboard\/files\/([^/]+)/);
-    if (fileRouteMatch?.[1]) {
-      setWorkspaceUuid(fileRouteMatch[1]);
-      if (readPreferredWorkspaceId() !== fileRouteMatch[1]) {
-        window.localStorage.setItem("preferredWorkspaceId", fileRouteMatch[1]);
-      }
-      return;
-    }
-
-    const preferredWorkspaceId = readPreferredWorkspaceId();
-    if (preferredWorkspaceId) {
-      setWorkspaceUuid(preferredWorkspaceId);
-      return;
-    }
-
-    const activeChatWorkspaceId = activeChatSlug
-      ? chats.find((chat) => chat.slug === activeChatSlug)?.workspaceId ?? null
-      : null;
-    if (activeChatWorkspaceId) {
-      setWorkspaceUuid(activeChatWorkspaceId);
-      return;
-    }
-
-    const fallbackWorkspaceId =
-      chats.find((chat) => chat.workspaceId)?.workspaceId ??
-      workspaces[0]?.workspaceId ??
-      null;
-    setWorkspaceUuid(fallbackWorkspaceId);
-  }, [activeChatSlug, chats, pathname, workspaces]);
-
-  useEffect(() => {
-    const onChatCreated = (event: Event) => {
-      const detail = (event as CustomEvent<ChatCreatedDetail>).detail;
-      if (!(detail?.id && detail?.title)) {
-        return;
-      }
-
-      setChats((prev) => {
-        if (prev.some((chat) => chat.slug === detail.id)) {
-          return prev;
-        }
-
-        const now = new Date().toISOString();
-        return [
-          {
-            branching: null,
-            createdAt: now,
-            id: detail.id,
-            lastMessageAt: now,
-            pinned: false,
-            slug: detail.id,
-            title: detail.title,
-            updatedAt: now,
-            workspaceId: workspaceUuid,
-          },
-          ...prev,
-        ];
-      });
-    };
-
     const onChatNameUpdated = (event: Event) => {
       const detail = (event as CustomEvent<ChatNameUpdatedDetail>).detail;
-      if (!(detail?.id && detail?.name)) {
+      if (!detail?.id || !detail?.name) {
         return;
       }
 
@@ -662,13 +469,11 @@ export function DashboardSidebar({
       );
     };
 
-    window.addEventListener(CHAT_CREATED_EVENT, onChatCreated);
     window.addEventListener(CHAT_NAME_UPDATED_EVENT, onChatNameUpdated);
     return () => {
-      window.removeEventListener(CHAT_CREATED_EVENT, onChatCreated);
       window.removeEventListener(CHAT_NAME_UPDATED_EVENT, onChatNameUpdated);
     };
-  }, [workspaceUuid]);
+  }, []);
 
   const sortedChats = useMemo(
     () =>
@@ -767,34 +572,6 @@ export function DashboardSidebar({
     void loadWorkspaces();
   }, [loadWorkspaces]);
 
-  const loadInvitations = useCallback(async () => {
-    try {
-      const response = await fetch("/api/workspaces/invitations", {
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        setInvitations([]);
-        return;
-      }
-      const payload = (await response.json()) as {
-        invitations?: Array<{
-          id: string;
-          organizationId: string;
-          organizationName: string;
-          inviterName: string | null;
-          inviterEmail: string;
-        }>;
-      };
-      setInvitations(payload.invitations ?? []);
-    } catch {
-      setInvitations([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadInvitations();
-  }, [loadInvitations]);
-
   const loadWorkspaceTree = useCallback(async (workspaceId: string) => {
     try {
       const response = await fetch(`/api/workspaces/${workspaceId}/tree`, {
@@ -874,11 +651,39 @@ export function DashboardSidebar({
     if (!expandedTreeStorageKey) {
       return;
     }
-    window.localStorage.setItem(
-      expandedTreeStorageKey,
-      JSON.stringify(Array.from(expandedTreePaths))
-    );
-  }, [expandedTreePaths, expandedTreeStorageKey]);
+
+    try {
+      const raw = window.localStorage.getItem(expandedTreeStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as string[];
+        if (Array.isArray(parsed)) {
+          setExpandedTreePaths(new Set(parsed));
+          setHasSavedExpandedTreeState(true);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setHydratedTreeStorageKey(expandedTreeStorageKey);
+    }
+  }, [expandedTreeStorageKey]);
+
+  useEffect(() => {
+    if (
+      !expandedTreeStorageKey ||
+      hydratedTreeStorageKey !== expandedTreeStorageKey
+    ) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        expandedTreeStorageKey,
+        JSON.stringify(Array.from(expandedTreePaths))
+      );
+    } catch (error) {
+      console.error("Failed to persist expanded tree paths", error);
+    }
+  }, [expandedTreePaths, expandedTreeStorageKey, hydratedTreeStorageKey]);
 
   useEffect(() => {
     if (activeView !== "files" || folderTree.length === 0) {
@@ -915,20 +720,22 @@ export function DashboardSidebar({
     }
 
     setExpandedTreePaths((previous) => {
-      const merged = new Set([...previous, ...nextExpanded]);
-      if (
-        merged.size === previous.size &&
-        Array.from(previous).every((id) => merged.has(id))
-      ) {
+      if (hasSavedExpandedTreeState || previous.size > 0) {
         return previous;
       }
-      return merged;
+      return new Set(nextExpanded);
     });
-  }, [activeView, currentFileId, currentFolderId, fileTree, folderTree]);
+  }, [
+    activeView,
+    currentFileId,
+    currentFolderId,
+    fileTree,
+    folderTree,
+    hasSavedExpandedTreeState,
+  ]);
 
   useEffect(() => {
     if (activeView !== "files") {
-      lastTreeRevealTargetRef.current = null;
       return;
     }
 
@@ -936,14 +743,17 @@ export function DashboardSidebar({
     if (!targetPath) {
       return;
     }
-    if (lastTreeRevealTargetRef.current === targetPath) {
-      return;
-    }
 
-    const timer = setTimeout(() => {
+    const RETRY_DELAY_MS = 80;
+    const MAX_WAIT_MS = 1_200;
+    const startedAt = Date.now();
+    let highlightTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryHighlightTarget = () => {
       const panel = fileTreePanelRef.current;
       const target = panel?.querySelector<HTMLElement>(
-        `[data-tree-id="${targetPath}"]`
+        `[data-tree-path="${targetPath}"]`
       );
       if (!target) {
         if (Date.now() - startedAt < MAX_WAIT_MS) {
@@ -951,14 +761,24 @@ export function DashboardSidebar({
         }
         return;
       }
-      lastTreeRevealTargetRef.current = targetPath;
+
       target.scrollIntoView({ block: "nearest" });
-    }, 180);
+      setHighlightedTreePath(targetPath);
+      highlightTimer = setTimeout(() => setHighlightedTreePath(null), 900);
+    };
+
+    retryTimer = setTimeout(tryHighlightTarget, RETRY_DELAY_MS);
 
     return () => {
-      clearTimeout(timer);
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+      setHighlightedTreePath(null);
+      if (highlightTimer) {
+        clearTimeout(highlightTimer);
+      }
     };
-  }, [activeView, currentFileId, currentFolderId, fileTree.length, folderTree.length]);
+  }, [activeView, currentFileId, currentFolderId]);
 
   useEffect(() => {
     if (activeView !== "files" || !workspaceUuid) {
@@ -973,31 +793,25 @@ export function DashboardSidebar({
         void loadWorkspaceTree(workspaceUuid);
       }
     };
+    const onSync = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceUuid?: string }>).detail;
+      if (!detail?.workspaceUuid || detail.workspaceUuid === workspaceUuid) {
+        refreshWorkspaceTreeDebounced(workspaceUuid);
+      }
+    };
+
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener(DASHBOARD_FILES_SYNC_EVENT, onSync);
 
     return () => {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener(DASHBOARD_FILES_SYNC_EVENT, onSync);
     };
-  }, [activeView, loadWorkspaceTree, workspaceUuid]);
-
-  useEffect(() => {
-    if (activeView !== "files" || !workspaceUuid || filesSyncVersion === 0) {
-      return;
-    }
-    if (filesSyncWorkspaceUuid && filesSyncWorkspaceUuid !== workspaceUuid) {
-      return;
-    }
-    if (filesSyncVersion <= processedSyncVersionRef.current) {
-      return;
-    }
-    processedSyncVersionRef.current = filesSyncVersion;
-    refreshWorkspaceTreeDebounced(workspaceUuid);
   }, [
     activeView,
-    filesSyncVersion,
-    filesSyncWorkspaceUuid,
+    loadWorkspaceTree,
     refreshWorkspaceTreeDebounced,
     workspaceUuid,
   ]);
@@ -1099,8 +913,24 @@ export function DashboardSidebar({
   }, [activeView, refreshWorkspaceTreeDebounced, workspaceUuid]);
 
   const createChat = async () => {
+    const data = await parseResponse<{ chat: ChatSummary }>(
+      await fetch("/api/chats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    if (!data?.chat) {
+      return;
+    }
+
+    setChats((prev) => [
+      data.chat,
+      ...prev.filter((chat) => chat.slug !== data.chat.slug),
+    ]);
     setView("chat");
-    router.push("/dashboard/chats/new" as Route);
+    router.push(`/dashboard/chats/${data.chat.slug}` as Route);
+    router.refresh();
   };
 
   const updateChat = async (
@@ -1217,45 +1047,6 @@ export function DashboardSidebar({
     await switchWorkspace(payload.workspace);
   };
 
-  const respondToInvitation = async (
-    invitationId: string,
-    action: "accept" | "decline"
-  ) => {
-    const response = await fetch(
-      `/api/workspaces/invitations/${invitationId}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      }
-    );
-    if (!response.ok) {
-      return;
-    }
-
-    const payload = (await response.json()) as {
-      organizationId?: string | null;
-      workspace?: {
-        workspaceId: string;
-        organizationId: string;
-        rootFolderId: string;
-        name: string;
-      } | null;
-    };
-
-    await loadInvitations();
-
-    if (action === "accept") {
-      if (payload.organizationId) {
-        await setActiveOrganization(payload.organizationId);
-      }
-      await loadWorkspaces();
-      if (payload.workspace) {
-        await switchWorkspace(payload.workspace);
-      }
-    }
-  };
-
   const isFolderDescendant = useCallback(
     (folderId: string, possibleDescendantId: string) => {
       const byId = new Map(folderTree.map((folder) => [folder.id, folder]));
@@ -1315,11 +1106,14 @@ export function DashboardSidebar({
       }
 
       await loadWorkspaceTree(workspaceUuid);
-      emitFilesSync(workspaceUuid);
+      window.dispatchEvent(
+        new CustomEvent(DASHBOARD_FILES_SYNC_EVENT, {
+          detail: { source: "sidebar", workspaceUuid, ts: Date.now() },
+        })
+      );
       router.refresh();
     },
     [
-      emitFilesSync,
       fileTree,
       folderTree,
       isFolderDescendant,
@@ -1329,329 +1123,8 @@ export function DashboardSidebar({
     ]
   );
 
-  const deleteTreeItems = useCallback(
-    async (items: Array<{ id: string; kind: "file" | "folder" }>) => {
-      if (!(workspaceUuid && items.length > 0)) {
-        return;
-      }
-
-      const response = await fetch(`/api/workspaces/${workspaceUuid}/items/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          operation: "delete",
-          items,
-        }),
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
-      if (
-        items.some(
-          (item) =>
-            (item.kind === "file" && item.id === currentFileId) ||
-            (item.kind === "folder" && item.id === currentFolderId)
-        )
-      ) {
-        void navigateToFilesRoot();
-      }
-
-      await loadWorkspaceTree(workspaceUuid);
-      emitFilesSync(workspaceUuid);
-      router.refresh();
-    },
-    [
-      currentFileId,
-      currentFolderId,
-      emitFilesSync,
-      loadWorkspaceTree,
-      navigateToFilesRoot,
-      router,
-      workspaceUuid,
-    ]
-  );
-
-  const sidebarTreeData = useMemo<TreeDataItem[]>(() => {
-    if (!workspaceUuid) {
-      return [];
-    }
-
-    const childrenByFolderId = new Map<string | null, TreeDataItem[]>();
-    const addChild = (parentId: string | null, item: TreeDataItem) => {
-      const existing = childrenByFolderId.get(parentId) ?? [];
-      existing.push(item);
-      childrenByFolderId.set(parentId, existing);
-    };
-
-    for (const folder of [...folderTree].sort((a, b) => a.name.localeCompare(b.name))) {
-      const folderItem: TreeDataItem = {
-        id: folder.id,
-        name: folder.name,
-        draggable: !folder.readOnly,
-        droppable: !folder.readOnly,
-        icon: TreeFolderClosedIcon,
-        openIcon: TreeFolderOpenIcon,
-        selectedIcon: TreeFolderOpenIcon,
-        onClick: () => {
-          router.push(`/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route);
-        },
-        actions: (
-          <>
-            {!folder.readOnly ? (
-              <Button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  router.push(`/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route);
-                  emitFilesIntent("uploadFile");
-                }}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <FilePlus2 className="size-3.5" />
-                <span className="sr-only">Upload file</span>
-              </Button>
-            ) : null}
-            {!folder.readOnly ? (
-              <Button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void deleteTreeItems([{ id: folder.id, kind: "folder" }]);
-                }}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <Trash2 className="size-3.5" />
-                <span className="sr-only">Delete folder</span>
-              </Button>
-            ) : null}
-          </>
-        ),
-      };
-      addChild(folder.parentId, folderItem);
-    }
-
-    for (const file of [...fileTree].sort((a, b) => a.name.localeCompare(b.name))) {
-      const FileIcon = () => getTreeFileIcon(file.name);
-      addChild(file.folderId, {
-        id: file.id,
-        name: file.name,
-        draggable: !file.readOnly,
-        icon: FileIcon,
-        onClick: () => {
-          router.push(
-            `/dashboard/files/${workspaceUuid}/folder/${file.folderId}?file=${file.id}` as Route
-          );
-        },
-        actions: !file.readOnly ? (
-          <Button
-            onClick={(event) => {
-              event.stopPropagation();
-              void deleteTreeItems([{ id: file.id, kind: "file" }]);
-            }}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <Trash2 className="size-3.5" />
-            <span className="sr-only">Delete file</span>
-          </Button>
-        ) : null,
-      });
-    }
-
-    const attachChildren = (parentId: string | null): TreeDataItem[] =>
-      (childrenByFolderId.get(parentId) ?? []).map((item) => ({
-        ...item,
-        children: attachChildren(item.id),
-      }));
-
-    return attachChildren(null);
-  }, [
-    deleteTreeItems,
-    emitFilesIntent,
-    fileTree,
-    folderTree,
-    router,
-    workspaceUuid,
-  ]);
-
-  useHotkey(
-    "Mod+1",
-    (event) => {
-      event.preventDefault();
-      if (!pathname.startsWith("/dashboard/chats/")) {
-        const chatSlug = activeChatSlug || chats[0]?.slug;
-        if (chatSlug) {
-          router.push(`/dashboard/chats/${chatSlug}` as Route);
-          return;
-        }
-        router.push("/dashboard/chats/new" as Route);
-        return;
-      }
-      setView("chat");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+2",
-    (event) => {
-      event.preventDefault();
-      setView("flashcards");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+3",
-    (event) => {
-      event.preventDefault();
-      if (!pathname.startsWith("/dashboard/files")) {
-        void navigateToFilesRoot();
-        return;
-      }
-      setView("files");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+N",
-    (event) => {
-      event.preventDefault();
-      setEditingChatSlug(null);
-      setEditingTitle("");
-      void createChat();
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+K",
-    (event) => {
-      event.preventDefault();
-      if (activeView !== "files") {
-        void navigateToFilesRoot();
-        return;
-      }
-      emitFilesIntent("focusSearch");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+Shift+N",
-    (event) => {
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("createFolder");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+U",
-    (event) => {
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("uploadFile");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+Shift+U",
-    (event) => {
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("uploadFolder");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+O",
-    (event) => {
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("openSelection");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Delete",
-    (event) => {
-      if (isTypingTarget(event.target)) {
-        return;
-      }
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("deleteSelection");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Alt+ArrowLeft",
-    (event) => {
-      if (isTypingTarget(event.target)) {
-        return;
-      }
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("goParent");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+Shift+M",
-    (event) => {
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("moveSelectionUp");
-    },
-    { ignoreInputs: true }
-  );
-
-  useHotkey(
-    "Mod+Shift+O",
-    (event) => {
-      event.preventDefault();
-      if (activeView !== "files") {
-        return;
-      }
-      emitFilesIntent("newNote");
-    },
-    { ignoreInputs: true }
-  );
-
   return (
     <Sidebar variant="inset" {...props}>
-      <SidebarHeader className="pb-0">
-        <div className="flex items-center justify-end px-2 pt-1">
-          <SidebarTrigger className="rounded-md" />
-        </div>
-      </SidebarHeader>
       <SidebarContent>
         <TooltipProvider delay={280}>
           <SidebarGroup className="px-2 pb-1">
@@ -1664,7 +1137,6 @@ export function DashboardSidebar({
                 { value: "flashcards", label: "Flashcards", icon: Sparkles },
                 { value: "files", label: "Files", icon: Files },
               ]}
-              persistenceKey="dashboard-workspace-tabs"
               onValueChange={(nextValue) => {
                 if (!nextValue) {
                   return;
@@ -1798,7 +1270,7 @@ export function DashboardSidebar({
               </div>
             ) : activeView === "files" ? (
               <div
-                className="absolute inset-0 flex flex-col overflow-hidden"
+                className="absolute inset-0 overflow-y-auto"
                 ref={fileTreePanelRef}
               >
                 <SidebarGroup>
@@ -1809,92 +1281,89 @@ export function DashboardSidebar({
                         icon={FilePlus2}
                         label="New Note"
                         onClick={() => {
-                          emitFilesIntent("newNote");
+                          window.dispatchEvent(
+                            new Event(DASHBOARD_FILES_NEW_NOTE_EVENT)
+                          );
                         }}
                       />
                       <SectionButton
                         icon={Search}
                         label="Search Files"
                         onClick={() => {
-                          emitFilesIntent("focusSearch");
+                          window.dispatchEvent(
+                            new Event(DASHBOARD_FILES_FOCUS_SEARCH_EVENT)
+                          );
                         }}
                       />
                     </SidebarMenu>
                   </SidebarGroupContent>
                 </SidebarGroup>
 
-	                <SidebarGroup className="min-h-0 flex-1">
-	                  {workspaceUuid && (pinnedFolders.length > 0 || pinnedFiles.length > 0) ? (
-	                    <>
-	                      <SidebarGroupLabel>Pinned</SidebarGroupLabel>
-	                      <SidebarGroupContent>
-	                        <SidebarMenu>
-	                          {pinnedFolders.map((item) => (
-	                            <SidebarMenuItem key={`pinned-folder-${item.id}`}>
-	                              <SidebarMenuButton
-	                                onClick={() => {
-	                                  router.push(
-	                                    `/dashboard/files/${item.workspaceId}/folder/${item.id}` as Route
-	                                  );
-	                                }}
-	                              >
-	                                <Pin className="size-4" />
-	                                <span className="truncate">{item.name}</span>
-	                              </SidebarMenuButton>
-	                            </SidebarMenuItem>
-	                          ))}
-	                          {pinnedFiles.map((item) => (
-	                            <SidebarMenuItem key={`pinned-file-${item.id}`}>
-	                              <SidebarMenuButton
-	                                onClick={() => {
-	                                  if (!item.folderId) {
-	                                    return;
-	                                  }
-	                                  router.push(
-	                                    `/dashboard/files/${item.workspaceId}/folder/${item.folderId}?file=${item.id}` as Route
-	                                  );
-	                                }}
-	                              >
-	                                <Pin className="size-4" />
-	                                <span className="truncate">{item.name}</span>
-	                              </SidebarMenuButton>
-	                            </SidebarMenuItem>
-	                          ))}
-	                        </SidebarMenu>
-	                      </SidebarGroupContent>
-	                    </>
-	                  ) : null}
-	                  <SidebarGroupLabel>File Tree</SidebarGroupLabel>
-                  <SidebarGroupContent className="min-h-0">
+                <SidebarGroup>
+                  <SidebarGroupLabel>File Tree</SidebarGroupLabel>
+                  <SidebarGroupContent>
                     {workspaceUuid && folderTree.length > 0 ? (
-                      <div className="h-full overflow-y-auto pr-1">
-                        <TreeView
-                          className="rounded-xl"
-                          data={sidebarTreeData}
-                          initialExpandedItemIds={expandedTreePathIds}
-                          initialSelectedItemId={currentFileId ?? currentFolderId}
-                          onExpandedChange={(itemIds) => {
-                            setExpandedTreePaths(new Set(itemIds));
-                          }}
-                          onMoveItem={(draggedItemId, targetItemId) => {
-                            const draggedFolder = folderTree.find((item) => item.id === draggedItemId);
-                            if (draggedFolder) {
-                              void moveTreeItem({ id: draggedItemId, kind: "folder" }, targetItemId);
+                      <FileTree
+                        className="border-none bg-transparent"
+                        expanded={expandedTreePaths}
+                        onExpandedChange={setExpandedTreePaths}
+                        onSelect={(path) => {
+                          if (!workspaceUuid) {
+                            return;
+                          }
+
+                          const folder = folderTree.find(
+                            (entry) => entry.id === path
+                          );
+                          if (folder) {
+                            router.push(
+                              `/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route
+                            );
+                            return;
+                          }
+
+                          const file = fileTree.find(
+                            (entry) => entry.id === path
+                          );
+                          if (file) {
+                            router.push(
+                              `/dashboard/files/${workspaceUuid}/folder/${file.folderId}?file=${file.id}` as Route
+                            );
+                          }
+                        }}
+                        selectedPath={currentFileId ?? currentFolderId}
+                      >
+                        {renderWorkspaceTree({
+                          files: fileTree,
+                          folders: folderTree,
+                          onDragStart: (event, item) => {
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", item.id);
+                            event.dataTransfer.setDragImage(
+                              getDragPreviewPixel(dragPreviewPixelRef),
+                              0,
+                              0
+                            );
+                            setDraggedTreeItem(item);
+                          },
+                          onDragEnd: () => {
+                            setDraggedTreeItem(null);
+                            setTreeDropFolderId(null);
+                          },
+                          onDropToFolder: (folderId) => {
+                            if (!draggedTreeItem) {
                               return;
                             }
-                            const draggedFile = fileTree.find((item) => item.id === draggedItemId);
-                            if (draggedFile) {
-                              void moveTreeItem({ id: draggedItemId, kind: "file" }, targetItemId);
-                            }
-                          }}
-                          onSelectChange={(item) => {
-                            if (!item) {
-                              return;
-                            }
-                            item.onClick?.();
-                          }}
-                        />
-                      </div>
+                            void moveTreeItem(draggedTreeItem, folderId);
+                            setDraggedTreeItem(null);
+                            setTreeDropFolderId(null);
+                          },
+                          onDragTargetChange: (folderId) =>
+                            setTreeDropFolderId(folderId),
+                          highlightedPath: highlightedTreePath,
+                          treeDropFolderId,
+                        })}
+                      </FileTree>
                     ) : (
                       <SidebarMenu>
                         <SidebarMenuItem>
@@ -1932,63 +1401,135 @@ export function DashboardSidebar({
         </TooltipProvider>
       </SidebarContent>
       <SidebarFooter>
-        <div className="mb-2 flex items-center justify-between gap-2 px-2">
-          <div className="flex items-center gap-1">
-            <Button
-              className="h-8 w-8"
-              onClick={() => setTrashOpen(true)}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              <Trash2 className="size-4" />
-              <span className="sr-only">Open trash</span>
-            </Button>
-            <Button
-              className="h-8 w-8"
-              onClick={() => toggleUploadActivityOpen()}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              <Waves className="size-4" />
-              <span className="sr-only">Open upload activity</span>
-            </Button>
-            <Button
-              className="h-8 w-8"
-              onClick={() => setSettingsOpen(true)}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              <Settings className="size-4" />
-              <span className="sr-only">Open settings</span>
-            </Button>
-          </div>
-        </div>
         <NavUser
           activeWorkspaceId={workspaceUuid}
-          invitations={invitations}
-          onAcceptInvitation={(invitationId) => {
-            void respondToInvitation(invitationId, "accept");
-          }}
           onCreateWorkspace={createWorkspace}
-          onDeclineInvitation={(invitationId) => {
-            void respondToInvitation(invitationId, "decline");
-          }}
           onSwitchWorkspace={(workspace) => {
             void switchWorkspace(workspace);
           }}
           user={user}
           workspaces={workspaces}
         />
-        <SettingsDialog onOpenChange={setSettingsOpen} open={settingsOpen} />
-        <TrashDialog
-          onOpenChange={setTrashOpen}
-          open={trashOpen}
-          workspaceUuid={workspaceUuid}
-        />
       </SidebarFooter>
     </Sidebar>
   );
+}
+
+function renderWorkspaceTree(input: {
+  folders: Array<{
+    id: string;
+    name: string;
+    parentId: string | null;
+    readOnly?: boolean;
+  }>;
+  files: Array<{
+    id: string;
+    name: string;
+    folderId: string;
+    readOnly?: boolean;
+  }>;
+  treeDropFolderId: string | null;
+  highlightedPath: string | null;
+  onDragStart: (
+    event: DragEvent<HTMLDivElement>,
+    item: { id: string; kind: "file" | "folder" }
+  ) => void;
+  onDragEnd: () => void;
+  onDropToFolder: (folderId: string) => void;
+  onDragTargetChange: (folderId: string | null) => void;
+}): ReactNode {
+  const renderChildren = (parentId: string | null): ReactNode => {
+    const folders = input.folders
+      .filter((folder) => folder.parentId === parentId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return folders.map((folder, folderIndex) => (
+      <FileTreeFolder
+        className={cn(
+          "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-150",
+          input.treeDropFolderId === folder.id
+            ? "rounded-md bg-emerald-500/10 outline outline-1 outline-emerald-400/70"
+            : "",
+          input.highlightedPath === folder.id
+            ? "rounded bg-emerald-500/10 ring-1 ring-emerald-400/60"
+            : ""
+        )}
+        draggable={!folder.readOnly}
+        key={folder.id}
+        name={folder.name}
+        onDragEnd={() => {
+          input.onDragTargetChange(null);
+          input.onDragEnd();
+        }}
+        onDragLeave={() => input.onDragTargetChange(null)}
+        onDragOver={(event) => {
+          if (folder.readOnly) {
+            return;
+          }
+          event.preventDefault();
+          input.onDragTargetChange(folder.id);
+        }}
+        onDragStart={(event) => {
+          if (folder.readOnly) {
+            return;
+          }
+          input.onDragStart(event, { id: folder.id, kind: "folder" });
+        }}
+        onDrop={(event) => {
+          if (folder.readOnly) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          input.onDropToFolder(folder.id);
+        }}
+        path={folder.id}
+        style={{
+          animationDelay: `${folderIndex * 18}ms`,
+        }}
+      >
+        {renderChildren(folder.id)}
+        {input.files
+          .filter((file) => file.folderId === folder.id)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((file, fileIndex) => (
+            <FileTreeFile
+              className={cn(
+                "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-150",
+                input.highlightedPath === file.id
+                  ? "rounded bg-emerald-500/10 ring-1 ring-emerald-400/60"
+                  : ""
+              )}
+              draggable={!file.readOnly}
+              key={file.id}
+              name={file.name}
+              onDragStart={(event) => {
+                if (file.readOnly) {
+                  return;
+                }
+                input.onDragStart(event, { id: file.id, kind: "file" });
+              }}
+              onDragEnd={() => input.onDragEnd()}
+              path={file.id}
+              style={{
+                animationDelay: `${fileIndex * 16}ms`,
+              }}
+            >
+              <div className="flex min-w-0 items-center gap-1 rounded px-2 py-1 hover:bg-muted/50">
+                <span className="size-4" />
+                {getTreeFileIcon(file.name)}
+                <span
+                  className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm"
+                  title={file.name}
+                >
+                  {file.name}
+                </span>
+              </div>
+            </FileTreeFile>
+          ))}
+      </FileTreeFolder>
+    ));
+  };
+
+  return renderChildren(null);
 }

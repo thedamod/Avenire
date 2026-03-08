@@ -1,31 +1,18 @@
-import type { InferUITools, UIMessage as DefaultUIMessage } from "ai";
-
-type ChatUIData = {
-  plan: {
-    id: string;
-    task: {
-      id: string;
-      status: boolean;
-    };
-  };
-  chatName: {
-    id: string;
-    name: string;
-  };
-  chatCreated: {
-    fromId: string;
-    id: string;
-    title: string;
-  };
-  artifactCreated: {
-    artifactId: string;
-    chatId: string;
-    kind: string;
-    toolName: string;
-  };
-};
+import type { UIMessage as DefaultUIMessage } from "ai";
 
 export type UIMessage = DefaultUIMessage<
-  unknown,
-  ChatUIData
+  never,
+  {
+    plan: {
+      id: string;
+      task: {
+        id: string;
+        status: boolean;
+      };
+    };
+    chatName: {
+      id: string;
+      name: string;
+    };
+  }
 >;

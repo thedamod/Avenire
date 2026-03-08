@@ -1,22 +1,89 @@
 "use client";
 
-import { Badge } from "@avenire/ui/components/badge";
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@avenire/ui/components/breadcrumb";
+  type TouchEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowUpDown,
+  ArrowUp,
+  CalendarDays,
+  CheckCircle2,
+  FileArchive,
+  FileCode2,
+  FileImage,
+  FileMusic,
+  FileSpreadsheet,
+  FileText,
+  FileVideo,
+  Folder,
+  Grid3X3,
+  LayoutList,
+  Share2,
+  Upload,
+  UserRoundSearch,
+  XCircle,
+} from "lucide-react";
+import {
+  FileCard,
+  PdfThumbnail,
+  VideoThumbnail,
+} from "@/components/files/file-card-thumbnail";
+import {
+  StylizedSearchBar,
+  type WorkspaceSearchItem,
+} from "@/components/files/stylized-search-bar";
+import type { Route } from "next";
+import dynamic from "next/dynamic";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
+import { Checkbox } from "@avenire/ui/components/checkbox";
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from "@avenire/ui/components/card";
-import { Checkbox } from "@avenire/ui/components/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@avenire/ui/components/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@avenire/ui/components/dialog";
+import { Input } from "@avenire/ui/components/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@avenire/ui/components/popover";
+import {
+  Progress,
+  ProgressLabel,
+  ProgressValue,
+} from "@avenire/ui/components/progress";
+import { Calendar } from "@avenire/ui/components/calendar";
+import { Skeleton } from "@avenire/ui/components/skeleton";
+import { SidebarTrigger } from "@avenire/ui/components/sidebar";
+import { Spinner } from "@avenire/ui/components/spinner";
+import { FileMediaPlayer } from "@avenire/ui/media";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -27,85 +94,10 @@ import {
   ContextMenuTrigger,
 } from "@avenire/ui/components/context-menu";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@avenire/ui/components/dropdown-menu";
-import { Input } from "@avenire/ui/components/input";
-import { Label } from "@avenire/ui/components/label";
-import { Skeleton } from "@avenire/ui/components/skeleton";
-import { Spinner } from "@avenire/ui/components/spinner";
-import { FileMediaPlayer } from "@avenire/ui/media";
-import {
-  AlertCircle,
-  ArrowDownToLine,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  ArrowUpDown,
-  CheckCircle2,
-  Copy,
-  FileArchive,
-  FileAudio2,
-  FileCode2,
-  FileImage,
-  FilePlus2,
-  FileSpreadsheet,
-  FileText,
-  FileVideo,
-  Folder,
-  FolderInput,
-  Grid3X3,
-  House,
-  Info,
-  LayoutList,
-  MoreHorizontal,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  Share2,
-  Trash2,
-  Upload,
-  XCircle,
-} from "lucide-react";
-import type { Route } from "next";
-import dynamic from "next/dynamic";
-import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
-import {
-  type TouchEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import {
-  FileCard,
-  PdfThumbnail,
-  VideoThumbnail,
-} from "@/components/files/file-card-thumbnail";
-import {
-  StylizedSearchBar,
-  type WorkspaceSearchItem,
-  type WorkspaceSearchResult,
-} from "@/components/files/stylized-search-bar";
-import { EmailSuggestionInput } from "@/components/shared/email-suggestion-input";
-import { useFileSelection } from "@/hooks/use-file-selection";
+  DASHBOARD_FILES_FOCUS_SEARCH_EVENT,
+  DASHBOARD_FILES_NEW_NOTE_EVENT,
+  DASHBOARD_FILES_SYNC_EVENT,
+} from "@/lib/file-events";
 import {
   getWarmState,
   isFileOpenedCached,
@@ -113,15 +105,10 @@ import {
   primeFilePreview,
   releasePreviewPrime,
 } from "@/lib/file-preview-cache";
+import { useFileSelection } from "@/hooks/use-file-selection";
 import { useUploadThing } from "@/lib/uploadthing";
 import type { ShareSuggestion } from "@/types/share";
 import { cn } from "@/lib/utils";
-import {
-  type PinnedExplorerItem,
-  useFilesPinsStore,
-} from "@/stores/filesPinsStore";
-import { useFilesUiStore } from "@/stores/filesUiStore";
-import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
 
 const PDFViewer = dynamic(() => import("@/components/files/pdf-viewer"), {
   loading: () => (
@@ -132,12 +119,8 @@ const PDFViewer = dynamic(() => import("@/components/files/pdf-viewer"), {
   ssr: false,
 });
 
-type UploadStatus =
-  | "failed"
-  | "ingesting"
-  | "queued"
-  | "uploaded"
-  | "uploading";
+type UploadStatus = "failed" | "queued" | "uploaded" | "uploading";
+type CalendarDateRange = { from: Date | undefined; to?: Date };
 type FileKind =
   | "archive"
   | "audio"
@@ -148,112 +131,46 @@ type FileKind =
   | "sheet"
   | "video";
 const FILE_EXPLORER_VIEW_MODE_KEY = "file-explorer-view-mode";
-const FILE_RETRIEVAL_CONTEXT_KEY = "file-explorer-retrieval-context-v1";
 
 interface FolderRecord {
-  bannerUrl?: string | null;
-  createdAt?: string;
-  createdBy?: string;
   id: string;
-  iconColor?: string | null;
-  isShared?: boolean;
   name: string;
   parentId: string | null;
-  readOnly?: boolean;
-  updatedAt?: string;
+  createdBy?: string;
   updatedBy?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  isShared?: boolean;
+  readOnly?: boolean;
 }
 
 interface FileRecord {
-  createdAt: string;
-  folderId: string;
   id: string;
-  isIngested?: boolean;
-  isShared?: boolean;
-  mimeType: string | null;
+  folderId: string;
   name: string;
-  readOnly?: boolean;
-  sizeBytes: number;
-  sourceWorkspaceId?: string;
   storageUrl: string;
-  updatedAt?: string;
-  updatedBy?: string | null;
+  mimeType: string | null;
+  sizeBytes: number;
   uploadedBy?: string;
+  updatedBy?: string | null;
+  createdAt: string;
+  isShared?: boolean;
+  readOnly?: boolean;
+  sourceWorkspaceId?: string;
+  updatedAt?: string;
 }
 
 interface UploadQueueItem {
-  contentHashSha256?: string;
   error?: string;
-  failureCount?: number;
-  fileId?: string;
   id: string;
-  ingestionJobId?: string;
   name: string;
   sizeLabel: string;
   status: UploadStatus;
-  storageKey?: string;
 }
 
 interface UploadCandidate {
   file: File;
   relativePath?: string;
-}
-
-type BulkItemKind = "file" | "folder";
-
-interface BulkMutationResult {
-  error?: string;
-  id: string;
-  kind: BulkItemKind;
-  status: "failed" | "ok";
-}
-
-interface BulkMutationResponse {
-  results?: BulkMutationResult[];
-  summary?: {
-    failed?: number;
-    succeeded?: number;
-    total?: number;
-  };
-}
-
-interface UploadResultLike {
-  contentType?: string;
-  key?: string;
-  name?: string;
-  size?: number;
-  ufsUrl?: string;
-}
-
-interface BulkRegisterResponse {
-  results?: Array<{
-    clientUploadId: string;
-    error?: string;
-    file?: { id?: string };
-    ingestionJob?: { id?: string } | null;
-    status: "failed" | "ok";
-  }>;
-  summary?: {
-    failed?: number;
-    succeeded?: number;
-    total?: number;
-  };
-}
-
-interface WorkspaceMemberRecord {
-  email: string | null;
-  id: string | null;
-  name: string | null;
-  role: string;
-  userId: string | null;
-}
-
-interface DedupeLookupResponse {
-  results?: Array<{
-    clientUploadId: string;
-    deduped: boolean;
-    file?: { id?: string };
-  }>;
 }
 
 interface WebkitFileSystemEntry {
@@ -313,179 +230,9 @@ function toUpdatedLabel(isoDate: string): string {
   return `${weeks}w`;
 }
 
-const DEFAULT_FOLDER_BANNER_URL = "/images/folder-banner-default.svg";
-
-function rgbToHex(value: number): string {
-  return Math.max(0, Math.min(255, Math.round(value)))
-    .toString(16)
-    .padStart(2, "0");
-}
-
-async function extractImageAccentColor(file: File): Promise<string | null> {
-  const objectUrl = URL.createObjectURL(file);
-
-  try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const nextImage = new Image();
-      nextImage.onload = () => resolve(nextImage);
-      nextImage.onerror = () => reject(new Error("Unable to read banner image."));
-      nextImage.src = objectUrl;
-    });
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      return null;
-    }
-
-    const sampleWidth = 48;
-    const sampleHeight = 48;
-    canvas.width = sampleWidth;
-    canvas.height = sampleHeight;
-    ctx.drawImage(image, 0, 0, sampleWidth, sampleHeight);
-
-    const { data } = ctx.getImageData(0, 0, sampleWidth, sampleHeight);
-    let totalRed = 0;
-    let totalGreen = 0;
-    let totalBlue = 0;
-    let totalWeight = 0;
-
-    for (let index = 0; index < data.length; index += 4) {
-      const alpha = data[index + 3] / 255;
-      if (alpha < 0.02) {
-        continue;
-      }
-
-      totalRed += data[index] * alpha;
-      totalGreen += data[index + 1] * alpha;
-      totalBlue += data[index + 2] * alpha;
-      totalWeight += alpha;
-    }
-
-    if (totalWeight === 0) {
-      return null;
-    }
-
-    return `#${rgbToHex(totalRed / totalWeight)}${rgbToHex(totalGreen / totalWeight)}${rgbToHex(totalBlue / totalWeight)}`;
-  } catch {
-    return null;
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
 function getExtension(name: string) {
   const index = name.lastIndexOf(".");
   return index >= 0 ? name.slice(index).toLowerCase() : "";
-}
-
-function chunkArray<T>(values: T[], chunkSize: number): T[][] {
-  const out: T[][] = [];
-  const safeChunkSize = Math.max(1, Math.floor(chunkSize));
-
-  for (let index = 0; index < values.length; index += safeChunkSize) {
-    out.push(values.slice(index, index + safeChunkSize));
-  }
-
-  return out;
-}
-
-function normalizeRelativePath(
-  relativePath: string | undefined,
-  file: File
-): string {
-  const raw = (
-    relativePath && relativePath.trim().length > 0 ? relativePath : file.name
-  ).trim();
-  return raw
-    .replaceAll("\\", "/")
-    .replace(/^\.\/+/, "")
-    .replace(/\/+/g, "/");
-}
-
-function isSkippableUploadArtifact(pathLike: string): boolean {
-  const normalized = pathLike.trim().replaceAll("\\", "/");
-  const baseName = normalized.split("/").pop()?.toLowerCase() ?? "";
-  if (!baseName) {
-    return true;
-  }
-
-  if (baseName === ".ds_store" || baseName === "thumbs.db") {
-    return true;
-  }
-  if (baseName === "zone.identifier" || baseName.endsWith(":zone.identifier")) {
-    return true;
-  }
-
-  return false;
-}
-
-function sanitizeUploadCandidates(
-  candidates: UploadCandidate[]
-): UploadCandidate[] {
-  const seen = new Set<string>();
-  const out: UploadCandidate[] = [];
-
-  for (const candidate of candidates) {
-    const normalizedPath = normalizeRelativePath(
-      candidate.relativePath,
-      candidate.file
-    );
-    if (isSkippableUploadArtifact(normalizedPath)) {
-      continue;
-    }
-
-    const dedupeKey = `${normalizedPath.toLowerCase()}::${candidate.file.size}::${candidate.file.lastModified}`;
-    if (seen.has(dedupeKey)) {
-      continue;
-    }
-    seen.add(dedupeKey);
-
-    out.push({
-      file: candidate.file,
-      relativePath: normalizedPath,
-    });
-  }
-
-  return out;
-}
-
-async function computeSha256Hex(file: File): Promise<string | null> {
-  if (!(globalThis.crypto?.subtle && typeof file.arrayBuffer === "function")) {
-    return null;
-  }
-
-  try {
-    const buffer = await file.arrayBuffer();
-    const digest = await globalThis.crypto.subtle.digest("SHA-256", buffer);
-    return Array.from(new Uint8Array(digest))
-      .map((value) => value.toString(16).padStart(2, "0"))
-      .join("");
-  } catch {
-    return null;
-  }
-}
-
-const DEFAULT_CLIENT_HASH_MAX_BYTES = 12 * 1024 * 1024;
-
-function resolveClientHashMaxBytes() {
-  const parsed = Number.parseInt(
-    process.env.NEXT_PUBLIC_UPLOAD_DEDUPE_HASH_MAX_BYTES ?? "",
-    10
-  );
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    return DEFAULT_CLIENT_HASH_MAX_BYTES;
-  }
-  return parsed;
-}
-
-const CLIENT_HASH_MAX_BYTES = resolveClientHashMaxBytes();
-const ENABLE_PREUPLOAD_DEDUPE =
-  (process.env.NEXT_PUBLIC_UPLOAD_PREUPLOAD_DEDUPE ?? "false").toLowerCase() ===
-  "true";
-
-function shouldHashForClientDedupe(file: File) {
-  return file.size > 0 && file.size <= CLIENT_HASH_MAX_BYTES;
 }
 
 function detectPreviewKind(file: FileRecord) {
@@ -556,9 +303,9 @@ function detectFileKind(file: FileRecord): FileKind {
     ".html",
     ".css",
     ".scss",
+    ".md",
     ".sql",
   ]);
-  const markdownExt = new Set([".md", ".mdx"]);
   const archiveExt = new Set([
     ".zip",
     ".rar",
@@ -574,9 +321,6 @@ function detectFileKind(file: FileRecord): FileKind {
     return "image";
   }
   if (mime === "application/pdf" || ext === ".pdf") {
-    return "document";
-  }
-  if (mime.includes("markdown") || markdownExt.has(ext)) {
     return "document";
   }
   if (mime.startsWith("video/") || videoExt.has(ext)) {
@@ -600,54 +344,19 @@ function detectFileKind(file: FileRecord): FileKind {
 function getFileTypeIcon(kind: FileKind, className = "size-3.5") {
   switch (kind) {
     case "image":
-      return (
-        <FileImage
-          aria-hidden="true"
-          className={cn(className, "shrink-0 text-primary")}
-        />
-      );
+      return <FileImage className={cn(className, "text-emerald-600")} />;
     case "video":
-      return (
-        <FileVideo
-          aria-hidden="true"
-          className={cn(className, "shrink-0 text-primary")}
-        />
-      );
+      return <FileVideo className={cn(className, "text-violet-600")} />;
     case "audio":
-      return (
-        <FileAudio2
-          aria-hidden="true"
-          className={cn(className, "shrink-0 text-primary")}
-        />
-      );
+      return <FileMusic className={cn(className, "text-indigo-600")} />;
     case "sheet":
-      return (
-        <FileSpreadsheet
-          aria-hidden="true"
-          className={cn(className, "shrink-0 text-primary")}
-        />
-      );
+      return <FileSpreadsheet className={cn(className, "text-lime-700")} />;
     case "code":
-      return (
-        <FileCode2
-          aria-hidden="true"
-          className={cn(className, "shrink-0 text-primary")}
-        />
-      );
+      return <FileCode2 className={cn(className, "text-sky-600")} />;
     case "archive":
-      return (
-        <FileArchive
-          aria-hidden="true"
-          className={cn(className, "shrink-0 text-primary")}
-        />
-      );
+      return <FileArchive className={cn(className, "text-amber-600")} />;
     default:
-      return (
-        <FileText
-          aria-hidden="true"
-          className={cn(className, "shrink-0 text-muted-foreground")}
-        />
-      );
+      return <FileText className={cn(className, "text-muted-foreground")} />;
   }
 }
 
@@ -671,12 +380,6 @@ function statusMeta(status: UploadStatus) {
         label: "Uploaded",
         progress: 100,
       };
-    case "ingesting":
-      return {
-        icon: <Spinner className="size-3.5" />,
-        label: "Ingesting",
-        progress: 80,
-      };
     case "failed":
       return {
         icon: <XCircle className="size-3.5 text-destructive" />,
@@ -694,12 +397,10 @@ function statusMeta(status: UploadStatus) {
 
 export function FileExplorer() {
   const router = useRouter();
-  const pathname = usePathname();
   const params = useParams<{ workspaceUuid: string; folderUuid: string }>();
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const bannerInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const touchDragIdsRef = useRef<string[] | null>(null);
@@ -708,9 +409,6 @@ export function FileExplorer() {
   const queueFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sseRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const ingestionSseRetryTimerRef = useRef<ReturnType<
-    typeof setTimeout
-  > | null>(null);
 
   const workspaceUuid = params.workspaceUuid;
   const currentFolderId = params.folderUuid;
@@ -720,14 +418,16 @@ export function FileExplorer() {
   const [sortBy, setSortBy] = useState<"name" | "createdAt" | "updatedAt">(
     "name"
   );
+  const [createdDateRange, setCreatedDateRange] = useState<
+    CalendarDateRange | undefined
+  >(undefined);
+  const [fileTypeFilter, setFileTypeFilter] = useState<Set<string>>(new Set());
+  const [actorMode, setActorMode] = useState<"uploadedBy" | "updatedBy">(
+    "uploadedBy"
+  );
+  const [actorFilter, setActorFilter] = useState<Set<string>>(new Set());
   const [vectorFilteredIds, setVectorFilteredIds] =
     useState<Set<string> | null>(null);
-  const [retrievalResults, setRetrievalResults] = useState<
-    WorkspaceSearchResult[]
-  >([]);
-  const [activeRetrievalChunkId, setActiveRetrievalChunkId] = useState<
-    string | null
-  >(null);
   const [allFolders, setAllFolders] = useState<FolderRecord[]>([]);
   const [allFiles, setAllFiles] = useState<FileRecord[]>([]);
   const [folders, setFolders] = useState<FolderRecord[]>([]);
@@ -743,9 +443,6 @@ export function FileExplorer() {
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
-  const [fileSharePermission, setFileSharePermission] = useState<
-    "viewer" | "editor"
-  >("viewer");
   const [workspaceShareEmail, setWorkspaceShareEmail] = useState("");
   const [workspaceShareSuggestions, setWorkspaceShareSuggestions] = useState<
     ShareSuggestion[]
@@ -754,22 +451,6 @@ export function FileExplorer() {
   const [workspaceShareStatus, setWorkspaceShareStatus] = useState<
     string | null
   >(null);
-  const [folderShareEmail, setFolderShareEmail] = useState("");
-  const [folderShareSuggestions, setFolderShareSuggestions] = useState<
-    ShareSuggestion[]
-  >([]);
-  const [folderShareBusy, setFolderShareBusy] = useState(false);
-  const [folderShareLink, setFolderShareLink] = useState<string | null>(null);
-  const [folderShareStatus, setFolderShareStatus] = useState<string | null>(
-    null
-  );
-  const [folderSharePermission, setFolderSharePermission] = useState<
-    "viewer" | "editor"
-  >("viewer");
-  const [workspaceMembers, setWorkspaceMembers] = useState<
-    WorkspaceMemberRecord[]
-  >([]);
-  const [workspaceName, setWorkspaceName] = useState("Workspace");
   const [canvasDropActive, setCanvasDropActive] = useState(false);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [draggingIds, setDraggingIds] = useState<string[]>([]);
@@ -781,7 +462,6 @@ export function FileExplorer() {
     string | null
   >(null);
   const [sseConnected, setSseConnected] = useState(false);
-  const [bannerUploadBusy, setBannerUploadBusy] = useState(false);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
   const [propertiesItem, setPropertiesItem] = useState<{
     kind: "file" | "folder";
@@ -808,87 +488,15 @@ export function FileExplorer() {
   }, []);
 
   const { startUpload } = useUploadThing("fileExplorerUploader");
-  const { startUpload: startBannerUpload } = useUploadThing("imageUploader");
   const selection = useFileSelection({ gridRef, itemRefs });
-  const emitFilesIntent = useFilesUiStore((state) => state.emitIntent);
-  const emitFilesSync = useFilesUiStore((state) => state.emitSync);
-  const recordRoute = useWorkspaceHistoryStore((state) => state.recordRoute);
-  const historyEntries = useWorkspaceHistoryStore((state) => state.entries);
-  const historyIndex = useWorkspaceHistoryStore((state) => state.index);
-  const backRoute =
-    historyIndex > 0 ? historyEntries[historyIndex - 1] ?? null : null;
-  const forwardRoute =
-    historyIndex >= 0 && historyIndex < historyEntries.length - 1
-      ? historyEntries[historyIndex + 1] ?? null
-      : null;
-  const pinnedByWorkspace = useFilesPinsStore((state) => state.pinnedByWorkspace);
-  const pinnedItems = useMemo(
-    () => pinnedByWorkspace[workspaceUuid] ?? [],
-    [pinnedByWorkspace, workspaceUuid]
-  );
-  const togglePinnedItem = useFilesPinsStore((state) => state.togglePinnedItem);
-  const uploadActivityOpen = useFilesUiStore(
-    (state) => state.uploadActivityOpen
-  );
-  const setUploadActivityOpen = useFilesUiStore(
-    (state) => state.setUploadActivityOpen
-  );
-  const filesSyncVersion = useFilesUiStore((state) => state.sync.version);
-  const filesSyncWorkspaceUuid = useFilesUiStore(
-    (state) => state.sync.workspaceUuid
-  );
-  const focusSearchIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.focusSearch
-  );
-  const newNoteIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.newNote
-  );
-  const uploadFileIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.uploadFile
-  );
-  const uploadFolderIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.uploadFolder
-  );
-  const createFolderIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.createFolder
-  );
-  const openSelectionIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.openSelection
-  );
-  const deleteSelectionIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.deleteSelection
-  );
-  const moveSelectionUpIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.moveSelectionUp
-  );
-  const goParentIntentVersion = useFilesUiStore(
-    (state) => state.intentVersion.goParent
-  );
-  const processedFilesIntentVersionsRef = useRef({
-    createFolder: 0,
-    deleteSelection: 0,
-    focusSearch: 0,
-    goParent: 0,
-    moveSelectionUp: 0,
-    newNote: 0,
-    openSelection: 0,
-    uploadFile: 0,
-    uploadFolder: 0,
-  });
-  const processedSyncVersionRef = useRef(0);
 
   const selectedFileParam = searchParams.get("file");
-  const selectedRetrievalChunkParam = searchParams.get("retrievalChunk");
-  const currentRoute = useMemo(() => {
-    const queryString = searchParams.toString();
-    return queryString ? `${pathname}?${queryString}` : pathname;
-  }, [pathname, searchParams]);
   const activeFile = useMemo(
     () => files.find((file) => file.id === selectedFileParam) ?? null,
     [files, selectedFileParam]
   );
   const activeMediaStreamUrl = useMemo(() => {
-    if (!(activeFile && workspaceUuid)) {
+    if (!activeFile || !workspaceUuid) {
       return null;
     }
     return `/api/workspaces/${workspaceUuid}/files/${activeFile.id}/stream`;
@@ -902,85 +510,11 @@ export function FileExplorer() {
     }
     return activeMediaStreamUrl;
   }, [activeFile, activeMediaStreamUrl, mediaStreamFailed]);
-  const activeVideoCaptionsSrc = useMemo(() => {
-    if (!(activeFile && workspaceUuid)) {
-      return undefined;
-    }
-    const isVideo = (activeFile.mimeType ?? "")
-      .toLowerCase()
-      .startsWith("video/");
-    if (!isVideo) {
-      return undefined;
-    }
-    return `/api/workspaces/${workspaceUuid}/files/${activeFile.id}/captions.vtt`;
-  }, [activeFile, workspaceUuid]);
   const currentFolder = useMemo(
     () => breadcrumbs[breadcrumbs.length - 1] ?? null,
     [breadcrumbs]
   );
-  const parentFolder = useMemo(
-    () => breadcrumbs[breadcrumbs.length - 2] ?? null,
-    [breadcrumbs]
-  );
   const isCurrentFolderReadOnly = Boolean(currentFolder?.readOnly);
-  const isAtWorkspaceRoot = breadcrumbs.length <= 1;
-  const currentLocationTitle = isAtWorkspaceRoot
-    ? workspaceName
-    : currentFolder?.name ?? workspaceName;
-  const currentFolderBannerUrl =
-    currentFolder?.bannerUrl && currentFolder.bannerUrl.trim().length > 0
-      ? currentFolder.bannerUrl
-      : DEFAULT_FOLDER_BANNER_URL;
-  const currentPinnedItem = useMemo(() => {
-    if (activeFile) {
-      return {
-        folderId: activeFile.folderId,
-        id: activeFile.id,
-        kind: "file" as const,
-        name: activeFile.name,
-        workspaceId: workspaceUuid,
-      };
-    }
-
-    if (currentFolder) {
-      return {
-        folderId: currentFolder.parentId,
-        id: currentFolder.id,
-        kind: "folder" as const,
-        name: currentFolder.name,
-        workspaceId: workspaceUuid,
-      };
-    }
-
-    return null;
-  }, [activeFile, currentFolder, workspaceUuid]);
-  const isCurrentPinned = currentPinnedItem
-    ? pinnedItems.some(
-        (item) =>
-          item.kind === currentPinnedItem.kind && item.id === currentPinnedItem.id
-      )
-    : false;
-  const activeFileRetrievalResults = useMemo(() => {
-    if (!activeFile) {
-      return [];
-    }
-    return retrievalResults.filter(
-      (result) => (result.fileId ?? result.id) === activeFile.id
-    );
-  }, [activeFile, retrievalResults]);
-  const activeRetrievalResult = useMemo(() => {
-    if (activeFileRetrievalResults.length === 0) {
-      return null;
-    }
-    if (activeRetrievalChunkId) {
-      return (
-        activeFileRetrievalResults.find(
-          (result) => result.chunkId === activeRetrievalChunkId
-        ) ?? activeFileRetrievalResults[0]
-      );
-    }
-    return activeFileRetrievalResults[0] ?? null;
-  }, [activeFileRetrievalResults, activeRetrievalChunkId]);
 
   const ensureDragPreviewPixel = useCallback(() => {
     if (dragPreviewPixelRef.current) {
@@ -1003,14 +537,14 @@ export function FileExplorer() {
 
   const searchableItems = useMemo<WorkspaceSearchItem[]>(
     () => [
-      ...allFolders.map((folder) => ({
+      ...folders.map((folder) => ({
         id: folder.id,
         type: "folder" as const,
         title: folder.name,
         description: "Folder",
-        snippet: "Folder in workspace",
+        snippet: `Folder in ${breadcrumbs[breadcrumbs.length - 1]?.name ?? "workspace"}`,
       })),
-      ...allFiles.map((file) => ({
+      ...files.map((file) => ({
         id: file.id,
         type: "file" as const,
         title: file.name,
@@ -1018,8 +552,51 @@ export function FileExplorer() {
         snippet: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown type"}`,
       })),
     ],
-    [allFiles, allFolders]
+    [breadcrumbs, files, folders]
   );
+
+  const availableFileTypes = useMemo(() => {
+    const normalized = new Set<string>();
+    for (const file of files) {
+      const ext = getExtension(file.name).replace(".", "").toUpperCase();
+      if (ext) {
+        normalized.add(ext);
+        continue;
+      }
+      if (file.mimeType) {
+        normalized.add(file.mimeType.split("/")[1]?.toUpperCase() ?? "UNKNOWN");
+      }
+    }
+    return Array.from(normalized).sort((a, b) => a.localeCompare(b));
+  }, [files]);
+
+  const availableActors = useMemo(() => {
+    const actorIds = new Set<string>();
+    if (actorMode === "uploadedBy") {
+      for (const file of files) {
+        if (file.uploadedBy) {
+          actorIds.add(file.uploadedBy);
+        }
+      }
+      for (const folder of folders) {
+        if (folder.createdBy) {
+          actorIds.add(folder.createdBy);
+        }
+      }
+    } else {
+      for (const file of files) {
+        if (file.updatedBy) {
+          actorIds.add(file.updatedBy);
+        }
+      }
+      for (const folder of folders) {
+        if (folder.updatedBy) {
+          actorIds.add(folder.updatedBy);
+        }
+      }
+    }
+    return Array.from(actorIds).sort((a, b) => a.localeCompare(b));
+  }, [actorMode, files, folders]);
 
   const loadShareSuggestions = useCallback(
     async (
@@ -1081,29 +658,125 @@ export function FileExplorer() {
 
   const filteredFolders = useMemo(() => {
     const term = query.trim().toLowerCase();
-    const activeVectorIds =
-      vectorFilteredIds && vectorFilteredIds.size > 0
-        ? vectorFilteredIds
-        : null;
-    return activeVectorIds
-      ? folders.filter((folder) => activeVectorIds.has(folder.id))
-      : term
+    const textFiltered =
+      term && !vectorFilteredIds
         ? folders.filter((folder) => folder.name.toLowerCase().includes(term))
         : folders;
-  }, [folders, query, vectorFilteredIds]);
+
+    const vectorFiltered = vectorFilteredIds
+      ? textFiltered.filter((folder) => vectorFilteredIds.has(folder.id))
+      : textFiltered;
+
+    const dateFiltered = vectorFiltered.filter((folder) => {
+      if (!createdDateRange?.from && !createdDateRange?.to) {
+        return true;
+      }
+      if (!folder.createdAt) {
+        return false;
+      }
+      const createdAt = new Date(folder.createdAt).getTime();
+      if (
+        createdDateRange?.from &&
+        createdAt < createdDateRange.from.getTime()
+      ) {
+        return false;
+      }
+      const toInclusive = createdDateRange?.to
+        ? new Date(createdDateRange.to).setHours(23, 59, 59, 999)
+        : null;
+      if (toInclusive !== null && createdAt > toInclusive) {
+        return false;
+      }
+      return true;
+    });
+
+    if (actorFilter.size === 0) {
+      return dateFiltered;
+    }
+
+    return dateFiltered.filter((folder) =>
+      actorMode === "uploadedBy"
+        ? folder.createdBy
+          ? actorFilter.has(folder.createdBy)
+          : false
+        : folder.updatedBy
+          ? actorFilter.has(folder.updatedBy)
+          : false
+    );
+  }, [
+    actorFilter,
+    actorMode,
+    createdDateRange,
+    folders,
+    query,
+    vectorFilteredIds,
+  ]);
 
   const filteredFiles = useMemo(() => {
     const term = query.trim().toLowerCase();
-    const activeVectorIds =
-      vectorFilteredIds && vectorFilteredIds.size > 0
-        ? vectorFilteredIds
-        : null;
-    return activeVectorIds
-      ? files.filter((file) => activeVectorIds.has(file.id))
-      : term
+    const textFiltered =
+      term && !vectorFilteredIds
         ? files.filter((file) => file.name.toLowerCase().includes(term))
         : files;
-  }, [files, query, vectorFilteredIds]);
+
+    const vectorFiltered = vectorFilteredIds
+      ? textFiltered.filter((file) => vectorFilteredIds.has(file.id))
+      : textFiltered;
+
+    const typeFiltered =
+      fileTypeFilter.size === 0
+        ? vectorFiltered
+        : vectorFiltered.filter((file) => {
+            const ext = getExtension(file.name).replace(".", "").toUpperCase();
+            if (ext && fileTypeFilter.has(ext)) {
+              return true;
+            }
+            const mimeType = file.mimeType?.split("/")[1]?.toUpperCase();
+            return Boolean(mimeType && fileTypeFilter.has(mimeType));
+          });
+
+    const dateFiltered = typeFiltered.filter((file) => {
+      if (!createdDateRange?.from && !createdDateRange?.to) {
+        return true;
+      }
+      const createdAt = new Date(file.createdAt).getTime();
+      if (
+        createdDateRange?.from &&
+        createdAt < createdDateRange.from.getTime()
+      ) {
+        return false;
+      }
+      const toInclusive = createdDateRange?.to
+        ? new Date(createdDateRange.to).setHours(23, 59, 59, 999)
+        : null;
+      if (toInclusive !== null && createdAt > toInclusive) {
+        return false;
+      }
+      return true;
+    });
+
+    if (actorFilter.size === 0) {
+      return dateFiltered;
+    }
+
+    return dateFiltered.filter((file) =>
+      actorMode === "uploadedBy"
+        ? file.uploadedBy
+          ? actorFilter.has(file.uploadedBy)
+          : false
+        : file.updatedBy
+          ? actorFilter.has(file.updatedBy)
+          : false
+    );
+  }, [
+    actorFilter,
+    actorMode,
+    createdDateRange,
+    fileTypeFilter,
+    files,
+    query,
+    vectorFilteredIds,
+  ]);
 
   const sortedFolders = useMemo(
     () =>
@@ -1154,10 +827,7 @@ export function FileExplorer() {
   );
 
   const uploadCount = uploadQueue.filter(
-    (item) =>
-      item.status === "queued" ||
-      item.status === "uploading" ||
-      item.status === "ingesting"
+    (item) => item.status === "queued" || item.status === "uploading"
   ).length;
   const failedCount = uploadQueue.filter(
     (item) => item.status === "failed"
@@ -1181,141 +851,6 @@ export function FileExplorer() {
     }
     return map;
   }, [allFiles]);
-
-  const filePathById = useMemo(() => {
-    const folderById = new Map(allFolders.map((folder) => [folder.id, folder]));
-    const folderPathCache = new Map<string, string>();
-
-    const resolveFolderPath = (folderId: string | null): string => {
-      if (!folderId) {
-        return "";
-      }
-      const cached = folderPathCache.get(folderId);
-      if (cached !== undefined) {
-        return cached;
-      }
-
-      const segments: string[] = [];
-      const seen = new Set<string>();
-      let cursor = folderId;
-      while (cursor) {
-        if (seen.has(cursor)) {
-          break;
-        }
-        seen.add(cursor);
-        const folder = folderById.get(cursor);
-        if (!folder) {
-          break;
-        }
-        if (folder.parentId === null) {
-          break;
-        }
-        segments.push(folder.name);
-        cursor = folder.parentId;
-      }
-
-      const resolved = segments.reverse().join("/");
-      folderPathCache.set(folderId, resolved);
-      return resolved;
-    };
-
-    const map = new Map<string, string>();
-    for (const file of allFiles) {
-      const folderPath = resolveFolderPath(file.folderId);
-      const fullPath = folderPath ? `${folderPath}/${file.name}` : file.name;
-      map.set(file.id, fullPath);
-    }
-
-    return map;
-  }, [allFiles, allFolders]);
-  const workspaceMemberNameById = useMemo(
-    () =>
-      new Map(
-        workspaceMembers.map((member) => [
-          member.userId ?? member.id ?? member.email ?? "",
-          member.name ?? member.email ?? "Unknown",
-        ])
-      ),
-    [workspaceMembers]
-  );
-  const currentInfoEntries = useMemo(() => {
-    if (activeFile) {
-      return [
-        { label: "Name", value: activeFile.name },
-        {
-          label: "Owner",
-          value:
-            (activeFile.uploadedBy
-              ? workspaceMemberNameById.get(activeFile.uploadedBy)
-              : null) ?? "Unknown",
-        },
-        { label: "File size", value: formatBytes(activeFile.sizeBytes) },
-        {
-          label: "Ingestion",
-          value: activeFile.isIngested ? "Ingested" : "Pending",
-        },
-        {
-          label: "Visible to",
-          value:
-            workspaceMembers.length > 0
-              ? `${workspaceMembers.length} workspace member${workspaceMembers.length === 1 ? "" : "s"}`
-              : "Workspace members",
-        },
-        {
-          label: "Location",
-          value: filePathById.get(activeFile.id) ?? activeFile.name,
-        },
-        {
-          label: "Created at",
-          value: new Date(activeFile.createdAt).toLocaleString(),
-        },
-        {
-          label: "Updated at",
-          value: new Date(
-            activeFile.updatedAt ?? activeFile.createdAt
-          ).toLocaleString(),
-        },
-      ];
-    }
-
-    if (currentFolder) {
-      return [
-        {
-          label: isAtWorkspaceRoot ? "Workspace" : "Folder name",
-          value: currentLocationTitle,
-        },
-        {
-          label: "Visible to",
-          value:
-            workspaceMembers.length > 0
-              ? `${workspaceMembers.length} workspace member${workspaceMembers.length === 1 ? "" : "s"}`
-              : "Workspace members",
-        },
-        {
-          label: "Created at",
-          value: currentFolder.createdAt
-            ? new Date(currentFolder.createdAt).toLocaleString()
-            : "Unknown",
-        },
-        {
-          label: "Updated at",
-          value: currentFolder.updatedAt
-            ? new Date(currentFolder.updatedAt).toLocaleString()
-            : "Unknown",
-        },
-      ];
-    }
-
-    return [];
-  }, [
-    activeFile,
-    currentFolder,
-    currentLocationTitle,
-    filePathById,
-    isAtWorkspaceRoot,
-    workspaceMemberNameById,
-    workspaceMembers.length,
-  ]);
 
   const folderCardPreviewItems = useMemo(() => {
     type FolderCardPreviewItem =
@@ -1350,19 +885,33 @@ export function FileExplorer() {
     return map;
   }, [allFiles, allFolders, folders]);
 
+  const clearAdvancedFilters = useCallback(() => {
+    setCreatedDateRange(undefined);
+    setFileTypeFilter(new Set());
+    setActorFilter(new Set());
+    setActorMode("uploadedBy");
+  }, []);
+  const hasActiveAdvancedFilters =
+    Boolean(createdDateRange?.from || createdDateRange?.to) ||
+    fileTypeFilter.size > 0 ||
+    actorFilter.size > 0;
+
   const handleOpenOnDoubleClick = useCallback(
     (event: React.MouseEvent<HTMLElement>, open: () => void) => {
       if (event.detail !== 2) {
         return;
       }
+      if (draggingIds.length > 0) {
+        return;
+      }
       open();
     },
-    []
+    [draggingIds.length]
   );
 
   const loadFolder = useCallback(
     async (options?: { silent?: boolean }) => {
-      if (!(workspaceUuid && currentFolderId)) {
+      if (!workspaceUuid || !currentFolderId) {
         return;
       }
       const silent = options?.silent ?? false;
@@ -1437,8 +986,15 @@ export function FileExplorer() {
   }, [refreshData]);
 
   const emitSync = useCallback(() => {
-    emitFilesSync(workspaceUuid);
-  }, [emitFilesSync, workspaceUuid]);
+    if (!workspaceUuid) {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent(DASHBOARD_FILES_SYNC_EVENT, {
+        detail: { source: "explorer", workspaceUuid, ts: Date.now() },
+      })
+    );
+  }, [workspaceUuid]);
 
   useEffect(() => {
     void loadFolder();
@@ -1449,68 +1005,7 @@ export function FileExplorer() {
   }, [loadTree]);
 
   useEffect(() => {
-    if (!workspaceUuid) {
-      return;
-    }
-
-    void (async () => {
-      try {
-        const response = await fetch("/api/workspaces/list", {
-          cache: "no-store",
-        });
-        if (!response.ok) {
-          return;
-        }
-        const payload = (await response.json()) as {
-          workspaces?: Array<{
-            workspaceId: string;
-            name: string;
-          }>;
-        };
-        const activeWorkspace = (payload.workspaces ?? []).find(
-          (workspace) => workspace.workspaceId === workspaceUuid
-        );
-        if (activeWorkspace?.name) {
-          setWorkspaceName(activeWorkspace.name);
-        }
-      } catch {
-        // ignore
-      }
-    })();
-  }, [workspaceUuid]);
-
-  useEffect(() => {
-    if (!workspaceUuid) {
-      return;
-    }
-
-    void (async () => {
-      try {
-        const response = await fetch(
-          `/api/workspaces/${workspaceUuid}/share/members`,
-          {
-            cache: "no-store",
-          }
-        );
-        if (!response.ok) {
-          return;
-        }
-        const payload = (await response.json()) as {
-          members?: WorkspaceMemberRecord[];
-        };
-        setWorkspaceMembers(payload.members ?? []);
-      } catch {
-        // ignore
-      }
-    })();
-  }, [workspaceUuid]);
-
-  useEffect(() => {
-    recordRoute(currentRoute);
-  }, [currentRoute, recordRoute]);
-
-  useEffect(() => {
-    if (!(workspaceUuid && currentFolderId)) {
+    if (!workspaceUuid || !currentFolderId) {
       return;
     }
 
@@ -1522,34 +1017,23 @@ export function FileExplorer() {
         refreshData();
       }
     };
+    const onSync = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceUuid?: string }>).detail;
+      if (!detail?.workspaceUuid || detail.workspaceUuid === workspaceUuid) {
+        refreshDataDebounced();
+      }
+    };
+
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener(DASHBOARD_FILES_SYNC_EVENT, onSync);
 
     return () => {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener(DASHBOARD_FILES_SYNC_EVENT, onSync);
     };
-  }, [currentFolderId, refreshData, workspaceUuid]);
-
-  useEffect(() => {
-    if (!(workspaceUuid && currentFolderId) || filesSyncVersion === 0) {
-      return;
-    }
-    if (filesSyncWorkspaceUuid && filesSyncWorkspaceUuid !== workspaceUuid) {
-      return;
-    }
-    if (filesSyncVersion <= processedSyncVersionRef.current) {
-      return;
-    }
-    processedSyncVersionRef.current = filesSyncVersion;
-    refreshDataDebounced();
-  }, [
-    currentFolderId,
-    filesSyncVersion,
-    filesSyncWorkspaceUuid,
-    refreshDataDebounced,
-    workspaceUuid,
-  ]);
+  }, [currentFolderId, refreshData, refreshDataDebounced, workspaceUuid]);
 
   useEffect(() => {
     if (!workspaceUuid) {
@@ -1648,124 +1132,6 @@ export function FileExplorer() {
   }, [refreshDataDebounced, workspaceUuid]);
 
   useEffect(() => {
-    if (!workspaceUuid) {
-      return;
-    }
-
-    let closed = false;
-    let eventSource: EventSource | null = null;
-
-    const cleanupCurrent = () => {
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (closed) {
-        return;
-      }
-
-      if (ingestionSseRetryTimerRef.current) {
-        clearTimeout(ingestionSseRetryTimerRef.current);
-      }
-
-      ingestionSseRetryTimerRef.current = setTimeout(() => {
-        void connect();
-      }, 3000);
-    };
-
-    const connect = async () => {
-      if (closed) {
-        return;
-      }
-
-      try {
-        cleanupCurrent();
-        const url = new URL(
-          "/api/ai/ingestion/jobs/events",
-          window.location.origin
-        );
-        url.searchParams.set("workspaceUuid", workspaceUuid);
-
-        eventSource = new EventSource(url.toString());
-        eventSource.onerror = () => {
-          cleanupCurrent();
-          scheduleReconnect();
-        };
-
-        eventSource.addEventListener("ingestion.job", (event) => {
-          const payload = JSON.parse((event as MessageEvent).data) as {
-            jobId: string;
-            eventType: string;
-            payload?: Record<string, unknown>;
-          };
-
-          setUploadQueue((previous) =>
-            previous.map((item) => {
-              if (
-                !item.ingestionJobId ||
-                item.ingestionJobId !== payload.jobId
-              ) {
-                return item;
-              }
-
-              if (payload.eventType === "job.failed") {
-                const nextFailureCount = (item.failureCount ?? 0) + 1;
-                return {
-                  ...item,
-                  status: "failed",
-                  failureCount: nextFailureCount,
-                  error:
-                    typeof payload.payload?.error === "string"
-                      ? `Ingestion failed for this file: ${payload.payload.error}`
-                      : "Ingestion failed",
-                };
-              }
-
-              if (payload.eventType === "job.succeeded") {
-                return {
-                  ...item,
-                  status: "uploaded",
-                  error: undefined,
-                  failureCount: 0,
-                };
-              }
-
-              return {
-                ...item,
-                status: "ingesting",
-                error: undefined,
-              };
-            })
-          );
-
-          if (
-            payload.eventType === "job.succeeded" ||
-            payload.eventType === "job.failed"
-          ) {
-            refreshDataDebounced();
-          }
-        });
-      } catch {
-        scheduleReconnect();
-      }
-    };
-
-    void connect();
-
-    return () => {
-      closed = true;
-      cleanupCurrent();
-      if (ingestionSseRetryTimerRef.current) {
-        clearTimeout(ingestionSseRetryTimerRef.current);
-        ingestionSseRetryTimerRef.current = null;
-      }
-    };
-  }, [workspaceUuid]);
-
-  useEffect(() => {
     setVideoLoadFailed(false);
     setAudioLoadFailed(false);
     setMediaStreamFailed(false);
@@ -1776,68 +1142,13 @@ export function FileExplorer() {
   }, [viewMode]);
 
   useEffect(() => {
-    if (!workspaceUuid) {
-      return;
-    }
-    try {
-      const raw = window.sessionStorage.getItem(
-        `${FILE_RETRIEVAL_CONTEXT_KEY}:${workspaceUuid}`
-      );
-      if (!raw) {
-        return;
-      }
-      const parsed = JSON.parse(raw) as {
-        activeChunkId?: string | null;
-        query?: string;
-        results?: WorkspaceSearchResult[];
-      };
-      if (typeof parsed.query === "string") {
-        setQuery("");
-      }
-      if (Array.isArray(parsed.results)) {
-        setRetrievalResults(parsed.results);
-        setVectorFilteredIds(null);
-        setQuery("");
-      }
-      if (
-        typeof parsed.activeChunkId === "string" ||
-        parsed.activeChunkId === null
-      ) {
-        setActiveRetrievalChunkId(parsed.activeChunkId ?? null);
-      }
-    } catch {
-      // Ignore malformed client cache.
-    }
-  }, [workspaceUuid]);
-
-  useEffect(() => {
-    if (!workspaceUuid) {
-      return;
-    }
-    window.sessionStorage.setItem(
-      `${FILE_RETRIEVAL_CONTEXT_KEY}:${workspaceUuid}`,
-      JSON.stringify({
-        activeChunkId: activeRetrievalChunkId,
-        query: retrievalResults.length > 0 ? query : "",
-        results: retrievalResults,
-      })
-    );
-  }, [activeRetrievalChunkId, query, retrievalResults, workspaceUuid]);
-
-  useEffect(() => {
-    if (selectedRetrievalChunkParam) {
-      setActiveRetrievalChunkId(selectedRetrievalChunkParam);
-    }
-  }, [selectedRetrievalChunkParam]);
-
-  useEffect(() => {
     if (!activeFile) {
       return;
     }
 
     markFileOpened(activeFile.id);
     const { isAudio, isVideo } = detectPreviewKind(activeFile);
-    if (!(isAudio || isVideo)) {
+    if (!isAudio && !isVideo) {
       return;
     }
 
@@ -1849,49 +1160,26 @@ export function FileExplorer() {
   }, [activeFile]);
 
   useEffect(() => {
-    const processed = processedFilesIntentVersionsRef.current;
-
-    if (focusSearchIntentVersion > processed.focusSearch) {
-      processed.focusSearch = focusSearchIntentVersion;
+    const onFocusSearch = () => {
       setFocusSearchSignal((previous) => previous + 1);
-    }
+    };
 
-    if (newNoteIntentVersion > processed.newNote) {
-      processed.newNote = newNoteIntentVersion;
+    const onNewNote = () => {
       // Placeholder until note entity model is introduced.
       fileInputRef.current?.click();
-    }
+    };
 
-    if (uploadFileIntentVersion > processed.uploadFile) {
-      processed.uploadFile = uploadFileIntentVersion;
-      fileInputRef.current?.click();
-    }
+    window.addEventListener(DASHBOARD_FILES_FOCUS_SEARCH_EVENT, onFocusSearch);
+    window.addEventListener(DASHBOARD_FILES_NEW_NOTE_EVENT, onNewNote);
 
-    if (uploadFolderIntentVersion > processed.uploadFolder) {
-      processed.uploadFolder = uploadFolderIntentVersion;
-      folderInputRef.current?.click();
-    }
-
-    if (createFolderIntentVersion > processed.createFolder) {
-      processed.createFolder = createFolderIntentVersion;
-      if (isCurrentFolderReadOnly) {
-        return;
-      }
-      setEditDialog({
-        mode: "create-folder",
-        parentId: currentFolderId,
-        value: "",
-      });
-    }
-  }, [
-    createFolderIntentVersion,
-    currentFolderId,
-    focusSearchIntentVersion,
-    isCurrentFolderReadOnly,
-    newNoteIntentVersion,
-    uploadFileIntentVersion,
-    uploadFolderIntentVersion,
-  ]);
+    return () => {
+      window.removeEventListener(
+        DASHBOARD_FILES_FOCUS_SEARCH_EVENT,
+        onFocusSearch
+      );
+      window.removeEventListener(DASHBOARD_FILES_NEW_NOTE_EVENT, onNewNote);
+    };
+  }, []);
 
   useEffect(() => {
     const input = folderInputRef.current;
@@ -1908,21 +1196,18 @@ export function FileExplorer() {
       queueFadeTimerRef.current = null;
     }
 
-    if (uploadQueue.length === 0 && !uploadActivityOpen) {
+    if (uploadQueue.length === 0) {
       setIsQueueVisible(false);
       return;
     }
 
     const hasActiveUploads = uploadQueue.some(
-      (item) =>
-        item.status === "queued" ||
-        item.status === "uploading" ||
-        item.status === "ingesting"
+      (item) => item.status === "queued" || item.status === "uploading"
     );
 
     setIsQueueVisible(true);
 
-    if (hasActiveUploads || uploadActivityOpen) {
+    if (hasActiveUploads) {
       return;
     }
 
@@ -1935,11 +1220,7 @@ export function FileExplorer() {
         clearTimeout(queueFadeTimerRef.current);
       }
     };
-  }, [uploadActivityOpen, uploadQueue]);
-
-  useEffect(() => {
-    setIsQueueVisible(uploadActivityOpen || uploadQueue.length > 0);
-  }, [uploadActivityOpen, uploadQueue.length]);
+  }, [uploadQueue]);
 
   const navigateToFolder = useCallback(
     (folderId: string) => {
@@ -1954,16 +1235,9 @@ export function FileExplorer() {
     [router, workspaceUuid]
   );
 
-  const toggleCurrentPinnedItem = useCallback(() => {
-    if (!(workspaceUuid && currentPinnedItem)) {
-      return;
-    }
-    togglePinnedItem(workspaceUuid, currentPinnedItem);
-  }, [currentPinnedItem, togglePinnedItem, workspaceUuid]);
-
   const selectFile = useCallback(
-    (fileId: string | null, options?: { retrievalChunkId?: string | null }) => {
-      if (!(workspaceUuid && currentFolderId)) {
+    (fileId: string | null) => {
+      if (!workspaceUuid || !currentFolderId) {
         return;
       }
 
@@ -1972,11 +1246,6 @@ export function FileExplorer() {
         params.set("file", fileId);
       } else {
         params.delete("file");
-      }
-      if (options?.retrievalChunkId) {
-        params.set("retrievalChunk", options.retrievalChunkId);
-      } else if (options?.retrievalChunkId === null) {
-        params.delete("retrievalChunk");
       }
 
       const query = params.toString();
@@ -1989,50 +1258,9 @@ export function FileExplorer() {
     [currentFolderId, router, searchParams, workspaceUuid]
   );
 
-  const openSearchResult = useCallback(
-    (result: WorkspaceSearchResult) => {
-      if (!(workspaceUuid && currentFolderId)) {
-        return;
-      }
-
-      const targetFileId = result.fileId ?? result.id;
-      const targetFile = allFiles.find((file) => file.id === targetFileId);
-      const targetFolderId = targetFile?.folderId ?? currentFolderId;
-
-      const params = new URLSearchParams();
-      params.set("file", targetFileId);
-      if (result.chunkId) {
-        params.set("retrievalChunk", result.chunkId);
-      }
-
-      router.push(
-        `/dashboard/files/${workspaceUuid}/folder/${targetFolderId}?${params.toString()}` as Route
-      );
-    },
-    [allFiles, currentFolderId, router, workspaceUuid]
-  );
-
-  const openFileById = useCallback(
-    (fileId: string) => {
-      if (!workspaceUuid) {
-        return;
-      }
-      const targetFile = allFiles.find((file) => file.id === fileId);
-      if (!targetFile) {
-        return;
-      }
-      const params = new URLSearchParams();
-      params.set("file", fileId);
-      router.push(
-        `/dashboard/files/${workspaceUuid}/folder/${targetFile.folderId}?${params.toString()}` as Route
-      );
-    },
-    [allFiles, router, workspaceUuid]
-  );
-
   const handlePreviewIntentStart = useCallback((file: FileRecord) => {
     const { isAudio, isVideo } = detectPreviewKind(file);
-    if (!(isAudio || isVideo)) {
+    if (!isAudio && !isVideo) {
       return;
     }
 
@@ -2043,7 +1271,7 @@ export function FileExplorer() {
 
   const handlePreviewIntentEnd = useCallback((file: FileRecord) => {
     const { isAudio, isVideo } = detectPreviewKind(file);
-    if (!(isAudio || isVideo)) {
+    if (!isAudio && !isVideo) {
       return;
     }
 
@@ -2075,7 +1303,10 @@ export function FileExplorer() {
             break;
           }
           const chunk = await new Promise<WebkitFileSystemEntry[]>((resolve) =>
-            reader.readEntries(resolve, () => resolve([]))
+            reader.readEntries(resolve, (error) => {
+              console.warn("Unable to read dropped directory entries", error);
+              resolve([]);
+            })
           );
           if (chunk.length === 0) {
             break;
@@ -2092,7 +1323,13 @@ export function FileExplorer() {
         if (entry.isFile) {
           const fileEntry = entry as WebkitFileSystemFileEntry;
           const file = await new Promise<File | null>((resolve) =>
-            fileEntry.file(resolve, () => resolve(null))
+            fileEntry.file(resolve, (error) => {
+              console.warn(
+                `Unable to read dropped file entry: ${entry.name}`,
+                error
+              );
+              resolve(null);
+            })
           );
           if (!file) {
             return;
@@ -2132,52 +1369,41 @@ export function FileExplorer() {
         await walkEntry(maybeEntry, "");
       }
 
-      const fallbackCandidates = Array.from(event.dataTransfer.files ?? []).map(
-        (file) => {
-          const webkitRelativePath = (
-            file as File & { webkitRelativePath?: string }
-          ).webkitRelativePath;
-          return {
-            file,
-            relativePath: webkitRelativePath || file.name,
-          };
-        }
-      );
-
       if (usedEntryApi && candidates.length > 0) {
-        return sanitizeUploadCandidates([...candidates, ...fallbackCandidates]);
+        return candidates;
       }
 
-      return sanitizeUploadCandidates(fallbackCandidates);
+      return Array.from(event.dataTransfer.files ?? []).map((file) => {
+        const webkitRelativePath = (
+          file as File & { webkitRelativePath?: string }
+        ).webkitRelativePath;
+        return {
+          file,
+          relativePath: webkitRelativePath || file.name,
+        };
+      });
     },
     []
   );
 
   const queueUploads = useCallback(
     (incomingCandidates: UploadCandidate[]) => {
-      const normalizedCandidates = sanitizeUploadCandidates(incomingCandidates);
       if (
-        !(workspaceUuid && currentFolderId) ||
-        normalizedCandidates.length === 0 ||
+        !workspaceUuid ||
+        !currentFolderId ||
+        incomingCandidates.length === 0 ||
         isCurrentFolderReadOnly
       ) {
         return;
       }
 
-      const queueEntries = normalizedCandidates.map(
-        ({ file, relativePath }) => ({
-          id: crypto.randomUUID(),
-          name:
-            relativePath && relativePath !== file.name
-              ? relativePath
-              : file.name,
-          sizeLabel: formatBytes(file.size),
-          status: "queued" as const,
-        })
-      );
-      const isFolderUploadBatch = normalizedCandidates.some((entry) =>
-        (entry.relativePath ?? entry.file.name).includes("/")
-      );
+      const queueEntries = incomingCandidates.map(({ file, relativePath }) => ({
+        id: crypto.randomUUID(),
+        name:
+          relativePath && relativePath !== file.name ? relativePath : file.name,
+        sizeLabel: formatBytes(file.size),
+        status: "queued" as const,
+      }));
 
       setUploadQueue((previous) => [...queueEntries, ...previous]);
 
@@ -2208,8 +1434,9 @@ export function FileExplorer() {
         };
 
         const ensureFolderPath = async (relativePath?: string) => {
-          if (!(relativePath && workspaceUuid)) {
-            return currentFolderId;
+          const createdFolders: CreatedFolder[] = [];
+          if (!relativePath || !workspaceUuid) {
+            return { createdFolders, parentId: currentFolderId };
           }
           const normalized = relativePath.replaceAll("\\", "/");
           const segments = normalized.split("/").filter(Boolean);
@@ -2227,330 +1454,80 @@ export function FileExplorer() {
                 continue;
               }
 
-            const response = await fetch(
-              `/api/workspaces/${workspaceUuid}/folders`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ parentId, name: segment }),
+              const response = await fetch(
+                `/api/workspaces/${workspaceUuid}/folders`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ parentId, name: segment }),
+                }
+              );
+              if (!response.ok) {
+                throw new Error(`Unable to create folder "${segment}"`);
               }
-            );
-            if (!response.ok) {
-              throw new Error(`Unable to create folder "${segment}"`);
+              const payload = (await response.json()) as {
+                folder?: { id?: string };
+              };
+              const createdId = payload.folder?.id;
+              if (!createdId) {
+                throw new Error(`Folder "${segment}" could not be created`);
+              }
+              folderLookup.set(key, createdId);
+              createdFolders.push({ id: createdId, key });
+              parentId = createdId;
             }
-            const payload = (await response.json()) as {
-              folder?: { id?: string };
-            };
-            const createdId = payload.folder?.id;
-            if (!createdId) {
-              throw new Error(`Folder "${segment}" could not be created`);
-            }
-            folderLookup.set(key, createdId);
-            parentId = createdId;
+          } catch (error) {
+            await rollbackCreatedFolders(createdFolders);
+            throw error;
           }
 
           return { createdFolders, parentId };
         };
 
-        const maxParallelHashing = 3;
-        const maxParallelUploads = 4;
-        const dedupeLookupChunkSize = 100;
-        const registerChunkSize = 40;
-        type UploadPrepared = {
-          candidate: UploadCandidate;
-          contentHashSha256?: string;
-          file: File;
-          queueItemId: string;
-          targetFolderId: string;
-          uploaded: UploadResultLike;
-        };
-        const preparedForRegister: UploadPrepared[] = [];
-        let successCount = 0;
-        let uploadCursor = 0;
-        const folderPathInflight = new Map<string, Promise<string>>();
-
-        const indexedCandidates = normalizedCandidates.map(
-          (candidate, index) => ({
-            candidate,
-            index,
-            queueItemId: queueEntries[index]?.id ?? "",
-          })
-        );
-        const hashByQueueId = new Map<string, string>();
-        const dedupeHitByQueueId = new Map<string, { fileId?: string }>();
-        if (!isFolderUploadBatch && ENABLE_PREUPLOAD_DEDUPE) {
-          let hashCursor = 0;
-          const runHashWorker = async () => {
-            while (true) {
-              const index = hashCursor;
-              hashCursor += 1;
-              if (index >= indexedCandidates.length) {
-                return;
-              }
-              const entry = indexedCandidates[index];
-              if (!(entry && entry.queueItemId)) {
-                continue;
-              }
-
-              if (!shouldHashForClientDedupe(entry.candidate.file)) {
-                continue;
-              }
-
-              const hash = await computeSha256Hex(entry.candidate.file);
-              if (!hash) {
-                continue;
-              }
-
-              hashByQueueId.set(entry.queueItemId, hash);
-              setUploadQueue((previous) =>
-                previous.map((item) =>
-                  item.id === entry.queueItemId
-                    ? { ...item, contentHashSha256: hash }
-                    : item
-                )
-              );
-            }
-          };
-
-          await Promise.all(
-            Array.from(
-              {
-                length: Math.min(
-                  Math.max(1, indexedCandidates.length),
-                  maxParallelHashing
-                ),
-              },
-              () => runHashWorker()
-            )
-          );
-
-          const dedupeLookupInput: Array<{
-            clientUploadId: string;
-            hashSha256: string;
-            mimeType: string | null;
-            name: string;
-            sizeBytes: number;
-          }> = [];
-          for (const entry of indexedCandidates) {
-            const hashSha256 = hashByQueueId.get(entry.queueItemId);
-            if (!(entry.queueItemId && hashSha256)) {
-              continue;
-            }
-            dedupeLookupInput.push({
-              clientUploadId: entry.queueItemId,
-              hashSha256,
-              mimeType: entry.candidate.file.type || null,
-              name: entry.candidate.file.name,
-              sizeBytes: entry.candidate.file.size,
-            });
-          }
-
-          const dedupeChunks = chunkArray(
-            dedupeLookupInput,
-            dedupeLookupChunkSize
-          );
-          for (const dedupeChunk of dedupeChunks) {
-            if (dedupeChunk.length === 0) {
-              continue;
-            }
-
-            try {
-              const response = await fetch(
-                `/api/workspaces/${workspaceUuid}/files/dedupe/lookup`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    files: dedupeChunk.map((entry) => ({
-                      clientUploadId: entry.clientUploadId,
-                      folderId: currentFolderId,
-                      hashSha256: entry.hashSha256,
-                      mimeType: entry.mimeType,
-                      name: entry.name,
-                      sizeBytes: entry.sizeBytes,
-                    })),
-                  }),
-                }
-              );
-
-              if (!response.ok) {
-                continue;
-              }
-
-              const payload = (await response.json()) as DedupeLookupResponse;
-              for (const result of payload.results ?? []) {
-                if (!result.deduped) {
-                  continue;
-                }
-                dedupeHitByQueueId.set(result.clientUploadId, {
-                  fileId: result.file?.id,
-                });
-              }
-            } catch {
-              // Best effort. Fallback is normal upload path.
-            }
-          }
-        }
-
-        if (dedupeHitByQueueId.size > 0) {
-          successCount += dedupeHitByQueueId.size;
-          setUploadQueue((previous) =>
-            previous.map((item) => {
-              const hit = dedupeHitByQueueId.get(item.id);
-              if (!hit) {
-                return item;
-              }
-              return {
-                ...item,
-                fileId: hit.fileId,
-                status: "uploaded",
-                failureCount: 0,
-                error: undefined,
-              };
-            })
-          );
-        }
-
-        const uploadTargets = indexedCandidates.filter(
-          (entry) => !dedupeHitByQueueId.has(entry.queueItemId)
-        );
-
-        const processOneUpload = async (
-          entry: (typeof uploadTargets)[number]
-        ) => {
-          if (!entry.queueItemId) {
-            return;
+        let hasSuccessfulUpload = false;
+        for (const [index, candidate] of incomingCandidates.entries()) {
+          const file = candidate.file;
+          const queueItemId = queueEntries[index]?.id;
+          if (!queueItemId) {
+            continue;
           }
 
           setUploadQueue((previous) =>
             previous.map((item) =>
-              item.id === entry.queueItemId
-                ? { ...item, status: "uploading", error: undefined }
-                : item
+              item.id === queueItemId ? { ...item, status: "uploading" } : item
             )
           );
 
           let createdFoldersForCandidate: CreatedFolder[] = [];
           try {
-            const uploaded = ((await startUpload([entry.candidate.file])) ??
-              [])[0] as UploadResultLike | undefined;
-            if (!(uploaded?.key && uploaded.ufsUrl)) {
+            const uploaded = (await startUpload([file]))?.[0] as
+              | {
+                  key?: string;
+                  ufsUrl?: string;
+                  name?: string;
+                  size?: number;
+                  contentType?: string;
+                }
+              | undefined;
+
+            if (!uploaded?.key || !uploaded.ufsUrl) {
               throw new Error("Upload returned no file metadata");
             }
+            const folderPath = await ensureFolderPath(candidate.relativePath);
+            createdFoldersForCandidate = folderPath.createdFolders;
 
-            const normalizedPath = normalizeRelativePath(
-              entry.candidate.relativePath,
-              entry.candidate.file
-            );
-            const lastSeparator = normalizedPath.lastIndexOf("/");
-            const folderPathKey =
-              lastSeparator >= 0
-                ? normalizedPath.slice(0, lastSeparator)
-                : "__root__";
-            const targetFolderId = await (folderPathInflight.get(
-              folderPathKey
-            ) ??
-              (() => {
-                const task = ensureFolderPath(entry.candidate.relativePath);
-                folderPathInflight.set(folderPathKey, task);
-                return task;
-              })());
-
-            preparedForRegister.push({
-              candidate: entry.candidate,
-              contentHashSha256: hashByQueueId.get(entry.queueItemId),
-              file: entry.candidate.file,
-              queueItemId: entry.queueItemId,
-              targetFolderId,
-              uploaded,
-            });
-
-            setUploadQueue((previous) =>
-              previous.map((item) =>
-                item.id === entry.queueItemId
-                  ? { ...item, status: "uploaded", error: undefined }
-                  : item
-              )
-            );
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : "Unable to upload file";
-            setUploadQueue((previous) =>
-              previous.map((item) =>
-                item.id === entry.queueItemId
-                  ? {
-                      ...item,
-                      status: "failed",
-                      failureCount: (item.failureCount ?? 0) + 1,
-                      error: message,
-                    }
-                  : item
-              )
-            );
-          }
-        };
-
-        const runUploadWorker = async () => {
-          while (true) {
-            const index = uploadCursor;
-            uploadCursor += 1;
-            if (index >= uploadTargets.length) {
-              return;
-            }
-
-            const entry = uploadTargets[index];
-            if (!entry) {
-              return;
-            }
-            await processOneUpload(entry);
-          }
-        };
-
-        await Promise.all(
-          Array.from(
-            {
-              length: Math.min(
-                Math.max(1, uploadTargets.length),
-                maxParallelUploads
-              ),
-            },
-            () => runUploadWorker()
-          )
-        );
-
-        const registerChunks = chunkArray(
-          preparedForRegister,
-          registerChunkSize
-        );
-        for (const registerChunk of registerChunks) {
-          if (registerChunk.length === 0) {
-            continue;
-          }
-
-          try {
             const registerResponse = await fetch(
-              `/api/workspaces/${workspaceUuid}/files/register/bulk`,
+              `/api/workspaces/${workspaceUuid}/files/register`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  dedupeMode:
-                    isFolderUploadBatch || !ENABLE_PREUPLOAD_DEDUPE
-                      ? "skip"
-                      : "allow",
-                  files: registerChunk.map((entry) => ({
-                    clientUploadId: entry.queueItemId,
-                    contentHashSha256: entry.contentHashSha256,
-                    folderId: entry.targetFolderId,
-                    hashComputedBy: entry.contentHashSha256
-                      ? "client"
-                      : undefined,
-                    storageKey: entry.uploaded.key,
-                    storageUrl: entry.uploaded.ufsUrl,
-                    name: entry.uploaded.name ?? entry.file.name,
-                    mimeType: entry.uploaded.contentType ?? entry.file.type,
-                    sizeBytes: entry.uploaded.size ?? entry.file.size,
-                  })),
+                  folderId: folderPath.parentId,
+                  storageKey: uploaded.key,
+                  storageUrl: uploaded.ufsUrl,
+                  name: uploaded.name ?? file.name,
+                  mimeType: uploaded.contentType ?? file.type,
+                  sizeBytes: uploaded.size ?? file.size,
                 }),
               }
             );
@@ -2559,61 +1536,24 @@ export function FileExplorer() {
               throw new Error("File metadata registration failed");
             }
 
-            const payload =
-              (await registerResponse.json()) as BulkRegisterResponse;
-            const resultMap = new Map(
-              (payload.results ?? []).map((result) => [
-                result.clientUploadId,
-                result,
-              ])
-            );
-            const chunkSucceeded = (payload.results ?? []).filter(
-              (result) => result.status === "ok"
-            ).length;
-            successCount += chunkSucceeded;
-
-            setUploadQueue((previous) =>
-              previous.map((item) => {
-                const result = resultMap.get(item.id);
-                if (!result) {
-                  return item;
-                }
-
-                if (result.status === "ok") {
-                  return {
-                    ...item,
-                    fileId: result.file?.id,
-                    ingestionJobId: result.ingestionJob?.id,
-                    status: result.ingestionJob?.id ? "ingesting" : "uploaded",
-                    failureCount: 0,
-                    error: undefined,
-                  };
-                }
-
-                return {
-                  ...item,
-                  status: "failed",
-                  failureCount: (item.failureCount ?? 0) + 1,
-                  error: result.error ?? "File metadata registration failed",
-                };
-              })
-            );
-          } catch (error) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : "File metadata registration failed";
-            const queueItemIds = registerChunk.map(
-              (entry) => entry.queueItemId
-            );
             setUploadQueue((previous) =>
               previous.map((item) =>
-                queueItemIds.includes(item.id)
+                item.id === queueItemId ? { ...item, status: "uploaded" } : item
+              )
+            );
+            hasSuccessfulUpload = true;
+          } catch (error) {
+            await rollbackCreatedFolders(createdFoldersForCandidate);
+            setUploadQueue((previous) =>
+              previous.map((item) =>
+                item.id === queueItemId
                   ? {
                       ...item,
                       status: "failed",
-                      failureCount: (item.failureCount ?? 0) + 1,
-                      error: message,
+                      error:
+                        error instanceof Error
+                          ? error.message
+                          : "Unable to upload file",
                     }
                   : item
               )
@@ -2621,7 +1561,7 @@ export function FileExplorer() {
           }
         }
 
-        if (successCount > 0) {
+        if (hasSuccessfulUpload) {
           await Promise.all([loadFolder(), loadTree()]);
           emitSync();
         }
@@ -2640,26 +1580,18 @@ export function FileExplorer() {
   );
 
   const queueCard = (
-    <div
+    <Card
       className={cn(
-        "fixed right-4 bottom-4 z-40 w-[22rem] overflow-hidden rounded-lg border border-border/70 bg-background transition-all duration-300",
+        "fixed right-4 bottom-4 z-40 w-[20rem] border border-border/70 bg-background/90 py-3 shadow-lg backdrop-blur transition-all duration-500",
         isQueueVisible
           ? "translate-y-0 opacity-100"
           : "pointer-events-none translate-y-3 opacity-0"
       )}
     >
-      <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
-        <div className="min-w-0">
-          <p className="font-medium text-sm">Upload activity</p>
-          <p className="text-muted-foreground text-xs">
-            {uploadQueue.length === 0
-              ? "No recent uploads"
-              : `${uploadQueue.length} item${uploadQueue.length === 1 ? "" : "s"} in this session`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+      <CardHeader className="pb-1">
+        <CardTitle className="flex items-center justify-between text-xs">
+          <span>Upload Queue</span>
           <Badge
-            className="rounded-md"
             variant={
               uploadCount > 0
                 ? "secondary"
@@ -2674,74 +1606,42 @@ export function FileExplorer() {
                 ? `${failedCount} failed`
                 : "Idle"}
           </Badge>
-          <Button
-            className="h-7 w-7 rounded-md"
-            onClick={() => setUploadActivityOpen(false)}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <XCircle className="size-3.5" />
-            <span className="sr-only">Close upload activity</span>
-          </Button>
-        </div>
-      </div>
-      <div className="max-h-72 overflow-y-auto">
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="max-h-56 space-y-2 overflow-y-auto">
         {uploadQueue.length === 0 ? (
-          <p className="px-4 py-4 text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-xs">
             New uploads will appear here.
           </p>
         ) : (
           uploadQueue.slice(0, 8).map((item) => {
             const meta = statusMeta(item.status);
             return (
-              <div
-                className="border-t border-border/60 px-4 py-3 first:border-t-0"
-                key={item.id}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate font-medium text-xs">{item.name}</p>
-                      <span className="text-muted-foreground">{meta.icon}</span>
-                    </div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{meta.label}</span>
-                      <span>&middot;</span>
-                      <span>{item.sizeLabel}</span>
-                    </div>
-                  </div>
-                  <span className="text-[11px] text-muted-foreground">
-                    {meta.progress}%
-                  </span>
+              <div className="rounded-md border p-2" key={item.id}>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p className="truncate text-xs font-medium">{item.name}</p>
+                  <span>{meta.icon}</span>
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted/70">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-[width] duration-300",
-                      item.status === "failed"
-                        ? "bg-destructive/70"
-                        : item.status === "uploaded"
-                          ? "bg-emerald-500/80"
-                          : "bg-foreground/35"
-                    )}
-                    style={{ width: `${meta.progress}%` }}
-                  />
-                </div>
+                <Progress value={meta.progress}>
+                  <ProgressLabel className="text-[11px]">
+                    {meta.label}
+                  </ProgressLabel>
+                  <ProgressValue className="text-[11px]" />
+                </Progress>
+                <p className="mt-1 text-right text-[11px] text-muted-foreground">
+                  {item.sizeLabel}
+                </p>
                 {item.error ? (
-                  <p className="mt-2 text-[11px] text-destructive">
+                  <p className="mt-1 text-[11px] text-destructive">
                     {item.error}
-                    {item.failureCount && item.failureCount > 1
-                      ? ` (repeated ${item.failureCount}x)`
-                      : ""}
                   </p>
                 ) : null}
               </div>
             );
           })
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 
   const createFolder = useCallback(
@@ -2790,102 +1690,6 @@ export function FileExplorer() {
       emitSync();
     },
     [allFolders, emitSync, loadFolder, loadTree, workspaceUuid]
-  );
-
-  const updateFolderAppearance = useCallback(
-    async (
-      folderId: string,
-      updates: { bannerUrl?: string | null; iconColor?: string | null }
-    ) => {
-      if (!workspaceUuid) {
-        return;
-      }
-
-      const folder = allFolders.find((entry) => entry.id === folderId);
-      if (folder?.readOnly) {
-        return;
-      }
-
-      await fetch(`/api/workspaces/${workspaceUuid}/folders/${folderId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      await Promise.all([loadFolder({ silent: true }), loadTree()]);
-      emitSync();
-    },
-    [allFolders, emitSync, loadFolder, loadTree, workspaceUuid]
-  );
-
-  const triggerBannerPicker = useCallback((folderId: string) => {
-    if (!folderId) {
-      return;
-    }
-    if (bannerUploadBusy) {
-      return;
-    }
-    const folder = allFolders.find((entry) => entry.id === folderId);
-    if (folder?.readOnly) {
-      return;
-    }
-    if (!bannerInputRef.current) {
-      return;
-    }
-    bannerInputRef.current.dataset.folderId = folderId;
-    bannerInputRef.current.click();
-  }, [allFolders, bannerUploadBusy]);
-
-  const handleBannerInputChange = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      const targetFolderId =
-        event.currentTarget.dataset.folderId ?? currentFolder?.id ?? "";
-
-      event.currentTarget.value = "";
-
-      if (!(file && targetFolderId)) {
-        return;
-      }
-
-      const folder = allFolders.find((entry) => entry.id === targetFolderId);
-      if (folder?.readOnly) {
-        return;
-      }
-
-      setBannerUploadBusy(true);
-      try {
-        const [accentColor, uploadedFiles] = await Promise.all([
-          extractImageAccentColor(file),
-          startBannerUpload([file]),
-        ]);
-        const uploaded = uploadedFiles?.[0];
-        const uploadedUrl =
-          ("ufsUrl" in (uploaded ?? {}) &&
-            typeof uploaded?.ufsUrl === "string" &&
-            uploaded.ufsUrl) ||
-          ("url" in (uploaded ?? {}) &&
-            typeof uploaded?.url === "string" &&
-            uploaded.url) ||
-          null;
-
-        if (!uploadedUrl) {
-          return;
-        }
-
-        await updateFolderAppearance(targetFolderId, {
-          bannerUrl: uploadedUrl,
-          iconColor: accentColor ?? null,
-        });
-      } finally {
-        setBannerUploadBusy(false);
-      }
-    },
-    [
-      allFolders,
-      currentFolder?.id,
-      startBannerUpload,
-      updateFolderAppearance,
-    ]
   );
 
   const renameFile = useCallback(
@@ -2969,125 +1773,40 @@ export function FileExplorer() {
     [allFolders, emitSync, files, loadFolder, workspaceUuid]
   );
 
-  const resolveItemKind = useCallback(
-    (itemId: string): BulkItemKind | null => {
-      if (allFolders.some((folder) => folder.id === itemId)) {
-        return "folder";
-      }
-      if (allFiles.some((file) => file.id === itemId)) {
-        return "file";
-      }
-      return null;
-    },
-    [allFiles, allFolders]
-  );
-
-  const resolveContextActionItems = useCallback(
-    (itemId: string, fallbackKind: BulkItemKind) => {
-      const actionIds = selection.selectedIds.has(itemId)
-        ? Array.from(selection.selectedIds)
-        : [itemId];
-
-      return actionIds
-        .map((id) => ({
-          id,
-          kind: resolveItemKind(id) ?? (id === itemId ? fallbackKind : null),
-        }))
-        .filter(
-          (
-            item
-          ): item is {
-            id: string;
-            kind: BulkItemKind;
-          } => Boolean(item.kind)
-        );
-    },
-    [resolveItemKind, selection.selectedIds]
-  );
-
-  const resolveSelectedActionItems = useCallback(() => {
-    return Array.from(selection.selectedIds)
-      .map((id) => {
-        const kind = resolveItemKind(id);
-        return kind ? { id, kind } : null;
-      })
-      .filter(
-        (
-          item
-        ): item is {
-          id: string;
-          kind: BulkItemKind;
-        } => Boolean(item)
-      );
-  }, [resolveItemKind, selection.selectedIds]);
-
-  const runBulkMutation = useCallback(
-    async (payload: {
-      items: Array<{ id: string; kind: BulkItemKind }>;
-      operation: "delete" | "move";
-      targetFolderId?: string;
-    }) => {
-      if (!(workspaceUuid && payload.items.length > 0)) {
-        return null;
-      }
-
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/items/bulk`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error("Bulk operation failed");
-      }
-
-      return (await response.json()) as BulkMutationResponse;
-    },
-    [workspaceUuid]
-  );
-
-  const deleteSelectionItems = useCallback(
-    async (items: Array<{ id: string; kind: BulkItemKind }>) => {
-      const writableItems = items.filter((item) => {
-        if (item.kind === "folder") {
-          const folder = allFolders.find((entry) => entry.id === item.id);
-          return !folder?.readOnly;
-        }
-        const file = allFiles.find((entry) => entry.id === item.id);
-        return !file?.readOnly;
-      });
-
-      if (writableItems.length === 0) {
+  const deleteFolder = useCallback(
+    async (folderId: string) => {
+      if (!workspaceUuid) {
         return;
       }
-
-      const result = await runBulkMutation({
-        operation: "delete",
-        items: writableItems,
-      });
-
-      if (result?.summary?.failed) {
-        const failedCount = result.summary.failed;
-        const total = result.summary.total ?? writableItems.length;
-        window.alert(`Deleted ${total - failedCount} of ${total} item(s).`);
+      const folder = allFolders.find((entry) => entry.id === folderId);
+      if (folder?.readOnly) {
+        return;
       }
-
+      await fetch(`/api/workspaces/${workspaceUuid}/folders/${folderId}`, {
+        method: "DELETE",
+      });
       await Promise.all([loadFolder(), loadTree()]);
       emitSync();
-      selection.clearSelection();
     },
-    [
-      allFiles,
-      allFolders,
-      emitSync,
-      loadFolder,
-      loadTree,
-      runBulkMutation,
-      selection,
-    ]
+    [allFolders, emitSync, loadFolder, loadTree, workspaceUuid]
+  );
+
+  const deleteFile = useCallback(
+    async (fileId: string) => {
+      if (!workspaceUuid) {
+        return;
+      }
+      const file = files.find((entry) => entry.id === fileId);
+      if (file?.readOnly) {
+        return;
+      }
+      await fetch(`/api/workspaces/${workspaceUuid}/files/${fileId}`, {
+        method: "DELETE",
+      });
+      await loadFolder();
+      emitSync();
+    },
+    [emitSync, files, loadFolder, workspaceUuid]
   );
 
   const moveItemsToFolder = useCallback(
@@ -3103,60 +1822,31 @@ export function FileExplorer() {
         return;
       }
 
-      const items = itemIds
-        .filter((itemId) => itemId !== targetFolderId)
-        .map((itemId) => {
-          const kind = resolveItemKind(itemId);
-          if (!kind) {
-            return null;
-          }
+      const folderIds = new Set(folders.map((folder) => folder.id));
+      const fileIds = new Set(files.map((file) => file.id));
 
-          if (kind === "folder") {
-            const folder = allFolders.find((entry) => entry.id === itemId);
+      await Promise.all(
+        itemIds.map(async (itemId) => {
+          if (folderIds.has(itemId) && itemId !== targetFolderId) {
+            const folder = folders.find((entry) => entry.id === itemId);
             if (folder?.readOnly) {
-              return null;
+              return;
             }
-          } else {
-            const file = allFiles.find((entry) => entry.id === itemId);
-            if (file?.readOnly) {
-              return null;
-            }
+            await moveFolder(itemId, targetFolderId);
+            return;
           }
-
-          return { id: itemId, kind };
+          if (fileIds.has(itemId)) {
+            const file = files.find((entry) => entry.id === itemId);
+            if (file?.readOnly) {
+              return;
+            }
+            await moveFile(itemId, targetFolderId);
+          }
         })
-        .filter(
-          (
-            item
-          ): item is {
-            id: string;
-            kind: BulkItemKind;
-          } => Boolean(item)
-        );
-
-      if (items.length === 0) {
-        return;
-      }
-
-      await runBulkMutation({
-        operation: "move",
-        targetFolderId,
-        items,
-      });
-      await Promise.all([loadFolder(), loadTree()]);
-      emitSync();
+      );
       selection.clearSelection();
     },
-    [
-      allFiles,
-      allFolders,
-      emitSync,
-      loadFolder,
-      loadTree,
-      resolveItemKind,
-      runBulkMutation,
-      selection,
-    ]
+    [allFolders, files, folders, moveFile, moveFolder, selection]
   );
 
   const updateTouchDropTarget = useCallback(
@@ -3226,92 +1916,6 @@ export function FileExplorer() {
     [moveItemsToFolder, updateTouchDropTarget]
   );
 
-  useEffect(() => {
-    const processed = processedFilesIntentVersionsRef.current;
-
-    const openSelectedItem = () => {
-      const orderedSelection = visibleItemIds.filter((id) =>
-        selection.selectedIds.has(id)
-      );
-      const firstSelectedId = orderedSelection[0];
-      if (!firstSelectedId) {
-        return;
-      }
-      const folder = allFolders.find((entry) => entry.id === firstSelectedId);
-      if (folder) {
-        navigateToFolder(folder.id);
-        return;
-      }
-      const file = allFiles.find((entry) => entry.id === firstSelectedId);
-      if (file) {
-        selectFile(file.id);
-      }
-    };
-
-    const deleteSelectedItems = () => {
-      const items = resolveSelectedActionItems();
-      if (items.length === 0) {
-        return;
-      }
-      void deleteSelectionItems(items);
-    };
-
-    const moveSelectedItemsUp = () => {
-      const parentFolderId = breadcrumbs[breadcrumbs.length - 2]?.id;
-      if (!parentFolderId) {
-        return;
-      }
-      const selectedIds = Array.from(selection.selectedIds);
-      if (selectedIds.length === 0) {
-        return;
-      }
-      void moveItemsToFolder(selectedIds, parentFolderId);
-    };
-
-    const goParentFolder = () => {
-      const parentFolderId = breadcrumbs[breadcrumbs.length - 2]?.id;
-      if (!parentFolderId) {
-        return;
-      }
-      navigateToFolder(parentFolderId);
-    };
-
-    if (openSelectionIntentVersion > processed.openSelection) {
-      processed.openSelection = openSelectionIntentVersion;
-      openSelectedItem();
-    }
-
-    if (deleteSelectionIntentVersion > processed.deleteSelection) {
-      processed.deleteSelection = deleteSelectionIntentVersion;
-      deleteSelectedItems();
-    }
-
-    if (moveSelectionUpIntentVersion > processed.moveSelectionUp) {
-      processed.moveSelectionUp = moveSelectionUpIntentVersion;
-      moveSelectedItemsUp();
-    }
-
-    if (goParentIntentVersion > processed.goParent) {
-      processed.goParent = goParentIntentVersion;
-      goParentFolder();
-    }
-  }, [
-    allFiles,
-    allFolders,
-    breadcrumbs,
-    deleteSelectionIntentVersion,
-    deleteSelectionItems,
-    goParentIntentVersion,
-    moveItemsToFolder,
-    moveSelectionUpIntentVersion,
-    navigateToFolder,
-    openSelectionIntentVersion,
-    resolveSelectedActionItems,
-    selectFile,
-    selection.selectedIds,
-    visibleItemIds,
-  ]);
-
   const handleCanvasDragEnter = useCallback(() => {
     if (isCurrentFolderReadOnly) {
       return;
@@ -3378,7 +1982,9 @@ export function FileExplorer() {
 
   const shareActiveFileWithEmail = async () => {
     if (
-      !(activeFile && workspaceUuid && shareEmail.trim()) ||
+      !activeFile ||
+      !workspaceUuid ||
+      !shareEmail.trim() ||
       activeFile.readOnly
     ) {
       return;
@@ -3392,10 +1998,7 @@ export function FileExplorer() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: shareEmail.trim(),
-            permission: fileSharePermission,
-          }),
+          body: JSON.stringify({ email: shareEmail.trim() }),
         }
       );
       if (!response.ok) {
@@ -3410,7 +2013,7 @@ export function FileExplorer() {
   };
 
   const generateActiveFileShareLink = async () => {
-    if (!(activeFile && workspaceUuid) || activeFile.readOnly) {
+    if (!activeFile || !workspaceUuid || activeFile.readOnly) {
       return;
     }
     setShareBusy(true);
@@ -3434,123 +2037,8 @@ export function FileExplorer() {
     }
   };
 
-  const shareCurrentFolderWithEmail = async () => {
-    if (
-      !(
-        currentFolder &&
-        workspaceUuid &&
-        folderShareEmail.trim() &&
-        !isAtWorkspaceRoot
-      ) ||
-      currentFolder.readOnly
-    ) {
-      return;
-    }
-
-    setFolderShareBusy(true);
-    setFolderShareStatus(null);
-    try {
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/folders/${currentFolder.id}/share/grants`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: folderShareEmail.trim(),
-            permission: folderSharePermission,
-          }),
-        }
-      );
-      if (!response.ok) {
-        setFolderShareStatus("Unable to add access.");
-        return;
-      }
-      const payload = (await response.json()) as { shareUrl?: string };
-      setFolderShareEmail("");
-      setFolderShareLink(payload.shareUrl ?? null);
-      setFolderShareStatus("Access granted.");
-    } finally {
-      setFolderShareBusy(false);
-    }
-  };
-
-  const generateCurrentFolderShareLink = async () => {
-    if (!(currentFolder && workspaceUuid) || isAtWorkspaceRoot || currentFolder.readOnly) {
-      return;
-    }
-    setFolderShareBusy(true);
-    setFolderShareStatus(null);
-    try {
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/folders/${currentFolder.id}/share/link`,
-        { method: "POST" }
-      );
-      if (!response.ok) {
-        setFolderShareStatus("Unable to generate link.");
-        return;
-      }
-      const payload = (await response.json()) as { shareUrl?: string };
-      if (payload.shareUrl) {
-        setFolderShareLink(payload.shareUrl);
-        setFolderShareStatus("Share link generated.");
-      }
-    } finally {
-      setFolderShareBusy(false);
-    }
-  };
-
-  const copyFileShareLink = useCallback(
-    async (file: FileRecord) => {
-      if (!workspaceUuid || file.readOnly) {
-        return;
-      }
-
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/files/${file.id}/share/link`,
-        { method: "POST" }
-      );
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = (await response.json()) as { shareUrl?: string };
-      if (!payload.shareUrl) {
-        return;
-      }
-
-      await navigator.clipboard.writeText(payload.shareUrl);
-      setShareStatus("Link copied.");
-    },
-    [workspaceUuid]
-  );
-
-  const copyFolderShareLink = useCallback(
-    async (folder: FolderRecord) => {
-      if (!workspaceUuid || folder.readOnly) {
-        return;
-      }
-
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/folders/${folder.id}/share/link`,
-        { method: "POST" }
-      );
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = (await response.json()) as { shareUrl?: string };
-      if (!payload.shareUrl) {
-        return;
-      }
-
-      await navigator.clipboard.writeText(payload.shareUrl);
-      setFolderShareStatus("Link copied.");
-    },
-    [workspaceUuid]
-  );
-
   const shareWorkspaceWithEmail = async () => {
-    if (!(workspaceUuid && workspaceShareEmail.trim())) {
+    if (!workspaceUuid || !workspaceShareEmail.trim()) {
       return;
     }
     setWorkspaceShareBusy(true);
@@ -3602,17 +2090,7 @@ export function FileExplorer() {
         setWorkspaceShareStatus("Unable to notify team.");
         return;
       }
-      const payload = (await response.json()) as {
-        emailSentCount?: number;
-        queued?: boolean;
-        recipients?: number;
-      };
-      if (payload.queued) {
-        setWorkspaceShareStatus(
-          `Workspace notifications queued for ${payload.recipients ?? 0} teammates.`
-        );
-        return;
-      }
+      const payload = (await response.json()) as { emailSentCount?: number };
       setWorkspaceShareStatus(
         `Workspace notification sent to ${payload.emailSentCount ?? 0} teammates.`
       );
@@ -3621,100 +2099,13 @@ export function FileExplorer() {
     }
   };
 
-  const duplicateItem = useCallback(
-    async (
-      item:
-        | { id: string; kind: "file"; parentId?: string | null }
-        | { id: string; kind: "folder"; parentId?: string | null }
-    ) => {
-      if (!workspaceUuid) {
-        return;
-      }
-
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/items/duplicate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: item.id,
-            kind: item.kind,
-            parentId: item.parentId,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        return;
-      }
-
-      await Promise.all([loadFolder(), loadTree()]);
-      emitSync();
-    },
-    [emitSync, loadFolder, loadTree, workspaceUuid]
-  );
-
-  const downloadItemArchive = useCallback(
-    async (item: { id: string; kind: "file" | "folder"; name: string }) => {
-      if (!workspaceUuid) {
-        return;
-      }
-
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/items/archive`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: item.id,
-            kind: item.kind,
-          }),
-        }
-      );
-      if (!response.ok) {
-        return;
-      }
-
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `${item.name}.zip`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-    },
-    [workspaceUuid]
-  );
-
-  const downloadFileDirect = useCallback(async (file: FileRecord) => {
-    try {
-      const response = await fetch(file.storageUrl);
-      if (!response.ok) {
-        throw new Error("Download failed");
-      }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = file.name;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch {
-      window.open(file.storageUrl, "_blank", "noopener,noreferrer");
-    }
-  }, []);
-
   if (activeFile) {
     const { isAudio, isImage, isPdf, isVideo } = detectPreviewKind(activeFile);
     const isOpenedCached = isFileOpenedCached(activeFile.id);
 
     return (
       <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <div className="flex h-12 items-center justify-between gap-2 border-border/70 border-b bg-card/40 px-3">
+        <div className="flex h-12 items-center justify-between gap-2 border-b border-border/70 bg-card/40 px-3">
           <div className="flex min-w-0 items-center gap-1 text-muted-foreground text-xs">
             <Button
               className="size-5"
@@ -3732,7 +2123,7 @@ export function FileExplorer() {
               Edited{" "}
               {toUpdatedLabel(activeFile.updatedAt ?? activeFile.createdAt)} ago
             </span>
-            {activeFile.readOnly ? null : (
+            {!activeFile.readOnly ? (
               <Dialog>
                 <DialogTrigger
                   render={
@@ -3750,52 +2141,48 @@ export function FileExplorer() {
                   <DialogHeader>
                     <DialogTitle>Share file</DialogTitle>
                     <DialogDescription>
-                      Grant viewer or editor access by email, or create a signed link.
+                      Grant read-only access by email or create a signed link.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-2">
-                    <Label htmlFor="file-share-permission">Permission</Label>
-                    <select
-                      className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                      id="file-share-permission"
-                      onChange={(event) =>
-                        setFileSharePermission(
-                          event.target.value === "editor" ? "editor" : "viewer"
-                        )
-                      }
-                      value={fileSharePermission}
+                    <label
+                      className="font-medium text-sm"
+                      htmlFor="file-share-email"
                     >
-                      <option value="viewer">Viewer (read-only)</option>
-                      <option value="editor">Editor</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="file-share-email">Add people</Label>
+                      Add people
+                    </label>
                     <div className="flex items-center gap-2">
-                      <EmailSuggestionInput
+                      <Input
                         id="file-share-email"
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") {
-                            return;
-                          }
-                          event.preventDefault();
-                          shareActiveFileWithEmail().catch(() => undefined);
-                        }}
+                        list="file-share-email-suggestions"
+                        onChange={(event) => setShareEmail(event.target.value)}
                         onFocus={() => {
                           void loadShareSuggestions(
                             shareEmail,
                             setShareSuggestions
                           );
                         }}
-                        onValueChange={setShareEmail}
                         placeholder="name@example.com"
-                        suggestions={shareSuggestions}
+                        type="email"
                         value={shareEmail}
                       />
+                      <datalist id="file-share-email-suggestions">
+                        {shareSuggestions.map((item) => (
+                          <option
+                            key={item.email}
+                            label={
+                              item.name
+                                ? `${item.name} (${item.email})`
+                                : item.email
+                            }
+                            value={item.email}
+                          />
+                        ))}
+                      </datalist>
                       <Button
                         disabled={shareBusy}
                         onClick={() => {
-                          shareActiveFileWithEmail().catch(() => undefined);
+                          void shareActiveFileWithEmail();
                         }}
                         size="sm"
                         type="button"
@@ -3806,7 +2193,9 @@ export function FileExplorer() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Share link (7 days)</Label>
+                    <label className="font-medium text-sm">
+                      Share link (7 days)
+                    </label>
                     <div className="flex items-center gap-2">
                       <Input readOnly value={shareLink ?? ""} />
                       <Button
@@ -3826,9 +2215,7 @@ export function FileExplorer() {
                           if (!shareLink) {
                             return;
                           }
-                          navigator.clipboard.writeText(shareLink).catch(() => {
-                            setShareStatus("Unable to copy link.");
-                          });
+                          void navigator.clipboard.writeText(shareLink);
                           setShareStatus("Link copied.");
                         }}
                         size="sm"
@@ -3846,20 +2233,7 @@ export function FileExplorer() {
                   ) : null}
                 </DialogContent>
               </Dialog>
-            )}
-            <Button
-              className="size-5"
-              onClick={toggleCurrentPinnedItem}
-              size="icon-xs"
-              type="button"
-              variant={isCurrentPinned ? "secondary" : "ghost"}
-            >
-              {isCurrentPinned ? (
-                <PinOff className="size-3" />
-              ) : (
-                <Pin className="size-3" />
-              )}
-            </Button>
+            ) : null}
             <Button
               className="size-5"
               onClick={() =>
@@ -3875,116 +2249,6 @@ export function FileExplorer() {
             >
               <ArrowUp className="size-3" />
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    className="size-5"
-                    size="icon-xs"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                <MoreHorizontal className="size-3" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuItem onClick={toggleCurrentPinnedItem}>
-                  {isCurrentPinned ? (
-                    <PinOff className="size-3.5" />
-                  ) : (
-                    <Pin className="size-3.5" />
-                  )}
-                  {isCurrentPinned ? "Unpin" : "Pin"}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    openRenameFileDialog(activeFile);
-                  }}
-                >
-                  <Pencil className="size-3.5" />
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    void duplicateItem({
-                      id: activeFile.id,
-                      kind: "file",
-                      parentId: activeFile.folderId,
-                    });
-                  }}
-                >
-                  <Copy className="size-3.5" />
-                  Duplicate
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => {
-                    void copyFileShareLink(activeFile);
-                  }}
-                >
-                  <Share2 className="size-3.5" />
-                  Share
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <FolderInput className="size-3.5" />
-                    Move To
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    {allFolders
-                      .filter((folder) => !folder.readOnly)
-                      .slice(0, 20)
-                      .map((folder) => (
-                        <DropdownMenuItem
-                          key={folder.id}
-                          onClick={() => {
-                            void moveFile(activeFile.id, folder.id);
-                          }}
-                        >
-                          {folder.name}
-                        </DropdownMenuItem>
-                      ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuItem
-                  onClick={() => {
-                    downloadFileDirect(activeFile);
-                  }}
-                >
-                  <ArrowDownToLine className="size-3.5" />
-                  Download
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <Info className="size-3.5" />
-                    Information
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-72">
-                    {currentInfoEntries.map((entry) => (
-                      <div
-                        className="flex items-start justify-between gap-3 px-2 py-1.5 text-xs"
-                        key={entry.label}
-                      >
-                        <span className="text-muted-foreground">{entry.label}</span>
-                        <span className="max-w-[12rem] text-right text-foreground">
-                          {entry.value}
-                        </span>
-                      </div>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => {
-                    void deleteSelectionItems([{ id: activeFile.id, kind: "file" }]);
-                  }}
-                  variant="destructive"
-                >
-                  <Trash2 className="size-3.5" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
 
@@ -3993,32 +2257,19 @@ export function FileExplorer() {
             <div className="h-full p-3">
               <PDFViewer
                 className="h-[calc(100svh-7.5rem)] max-h-none rounded-xl border border-border/70"
-                fallbackHighlightText={query}
-                highlightPage={activeRetrievalResult?.page ?? null}
-                highlightText={
-                  activeRetrievalResult?.highlightText ??
-                  activeRetrievalResult?.snippet ??
-                  query
-                }
                 source={activeFile.storageUrl}
               />
             </div>
           ) : isVideo && !videoLoadFailed ? (
             <div className="mx-auto flex h-full max-w-[1200px] items-center justify-center p-4">
               <FileMediaPlayer
-                activeRangeIndex={
-                  activeFileRetrievalResults.findIndex(
-                    (item) => item.chunkId === activeRetrievalChunkId
-                  ) >= 0
-                    ? activeFileRetrievalResults.findIndex(
-                        (item) => item.chunkId === activeRetrievalChunkId
-                      )
-                    : null
-                }
-                captionsSrc={activeVideoCaptionsSrc}
                 kind="video"
                 mimeType={activeFile.mimeType}
                 name={activeFile.name}
+                openedCached={
+                  isOpenedCached ||
+                  getWarmState(activeFile.storageUrl) === "warm"
+                }
                 onError={() => {
                   if (!mediaStreamFailed && activeMediaStreamUrl) {
                     setMediaStreamFailed(true);
@@ -4026,21 +2277,6 @@ export function FileExplorer() {
                   }
                   setVideoLoadFailed(true);
                 }}
-                openedCached={
-                  isOpenedCached ||
-                  getWarmState(activeFile.storageUrl) === "warm"
-                }
-                retrievalRanges={activeFileRetrievalResults
-                  .filter(
-                    (item) =>
-                      typeof item.startMs === "number" &&
-                      Number.isFinite(item.startMs)
-                  )
-                  .map((item) => ({
-                    startMs: item.startMs as number,
-                    endMs: item.endMs,
-                  }))}
-                seekToMs={activeRetrievalResult?.startMs ?? null}
                 src={activeMediaSrc ?? activeFile.storageUrl}
               />
             </div>
@@ -4050,6 +2286,10 @@ export function FileExplorer() {
                 kind="audio"
                 mimeType={activeFile.mimeType}
                 name={activeFile.name}
+                openedCached={
+                  isOpenedCached ||
+                  getWarmState(activeFile.storageUrl) === "warm"
+                }
                 onError={() => {
                   if (!mediaStreamFailed && activeMediaStreamUrl) {
                     setMediaStreamFailed(true);
@@ -4057,10 +2297,6 @@ export function FileExplorer() {
                   }
                   setAudioLoadFailed(true);
                 }}
-                openedCached={
-                  isOpenedCached ||
-                  getWarmState(activeFile.storageUrl) === "warm"
-                }
                 src={activeMediaSrc ?? activeFile.storageUrl}
               />
             </div>
@@ -4103,454 +2339,75 @@ export function FileExplorer() {
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden bg-background text-foreground">
-      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-4 pt-3 pb-1">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-            <Button
-              aria-label="Go back"
-              className="rounded-md"
-              disabled={!backRoute}
-              onClick={() => {
-                if (backRoute) {
-                  router.push(backRoute as Route);
-                }
-              }}
-            size="icon-xs"
-            type="button"
-            variant="outline"
+    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/70 px-3">
+        <SidebarTrigger className="h-8 w-8 rounded-md" />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                className="h-8 rounded-md px-2"
+                size="sm"
+                type="button"
+                variant="outline"
+              />
+            }
           >
-            <ArrowLeft className="size-3.5" />
-          </Button>
-            <Button
-              aria-label="Go forward"
-              className="rounded-md"
-              disabled={!forwardRoute}
-              onClick={() => {
-                if (forwardRoute) {
-                  router.push(forwardRoute as Route);
-                }
-              }}
-            size="icon-xs"
-            type="button"
-            variant="outline"
-          >
-            <ArrowRight className="size-3.5" />
-          </Button>
-          <Breadcrumb className="min-w-0 flex-1">
-            <BreadcrumbList className="flex-nowrap overflow-x-auto whitespace-nowrap pr-2">
-              {breadcrumbs.map((crumb, index) => {
-                const isLast = index === breadcrumbs.length - 1;
-                const Icon = index === 0 ? House : Folder;
-                return (
-                  <BreadcrumbItem key={crumb.id}>
-                    {isLast ? (
-                      <BreadcrumbPage className="inline-flex items-center gap-2">
-                        <Icon className="size-3.5 text-muted-foreground" />
-                        <span>{crumb.name}</span>
-                      </BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink
-                        className="inline-flex items-center gap-2"
-                        href="#"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          navigateToFolder(crumb.id);
-                        }}
-                      >
-                        <Icon className="size-3.5 text-muted-foreground" />
-                        <span>{crumb.name}</span>
-                      </BreadcrumbLink>
-                    )}
-                    {isLast ? null : <BreadcrumbSeparator />}
-                  </BreadcrumbItem>
-                );
-              })}
-            </BreadcrumbList>
-          </Breadcrumb>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Dialog>
-            <DialogTrigger
-              render={
-                <Button className="rounded-md" size="sm" type="button" variant="outline" />
+            <span className="text-base leading-none">+</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-40">
+            <DropdownMenuItem
+              disabled={isCurrentFolderReadOnly}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Upload file
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={isCurrentFolderReadOnly}
+              onClick={() => folderInputRef.current?.click()}
+            >
+              Upload folder
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() =>
+                window.dispatchEvent(
+                  new Event(DASHBOARD_FILES_FOCUS_SEARCH_EVENT)
+                )
               }
             >
-              <Share2 className="size-3.5" />
-              Share
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>
-                  {isAtWorkspaceRoot ? "Share workspace" : "Share folder"}
-                </DialogTitle>
-                <DialogDescription>
-                  {isAtWorkspaceRoot
-                    ? "Add a teammate by email, or notify the whole team with a workspace link."
-                    : "Grant viewer or editor access by email, or create a signed folder link."}
-                </DialogDescription>
-              </DialogHeader>
-              {!isAtWorkspaceRoot ? (
-                <div className="space-y-2">
-                  <Label htmlFor="folder-share-permission">Permission</Label>
-                  <select
-                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                    id="folder-share-permission"
-                    onChange={(event) =>
-                      setFolderSharePermission(
-                        event.target.value === "editor" ? "editor" : "viewer"
-                      )
-                    }
-                    value={folderSharePermission}
-                  >
-                    <option value="viewer">Viewer (read-only)</option>
-                    <option value="editor">Editor</option>
-                  </select>
-                </div>
-              ) : null}
-              <div className="space-y-2">
-                <Label htmlFor="workspace-share-email">
-                  {isAtWorkspaceRoot ? "Add teammate" : "Add people"}
-                </Label>
-                <div className="flex items-center gap-2">
-                  <EmailSuggestionInput
-                    id="workspace-share-email"
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") {
-                        return;
-                      }
-                      event.preventDefault();
-                      if (isAtWorkspaceRoot) {
-                        shareWorkspaceWithEmail().catch(() => undefined);
-                        return;
-                      }
-                      shareCurrentFolderWithEmail().catch(() => undefined);
-                    }}
-                    onFocus={() => {
-                      void loadShareSuggestions(
-                        isAtWorkspaceRoot ? workspaceShareEmail : folderShareEmail,
-                        isAtWorkspaceRoot
-                          ? setWorkspaceShareSuggestions
-                          : setFolderShareSuggestions
-                      );
-                    }}
-                    onValueChange={
-                      isAtWorkspaceRoot
-                        ? setWorkspaceShareEmail
-                        : setFolderShareEmail
-                    }
-                    placeholder="name@example.com"
-                    suggestions={
-                      isAtWorkspaceRoot
-                        ? workspaceShareSuggestions
-                        : folderShareSuggestions
-                    }
-                    value={
-                      isAtWorkspaceRoot ? workspaceShareEmail : folderShareEmail
-                    }
-                  />
-                  <Button
-                    disabled={
-                      isAtWorkspaceRoot ? workspaceShareBusy : folderShareBusy
-                    }
-                    onClick={() => {
-                      if (isAtWorkspaceRoot) {
-                        shareWorkspaceWithEmail().catch(() => undefined);
-                        return;
-                      }
-                      shareCurrentFolderWithEmail().catch(() => undefined);
-                    }}
-                    size="sm"
-                    type="button"
-                    variant="secondary"
-                  >
-                    Add
-                  </Button>
-                </div>
-              </div>
-              {!isAtWorkspaceRoot ? (
-                <div className="space-y-2">
-                  <Label>Share link (7 days)</Label>
-                  <div className="flex items-center gap-2">
-                    <Input readOnly value={folderShareLink ?? ""} />
-                    <Button
-                      disabled={folderShareBusy}
-                      onClick={() => {
-                        void generateCurrentFolderShareLink();
-                      }}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                    >
-                      Generate
-                    </Button>
-                    <Button
-                      disabled={!folderShareLink}
-                      onClick={() => {
-                        if (!folderShareLink) {
-                          return;
-                        }
-                        navigator.clipboard.writeText(folderShareLink).catch(() => {
-                          setFolderShareStatus("Unable to copy link.");
-                        });
-                        setFolderShareStatus("Link copied.");
-                      }}
-                      size="sm"
-                      type="button"
-                      variant="ghost"
-                    >
-                      Copy
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-              <DialogFooter>
-                {isAtWorkspaceRoot ? (
-                  <Button
-                    disabled={workspaceShareBusy}
-                    onClick={() => {
-                      void notifyWorkspaceTeam();
-                    }}
-                    type="button"
-                    variant="outline"
-                  >
-                    Notify whole team
-                  </Button>
-                ) : null}
-              </DialogFooter>
-              {isAtWorkspaceRoot && workspaceShareStatus ? (
-                <p className="text-muted-foreground text-xs">
-                  {workspaceShareStatus}
-                </p>
-              ) : null}
-              {!isAtWorkspaceRoot && folderShareStatus ? (
-                <p className="text-muted-foreground text-xs">
-                  {folderShareStatus}
-                </p>
-              ) : null}
-            </DialogContent>
-          </Dialog>
-          <Button
-            className="rounded-md"
-            onClick={toggleCurrentPinnedItem}
-            size="sm"
-            type="button"
-            variant={isCurrentPinned ? "secondary" : "outline"}
-          >
-            {isCurrentPinned ? (
-              <PinOff className="size-3.5" />
-            ) : (
-              <Pin className="size-3.5" />
-            )}
-            {isCurrentPinned ? "Unpin" : "Pin"}
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  aria-label="More actions"
-                  className="rounded-md"
-                  size="icon-sm"
-                  type="button"
-                  variant="outline"
-                />
-              }
+              Search tools
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <div className="ml-1 flex min-w-0 items-center gap-1 overflow-x-auto">
+          {breadcrumbs.map((crumb) => (
+            <Button
+              className="h-7 rounded-md px-2 text-xs"
+              key={crumb.id}
+              onClick={() => navigateToFolder(crumb.id)}
+              size="xs"
+              type="button"
+              variant={crumb.id === currentFolderId ? "secondary" : "ghost"}
             >
-              <MoreHorizontal className="size-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onClick={toggleCurrentPinnedItem}>
-                {isCurrentPinned ? (
-                  <PinOff className="size-3.5" />
-                ) : (
-                  <Pin className="size-3.5" />
-                )}
-                {isCurrentPinned ? "Unpin" : "Pin"}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    openRenameFolderDialog(currentFolder);
-                  }
-                }}
-              >
-                <Pencil className="size-3.5" />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void duplicateItem({
-                      id: currentFolder.id,
-                      kind: "folder",
-                      parentId: currentFolder.parentId,
-                    });
-                  }
-                }}
-              >
-                <Copy className="size-3.5" />
-                Duplicate
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void copyFolderShareLink(currentFolder);
-                  }
-                }}
-              >
-                <Share2 className="size-3.5" />
-                Share
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger disabled={isAtWorkspaceRoot || !currentFolder}>
-                  <FolderInput className="size-3.5" />
-                  Move To
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  {allFolders
-                    .filter(
-                      (folder) =>
-                        currentFolder &&
-                        folder.id !== currentFolder.id &&
-                        !folder.readOnly
-                    )
-                    .slice(0, 20)
-                    .map((folder) => (
-                      <DropdownMenuItem
-                        key={folder.id}
-                        onClick={() => {
-                          if (currentFolder) {
-                            void moveFolder(currentFolder.id, folder.id);
-                          }
-                        }}
-                      >
-                        {folder.name}
-                      </DropdownMenuItem>
-                    ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void downloadItemArchive({
-                      id: currentFolder.id,
-                      kind: "folder",
-                      name: currentFolder.name,
-                    });
-                  }
-                }}
-              >
-                <ArrowDownToLine className="size-3.5" />
-                Download (as Zip)
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <Info className="size-3.5" />
-                  Information
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-72">
-                  {currentInfoEntries.map((entry) => (
-                    <div
-                      className="flex items-start justify-between gap-3 px-2 py-1.5 text-xs"
-                      key={entry.label}
-                    >
-                      <span className="text-muted-foreground">{entry.label}</span>
-                      <span className="max-w-[12rem] text-right text-foreground">
-                        {entry.value}
-                      </span>
-                    </div>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void deleteSelectionItems([{ id: currentFolder.id, kind: "folder" }]);
-                  }
-                }}
-                variant="destructive"
-              >
-                <Trash2 className="size-3.5" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              {crumb.name}
+            </Button>
+          ))}
         </div>
       </div>
 
-      <div className="px-4 pt-0 pb-4">
-        {currentFolder ? (
-          <ContextMenu>
-            <ContextMenuTrigger>
-              <div className="relative -mx-4 mb-3 h-44 w-[calc(100%+2rem)] overflow-hidden">
-                <img
-                  alt={`${currentFolder.name} banner`}
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                  src={currentFolderBannerUrl}
-                />
-                {bannerUploadBusy ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-background/30 backdrop-blur-[1px]">
-                    <Spinner className="size-5" />
-                  </div>
-                ) : null}
-              </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent>
-              <ContextMenuItem
-                disabled={Boolean(currentFolder.readOnly) || bannerUploadBusy}
-                onClick={() => triggerBannerPicker(currentFolder.id)}
-              >
-                <FileImage className="size-3.5" />
-                Change banner
-              </ContextMenuItem>
-              <ContextMenuItem
-                disabled={Boolean(currentFolder.readOnly) || bannerUploadBusy}
-                onClick={() => {
-                  void updateFolderAppearance(currentFolder.id, {
-                    bannerUrl: null,
-                    iconColor: null,
-                  });
-                }}
-              >
-                <XCircle className="size-3.5" />
-                Reset banner
-              </ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
-        ) : null}
+      <div className="border-b border-border/70 px-3 py-3">
         <StylizedSearchBar
-          filePathById={filePathById}
           focusSignal={focusSearchSignal}
-          initialQuery={query}
-          initialResults={retrievalResults}
           items={searchableItems}
           maxWidth="max-w-none"
           onApplyWorkspaceFilter={(itemIds) => {
-            setVectorFilteredIds(
-              itemIds && itemIds.length > 0 ? new Set(itemIds) : null
-            );
+            setVectorFilteredIds(itemIds ? new Set(itemIds) : null);
           }}
-          onOpenFileById={openFileById}
-          onSearch={(searchQuery, results) => {
-            setQuery("");
-            setRetrievalResults(results);
-            if (results.length === 0) {
-              setActiveRetrievalChunkId(null);
-            }
-          }}
-          onSelectResult={(result) => {
-            setActiveRetrievalChunkId(result.chunkId ?? null);
-            openSearchResult(result);
+          onSearch={(searchQuery) => {
+            setQuery(searchQuery);
           }}
           placeholder="Search anything..."
-          selectedResultChunkId={activeRetrievalChunkId}
-          workspaceUuid={workspaceUuid}
         />
       </div>
 
@@ -4567,7 +2424,6 @@ export function FileExplorer() {
       />
       <input
         className="sr-only"
-        {...({ directory: "", webkitdirectory: "" } as Record<string, string>)}
         multiple
         onChange={(event) => {
           const incoming = Array.from(event.target.files ?? []).map((file) => {
@@ -4585,105 +2441,325 @@ export function FileExplorer() {
         ref={folderInputRef}
         type="file"
       />
-      <input
-        accept="image/*"
-        className="sr-only"
-        onChange={handleBannerInputChange}
-        ref={bannerInputRef}
-        type="file"
-      />
 
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 pb-4">
-        <div className="flex min-w-0 items-center gap-2">
-          {!isAtWorkspaceRoot && parentFolder ? (
-            <Button
-              aria-label="Go to parent folder"
-              className="rounded-md"
-              onClick={() => navigateToFolder(parentFolder.id)}
-              size="icon-sm"
-              type="button"
-              variant="outline"
-            >
-              <ArrowLeft className="size-3.5" />
-            </Button>
-          ) : null}
-          <div className="min-w-0">
-            <h2 className="truncate font-semibold text-[1.9rem] tracking-tight">
-              {currentLocationTitle}
-            </h2>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger
+      <div className="flex items-center justify-between px-3 py-2">
+        <h2 className="font-semibold text-lg tracking-tight">Workspace</h2>
+        <div className="flex items-center gap-2">
+          <Dialog>
+            <DialogTrigger
               render={
                 <Button
                   className="rounded-md"
-                  size="icon-sm"
+                  size="sm"
                   type="button"
                   variant="outline"
                 />
               }
             >
-              <Plus className="size-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-44">
-              <DropdownMenuItem
-                disabled={isCurrentFolderReadOnly}
-                onClick={() => openCreateFolderDialog(currentFolderId)}
-              >
-                <Folder className="size-3.5" />
-                New folder
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isCurrentFolderReadOnly}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload className="size-3.5" />
-                Upload file
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isCurrentFolderReadOnly}
-                onClick={() => folderInputRef.current?.click()}
-              >
-                <FilePlus2 className="size-3.5" />
-                Upload folder
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              <Share2 className="size-3.5" />
+              Share
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Share workspace</DialogTitle>
+                <DialogDescription>
+                  Add a teammate by email, or notify the whole team with a
+                  workspace link.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-2">
+                <label
+                  className="font-medium text-sm"
+                  htmlFor="workspace-share-email"
+                >
+                  Add teammate
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="workspace-share-email"
+                    list="workspace-share-email-suggestions"
+                    onChange={(event) =>
+                      setWorkspaceShareEmail(event.target.value)
+                    }
+                    onFocus={() => {
+                      void loadShareSuggestions(
+                        workspaceShareEmail,
+                        setWorkspaceShareSuggestions
+                      );
+                    }}
+                    placeholder="name@example.com"
+                    type="email"
+                    value={workspaceShareEmail}
+                  />
+                  <datalist id="workspace-share-email-suggestions">
+                    {workspaceShareSuggestions.map((item) => (
+                      <option
+                        key={item.email}
+                        label={
+                          item.name
+                            ? `${item.name} (${item.email})`
+                            : item.email
+                        }
+                        value={item.email}
+                      />
+                    ))}
+                  </datalist>
+                  <Button
+                    disabled={workspaceShareBusy}
+                    onClick={() => {
+                      void shareWorkspaceWithEmail();
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="secondary"
+                  >
+                    Add
+                  </Button>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  disabled={workspaceShareBusy}
+                  onClick={() => {
+                    void notifyWorkspaceTeam();
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  Notify whole team
+                </Button>
+              </DialogFooter>
+              {workspaceShareStatus ? (
+                <p className="text-muted-foreground text-xs">
+                  {workspaceShareStatus}
+                </p>
+              ) : null}
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <Button
+            className="rounded-md"
+            disabled={breadcrumbs.length < 2}
+            onClick={() => {
+              const parent = breadcrumbs[breadcrumbs.length - 2];
+              if (parent) {
+                navigateToFolder(parent.id);
+              }
+            }}
+            size="icon-sm"
+            type="button"
+            variant="outline"
+          >
+            <ArrowUp />
+          </Button>
+          <Button
+            className="rounded-md"
+            disabled={isCurrentFolderReadOnly}
+            onClick={() => fileInputRef.current?.click()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Upload />
+            Upload
+          </Button>
+          <Button
+            className="rounded-md"
+            disabled={isCurrentFolderReadOnly}
+            onClick={() => folderInputRef.current?.click()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Folder />
+            Folder
+          </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  className="rounded-md"
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                />
+              }
+            >
+              <CalendarDays className="size-3.5" />
+              {createdDateRange?.from
+                ? createdDateRange.to
+                  ? `${createdDateRange.from.toLocaleDateString()} - ${createdDateRange.to.toLocaleDateString()}`
+                  : createdDateRange.from.toLocaleDateString()
+                : "Date created"}
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-auto p-0">
+              <Calendar
+                mode="range"
+                onSelect={setCreatedDateRange}
+                selected={createdDateRange}
+                numberOfMonths={2}
+              />
+              <div className="border-t p-2">
+                <Button
+                  className="w-full"
+                  onClick={() => setCreatedDateRange(undefined)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Clear date
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button className="rounded-md" size="sm" type="button" variant="outline" />
+                <Button
+                  className="rounded-md"
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                />
+              }
+            >
+              <FileText className="size-3.5" />
+              {fileTypeFilter.size > 0
+                ? `Type (${fileTypeFilter.size})`
+                : "File type"}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {availableFileTypes.length === 0 ? (
+                <DropdownMenuItem disabled>No file types</DropdownMenuItem>
+              ) : (
+                availableFileTypes.map((type) => (
+                  <DropdownMenuCheckboxItem
+                    checked={fileTypeFilter.has(type)}
+                    key={type}
+                    onCheckedChange={(checked) => {
+                      setFileTypeFilter((previous) => {
+                        const next = new Set(previous);
+                        if (checked) {
+                          next.add(type);
+                        } else {
+                          next.delete(type);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {type}
+                  </DropdownMenuCheckboxItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  className="rounded-md"
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                />
+              }
+            >
+              <UserRoundSearch className="size-3.5" />
+              {actorFilter.size > 0
+                ? `${actorMode === "uploadedBy" ? "Uploaded" : "Edited"} (${actorFilter.size})`
+                : actorMode === "uploadedBy"
+                  ? "Uploaded by"
+                  : "Edited by"}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem
+                onClick={() => {
+                  setActorMode("uploadedBy");
+                  setActorFilter(new Set());
+                }}
+              >
+                Uploaded by
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setActorMode("updatedBy");
+                  setActorFilter(new Set());
+                }}
+              >
+                Edited by
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {availableActors.length === 0 ? (
+                <DropdownMenuItem disabled>No users</DropdownMenuItem>
+              ) : (
+                availableActors.map((actorId) => (
+                  <DropdownMenuCheckboxItem
+                    checked={actorFilter.has(actorId)}
+                    key={actorId}
+                    onCheckedChange={(checked) => {
+                      setActorFilter((previous) => {
+                        const next = new Set(previous);
+                        if (checked) {
+                          next.add(actorId);
+                        } else {
+                          next.delete(actorId);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {actorId}
+                  </DropdownMenuCheckboxItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  className="rounded-md"
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                />
               }
             >
               <ArrowUpDown className="size-3.5" />
-              Sorting
+              {sortBy === "name"
+                ? "Name"
+                : sortBy === "createdAt"
+                  ? "Date created"
+                  : "Date updated"}
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56 rounded-2xl p-1.5">
-              <DropdownMenuItem
-                className={sortBy === "name" ? "bg-primary/10 text-primary" : ""}
-                onClick={() => setSortBy("name")}
-              >
-                <FileText className="size-3.5" />
-                Sort by name
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={() => setSortBy("name")}>
+                Name
               </DropdownMenuItem>
-              <DropdownMenuItem
-                className={sortBy === "createdAt" ? "bg-primary/10 text-primary" : ""}
-                onClick={() => setSortBy("createdAt")}
-              >
-                <ArrowUpDown className="size-3.5" />
-                Sort by date created
+              <DropdownMenuItem onClick={() => setSortBy("createdAt")}>
+                Date created
               </DropdownMenuItem>
-              <DropdownMenuItem
-                className={sortBy === "updatedAt" ? "bg-primary/10 text-primary" : ""}
-                onClick={() => setSortBy("updatedAt")}
-              >
-                <ArrowUpDown className="size-3.5" />
-                Sort by date updated
+              <DropdownMenuItem onClick={() => setSortBy("updatedAt")}>
+                Date updated
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button
+            className="rounded-md"
+            onClick={clearAdvancedFilters}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            Clear filters
+          </Button>
           <Button
             aria-label="Card view"
             className="rounded-md"
@@ -4692,7 +2768,7 @@ export function FileExplorer() {
             type="button"
             variant={viewMode === "cards" ? "secondary" : "outline"}
           >
-            <Grid3X3 className="size-3.5" />
+            <Grid3X3 />
           </Button>
           <Button
             aria-label="List view"
@@ -4702,19 +2778,22 @@ export function FileExplorer() {
             type="button"
             variant={viewMode === "list" ? "secondary" : "outline"}
           >
-            <LayoutList className="size-3.5" />
+            <LayoutList />
           </Button>
         </div>
+        <Badge variant={hasActiveAdvancedFilters ? "secondary" : "outline"}>
+          {filteredFolders.length + filteredFiles.length} items
+        </Badge>
       </div>
 
       <div className="min-h-0 flex-1">
         <ContextMenu>
           <ContextMenuTrigger>
-            <div className="h-full overflow-auto [scrollbar-color:color-mix(in_oklab,var(--color-border),transparent_30%)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2">
+            <div className="h-full overflow-y-auto [scrollbar-color:color-mix(in_oklab,var(--color-border),transparent_30%)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2">
               <div
                 className={cn(
                   "relative min-h-full px-3 pb-3",
-                  canvasDropActive && "bg-primary/5"
+                  canvasDropActive && "bg-emerald-500/5"
                 )}
                 data-drop-folder-id={
                   isCurrentFolderReadOnly ? undefined : currentFolderId
@@ -4764,13 +2843,14 @@ export function FileExplorer() {
                   <div className="flex flex-wrap gap-3">
                     {Array.from({ length: 10 }).map((_, index) => (
                       <Card
-                        className="rounded-2xl p-2 ring-0 bg-transparent"
+                        className="rounded-2xl border border-border/70 bg-card py-2"
                         key={index}
                         style={{ width: 160 }}
                       >
-                        <CardContent className="space-y-2 px-0 pt-0">
-                          <Skeleton className="h-28 aspect-[4/3] rounded-md" />
-                          <Skeleton className="h-4 w-40" />
+                        <CardContent className="space-y-3 pt-0">
+                          <Skeleton className="mx-auto h-24 w-24 rounded-2xl" />
+                          <Skeleton className="h-4 w-3/4" />
+                          <Skeleton className="h-3 w-1/2" />
                         </CardContent>
                       </Card>
                     ))}
@@ -4790,25 +2870,497 @@ export function FileExplorer() {
                       {sortedFolders.map((folder) => {
                         const previewItems =
                           folderCardPreviewItems.get(folder.id) ?? [];
-                        const folderAccentColor =
-                          folder.iconColor &&
-                          folder.iconColor.trim().length > 0
-                            ? folder.iconColor
-                            : "var(--primary)";
-                        const folderUpdatedLabel =
-                          folder.updatedAt && folder.updatedAt.length > 0
-                            ? toUpdatedLabel(folder.updatedAt)
-                            : "";
                         return (
                           <ContextMenu key={folder.id}>
                             <ContextMenuTrigger>
                               <Card
                                 className={cn(
-                                  "group relative cursor-pointer overflow-hidden rounded-2xl border border-transparent bg-transparent p-2 transition ring-0",
+                                  "group relative cursor-pointer overflow-visible rounded-2xl border border-border/70 bg-card py-2 transition hover:border-emerald-500/35",
                                   selection.selectedIds.has(folder.id) &&
-                                    "border border-primary bg-primary/5",
+                                    "border-emerald-500 bg-emerald-500/5",
                                   dropTargetId === folder.id &&
-                                    "bg-primary/10 ring-2 ring-primary/30"
+                                    "bg-emerald-500/10 ring-2 ring-emerald-400/70"
+                                )}
+                                data-select-item="true"
+                                data-drop-folder-id={folder.id}
+                                draggable={!folder.readOnly}
+                                onClick={(event) => {
+                                  selection.handleItemClick(
+                                    event,
+                                    folder.id,
+                                    visibleItemIds
+                                  );
+                                  handleOpenOnDoubleClick(event, () =>
+                                    navigateToFolder(folder.id)
+                                  );
+                                }}
+                                onDragEnd={() => {
+                                  canvasDragDepthRef.current = 0;
+                                  setCanvasDropActive(false);
+                                  setDraggingIds([]);
+                                  setDropTargetId(null);
+                                }}
+                                onDragEnter={(event) => {
+                                  if (folder.readOnly) {
+                                    return;
+                                  }
+                                  event.preventDefault();
+                                  setDropTargetId(folder.id);
+                                }}
+                                onDragLeave={() => {
+                                  setDropTargetId((current) =>
+                                    current === folder.id ? null : current
+                                  );
+                                }}
+                                onDragOver={(event) => {
+                                  if (folder.readOnly) {
+                                    return;
+                                  }
+                                  event.preventDefault();
+                                  event.dataTransfer.dropEffect = "move";
+                                  setDropTargetId(folder.id);
+                                }}
+                                onDragStart={(event) => {
+                                  if (folder.readOnly) {
+                                    event.preventDefault();
+                                    return;
+                                  }
+                                  const sourceIds = selection.prepareDrag(
+                                    folder.id
+                                  );
+                                  setDraggingIds(sourceIds);
+                                  event.dataTransfer.effectAllowed = "move";
+                                  configureDragPreview(event);
+                                  event.dataTransfer.setData(
+                                    "text/plain",
+                                    sourceIds.join(",")
+                                  );
+                                }}
+                                onDrop={async (event) => {
+                                  event.preventDefault();
+                                  if (folder.readOnly) {
+                                    canvasDragDepthRef.current = 0;
+                                    setCanvasDropActive(false);
+                                    setDropTargetId(null);
+                                    setDraggingIds([]);
+                                    return;
+                                  }
+                                  const sourceIds =
+                                    draggingIds.length > 0
+                                      ? draggingIds
+                                      : Array.from(selection.selectedIds);
+                                  if (sourceIds.length === 0) {
+                                    const uploadCandidates =
+                                      await getDropUploadCandidates(event);
+                                    if (uploadCandidates.length > 0) {
+                                      queueUploads(uploadCandidates);
+                                    }
+                                    canvasDragDepthRef.current = 0;
+                                    setCanvasDropActive(false);
+                                    setDropTargetId(null);
+                                    setDraggingIds([]);
+                                    return;
+                                  }
+                                  const folderById = new Map(
+                                    allFolders.map((entry) => [entry.id, entry])
+                                  );
+                                  const hasInvalidMove = sourceIds.some(
+                                    (id) => {
+                                      if (id === folder.id) {
+                                        return true;
+                                      }
+                                      const sourceFolder = folderById.get(id);
+                                      if (!sourceFolder) {
+                                        return false;
+                                      }
+                                      let cursor = folderById.get(folder.id);
+                                      while (cursor?.parentId) {
+                                        if (
+                                          cursor.parentId === sourceFolder.id
+                                        ) {
+                                          return true;
+                                        }
+                                        cursor = folderById.get(
+                                          cursor.parentId
+                                        );
+                                      }
+                                      return false;
+                                    }
+                                  );
+                                  canvasDragDepthRef.current = 0;
+                                  setCanvasDropActive(false);
+                                  setDropTargetId(null);
+                                  if (!hasInvalidMove) {
+                                    event.stopPropagation();
+                                    void moveItemsToFolder(
+                                      sourceIds,
+                                      folder.id
+                                    );
+                                  }
+                                  setDraggingIds([]);
+                                }}
+                                onTouchEnd={endTouchDrag}
+                                onTouchMove={moveTouchDrag}
+                                onTouchStart={() => {
+                                  if (folder.readOnly) {
+                                    return;
+                                  }
+                                  beginTouchDrag(folder.id);
+                                }}
+                                ref={(node: HTMLDivElement | null) => {
+                                  if (!node) {
+                                    itemRefs.current.delete(folder.id);
+                                    return;
+                                  }
+                                  itemRefs.current.set(folder.id, node);
+                                }}
+                                style={{ width: 160 }}
+                              >
+                                <div className="absolute top-2 left-2 z-[90]">
+                                  <Checkbox
+                                    aria-label={`Select folder ${folder.name}`}
+                                    checked={selection.selectedIds.has(
+                                      folder.id
+                                    )}
+                                    onCheckedChange={() =>
+                                      selection.toggleSelection(folder.id)
+                                    }
+                                    onClick={(event) => event.stopPropagation()}
+                                  />
+                                </div>
+                                <CardContent className="space-y-3 pt-0">
+                                  <div className="mx-auto flex h-24 w-24 items-center justify-center">
+                                    <div className="relative isolate h-[78px] w-[96px] overflow-visible transition-transform duration-200 ease-in group-hover:-translate-y-1.5">
+                                      <div className="absolute bottom-[98%] left-0 z-10 h-[10px] w-[30px] rounded-t-[5px] bg-[#457f74]" />
+                                      <div className="relative z-20 h-full w-full rounded-tr-[6px] rounded-br-[6px] rounded-bl-[6px] bg-[#457f74]">
+                                        {Array.from({ length: 3 }).map(
+                                          (_, index) => {
+                                            const item = previewItems[index];
+                                            const layerClass =
+                                              index === 0
+                                                ? "z-30 h-[64%] w-[70%] bg-[#dbe7e4] group-hover:-translate-y-[20%]"
+                                                : index === 1
+                                                  ? "z-40 h-[58%] w-[80%] bg-[#ecf3f1] group-hover:-translate-y-[24%] delay-75"
+                                                  : "z-50 h-[50%] w-[90%] bg-white group-hover:-translate-y-[30%] delay-100";
+
+                                            return (
+                                              <div
+                                                className={cn(
+                                                  "absolute bottom-[10%] left-1/2 flex -translate-x-1/2 translate-y-[8%] items-center justify-center rounded-[5px] transition-transform duration-300 ease-in-out",
+                                                  layerClass
+                                                )}
+                                                key={`${folder.id}-preview-${index}`}
+                                              >
+                                                {item ? (
+                                                  item.kind === "folder" ? (
+                                                    <Folder className="size-3.5 text-emerald-700" />
+                                                  ) : (
+                                                    getFileTypeIcon(
+                                                      item.fileKind ?? "other",
+                                                      "size-3.5"
+                                                    )
+                                                  )
+                                                ) : null}
+                                              </div>
+                                            );
+                                          }
+                                        )}
+                                        <div className="absolute inset-0 z-[70] origin-bottom rounded-[6px] bg-[#74c2b2] transition-transform duration-300 ease-in-out group-hover:-skew-x-[14deg] group-hover:scale-y-[0.62]" />
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="truncate font-medium text-sm">
+                                      {folder.name}
+                                    </p>
+                                    <p className="flex items-center gap-1.5 text-muted-foreground text-xs">
+                                      <Folder className="size-3.5" />
+                                      <span>Folder</span>
+                                    </p>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent>
+                              <ContextMenuItem
+                                onClick={() => navigateToFolder(folder.id)}
+                              >
+                                Open
+                              </ContextMenuItem>
+                              {!folder.readOnly ? (
+                                <>
+                                  <ContextMenuItem
+                                    onClick={() =>
+                                      openRenameFolderDialog(folder)
+                                    }
+                                  >
+                                    Rename
+                                  </ContextMenuItem>
+                                  <ContextMenuItem
+                                    onClick={() =>
+                                      openCreateFolderDialog(folder.id)
+                                    }
+                                  >
+                                    New folder here
+                                  </ContextMenuItem>
+                                  <ContextMenuSub>
+                                    <ContextMenuSubTrigger>
+                                      Move to
+                                    </ContextMenuSubTrigger>
+                                    <ContextMenuSubContent>
+                                      {allFolders
+                                        .filter(
+                                          (target) =>
+                                            target.id !== folder.id &&
+                                            !target.readOnly
+                                        )
+                                        .slice(0, 20)
+                                        .map((target) => (
+                                          <ContextMenuItem
+                                            key={target.id}
+                                            onClick={() => {
+                                              void moveFolder(
+                                                folder.id,
+                                                target.id
+                                              );
+                                            }}
+                                          >
+                                            {target.name}
+                                          </ContextMenuItem>
+                                        ))}
+                                    </ContextMenuSubContent>
+                                  </ContextMenuSub>
+                                </>
+                              ) : null}
+                              <ContextMenuItem
+                                onClick={() => {
+                                  setPropertiesItem({
+                                    kind: "folder",
+                                    id: folder.id,
+                                    name: folder.name,
+                                    detail: "Folder",
+                                  });
+                                  setPropertiesOpen(true);
+                                }}
+                              >
+                                Properties
+                              </ContextMenuItem>
+                              {!folder.readOnly ? (
+                                <ContextMenuItem
+                                  onClick={() => {
+                                    void deleteFolder(folder.id);
+                                  }}
+                                  variant="destructive"
+                                >
+                                  Delete
+                                </ContextMenuItem>
+                              ) : null}
+                            </ContextMenuContent>
+                          </ContextMenu>
+                        );
+                      })}
+
+                      {sortedFiles.map((file) => {
+                        const { isImage, isPdf, isVideo, isAudio } =
+                          detectPreviewKind(file);
+                        const openedCached = isFileOpenedCached(file.id);
+                        const isWarmed =
+                          getWarmState(file.storageUrl) === "warm";
+                        const fileKind = detectFileKind(file);
+                        const fileCardType =
+                          fileKind === "sheet" ? "document" : fileKind;
+                        return (
+                          <ContextMenu key={file.id}>
+                            <ContextMenuTrigger>
+                              <Card
+                                className={cn(
+                                  "group grid-card-item relative cursor-pointer rounded-2xl border border-border/70 bg-card py-2 transition hover:border-emerald-500/35",
+                                  selection.selectedIds.has(file.id) &&
+                                    "border-emerald-500 bg-emerald-500/5"
+                                )}
+                                data-select-item="true"
+                                draggable={!file.readOnly}
+                                tabIndex={0}
+                                onTouchEnd={endTouchDrag}
+                                onTouchMove={moveTouchDrag}
+                                onTouchStart={() => {
+                                  if (file.readOnly) {
+                                    return;
+                                  }
+                                  beginTouchDrag(file.id);
+                                }}
+                                onClick={(event) => {
+                                  selection.handleItemClick(
+                                    event,
+                                    file.id,
+                                    visibleItemIds
+                                  );
+                                  handleOpenOnDoubleClick(event, () =>
+                                    selectFile(file.id)
+                                  );
+                                }}
+                                onFocus={() => handlePreviewIntentStart(file)}
+                                onBlur={() => handlePreviewIntentEnd(file)}
+                                onMouseEnter={() =>
+                                  handlePreviewIntentStart(file)
+                                }
+                                onMouseLeave={() =>
+                                  handlePreviewIntentEnd(file)
+                                }
+                                onDragEnd={() => {
+                                  canvasDragDepthRef.current = 0;
+                                  setCanvasDropActive(false);
+                                  setDraggingIds([]);
+                                  setDropTargetId(null);
+                                }}
+                                onDragStart={(event) => {
+                                  if (file.readOnly) {
+                                    event.preventDefault();
+                                    return;
+                                  }
+                                  const sourceIds = selection.prepareDrag(
+                                    file.id
+                                  );
+                                  setDraggingIds(sourceIds);
+                                  event.dataTransfer.effectAllowed = "move";
+                                  configureDragPreview(event);
+                                  event.dataTransfer.setData(
+                                    "text/plain",
+                                    sourceIds.join(",")
+                                  );
+                                }}
+                                ref={(node: HTMLDivElement | null) => {
+                                  if (!node) {
+                                    itemRefs.current.delete(file.id);
+                                    return;
+                                  }
+                                  itemRefs.current.set(file.id, node);
+                                }}
+                                style={{ width: 160 }}
+                              >
+                                <div className="absolute top-2 left-2 z-10">
+                                  <Checkbox
+                                    aria-label={`Select file ${file.name}`}
+                                    checked={selection.selectedIds.has(file.id)}
+                                    onCheckedChange={() =>
+                                      selection.toggleSelection(file.id)
+                                    }
+                                    onClick={(event) => event.stopPropagation()}
+                                  />
+                                </div>
+                                <CardContent className="pt-0">
+                                  <FileCard
+                                    fileType={fileCardType}
+                                    lastUpdated={
+                                      new Date(file.updatedAt ?? file.createdAt)
+                                    }
+                                    name={file.name}
+                                    previewContent={
+                                      isImage ? (
+                                        <img
+                                          alt={file.name}
+                                          className="block h-full w-full object-cover"
+                                          loading="lazy"
+                                          src={file.storageUrl}
+                                        />
+                                      ) : isVideo ? (
+                                        <VideoThumbnail
+                                          className="h-full w-full"
+                                          mimeType={file.mimeType}
+                                          openedCached={
+                                            openedCached || isWarmed
+                                          }
+                                          src={file.storageUrl}
+                                          warm={
+                                            hoveredPreviewFileId === file.id
+                                          }
+                                        />
+                                      ) : isPdf ? (
+                                        <PdfThumbnail
+                                          className="h-full w-full"
+                                          src={file.storageUrl}
+                                        />
+                                      ) : undefined
+                                    }
+                                  />
+                                </CardContent>
+                              </Card>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent>
+                              <ContextMenuItem
+                                onClick={() => selectFile(file.id)}
+                              >
+                                Open
+                              </ContextMenuItem>
+                              {!file.readOnly ? (
+                                <>
+                                  <ContextMenuItem
+                                    onClick={() => openRenameFileDialog(file)}
+                                  >
+                                    Rename
+                                  </ContextMenuItem>
+                                  <ContextMenuSub>
+                                    <ContextMenuSubTrigger>
+                                      Move to
+                                    </ContextMenuSubTrigger>
+                                    <ContextMenuSubContent>
+                                      {allFolders
+                                        .filter((target) => !target.readOnly)
+                                        .slice(0, 20)
+                                        .map((target) => (
+                                          <ContextMenuItem
+                                            key={target.id}
+                                            onClick={() => {
+                                              void moveFile(file.id, target.id);
+                                            }}
+                                          >
+                                            {target.name}
+                                          </ContextMenuItem>
+                                        ))}
+                                    </ContextMenuSubContent>
+                                  </ContextMenuSub>
+                                </>
+                              ) : null}
+                              <ContextMenuItem
+                                onClick={() => {
+                                  setPropertiesItem({
+                                    kind: "file",
+                                    id: file.id,
+                                    name: file.name,
+                                    detail: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown"}`,
+                                  });
+                                  setPropertiesOpen(true);
+                                }}
+                              >
+                                Properties
+                              </ContextMenuItem>
+                              {!file.readOnly ? (
+                                <ContextMenuItem
+                                  onClick={() => {
+                                    void deleteFile(file.id);
+                                  }}
+                                  variant="destructive"
+                                >
+                                  Delete
+                                </ContextMenuItem>
+                              ) : null}
+                            </ContextMenuContent>
+                          </ContextMenu>
+                        );
+                      })}
+                    </div>
+                    {viewMode === "list" ? (
+                      <div className="divide-y divide-border/70 rounded-md border border-border/70">
+                        {sortedFolders.map((folder) => (
+                          <ContextMenu key={folder.id}>
+                            <ContextMenuTrigger>
+                              <div
+                                className={cn(
+                                  "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
+                                  selection.selectedIds.has(folder.id) &&
+                                    "bg-emerald-500/10",
+                                  dropTargetId === folder.id &&
+                                    "bg-emerald-500/15 outline outline-2 outline-emerald-400/70"
                                 )}
                                 data-drop-folder-id={folder.id}
                                 data-select-item="true"
@@ -4865,9 +3417,8 @@ export function FileExplorer() {
                                     sourceIds.join(",")
                                   );
                                 }}
-                                onDrop={(event) => {
+                                onDrop={async (event) => {
                                   event.preventDefault();
-                                  event.stopPropagation();
                                   if (folder.readOnly) {
                                     canvasDragDepthRef.current = 0;
                                     setCanvasDropActive(false);
@@ -4879,10 +3430,54 @@ export function FileExplorer() {
                                     draggingIds.length > 0
                                       ? draggingIds
                                       : Array.from(selection.selectedIds);
+                                  if (sourceIds.length === 0) {
+                                    const uploadCandidates =
+                                      await getDropUploadCandidates(event);
+                                    if (uploadCandidates.length > 0) {
+                                      queueUploads(uploadCandidates);
+                                    }
+                                    canvasDragDepthRef.current = 0;
+                                    setCanvasDropActive(false);
+                                    setDropTargetId(null);
+                                    setDraggingIds([]);
+                                    return;
+                                  }
+                                  const folderById = new Map(
+                                    allFolders.map((entry) => [entry.id, entry])
+                                  );
+                                  const hasInvalidMove = sourceIds.some(
+                                    (id) => {
+                                      if (id === folder.id) {
+                                        return true;
+                                      }
+                                      const sourceFolder = folderById.get(id);
+                                      if (!sourceFolder) {
+                                        return false;
+                                      }
+                                      let cursor = folderById.get(folder.id);
+                                      while (cursor?.parentId) {
+                                        if (
+                                          cursor.parentId === sourceFolder.id
+                                        ) {
+                                          return true;
+                                        }
+                                        cursor = folderById.get(
+                                          cursor.parentId
+                                        );
+                                      }
+                                      return false;
+                                    }
+                                  );
                                   canvasDragDepthRef.current = 0;
                                   setCanvasDropActive(false);
                                   setDropTargetId(null);
-                                  void moveItemsToFolder(sourceIds, folder.id);
+                                  if (!hasInvalidMove) {
+                                    event.stopPropagation();
+                                    void moveItemsToFolder(
+                                      sourceIds,
+                                      folder.id
+                                    );
+                                  }
                                   setDraggingIds([]);
                                 }}
                                 onTouchEnd={endTouchDrag}
@@ -4900,158 +3495,57 @@ export function FileExplorer() {
                                   }
                                   itemRefs.current.set(folder.id, node);
                                 }}
-                                style={{ width: 160 }}
                               >
-                                <div className="absolute top-2 left-2 z-[90]">
-                                  <Checkbox
-                                    checked={selection.selectedIds.has(
-                                      folder.id
-                                    )}
-                                    onCheckedChange={() =>
-                                      selection.toggleSelection(folder.id)
-                                    }
-                                    onClick={(event) => event.stopPropagation()}
-                                  />
+                                <Checkbox
+                                  aria-label={`Select folder ${folder.name}`}
+                                  checked={selection.selectedIds.has(folder.id)}
+                                  onCheckedChange={() =>
+                                    selection.toggleSelection(folder.id)
+                                  }
+                                  onClick={(event) => event.stopPropagation()}
+                                />
+                                <Folder className="size-4 shrink-0 text-emerald-600" />
+                                <p className="min-w-0 flex-1 truncate font-medium text-sm">
+                                  {folder.name}
+                                </p>
+                                <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
+                                  <span className="min-w-[110px] text-right tabular-nums">
+                                    {folderSubfolderCount.get(folder.id) ?? 0}{" "}
+                                    folders •{" "}
+                                    {folderFileCount.get(folder.id) ?? 0} files
+                                  </span>
+                                  <span className="min-w-[72px] text-right tabular-nums">
+                                    {folder.updatedAt
+                                      ? toUpdatedLabel(folder.updatedAt)
+                                      : "—"}
+                                  </span>
                                 </div>
-                                <CardContent className="space-y-2 px-0 pt-0">
-                                  <div className="group relative flex h-28 w-full min-w-0 items-center justify-center overflow-hidden rounded-lg border border-border/45 bg-muted/70 p-1.5">
-                                    <div className="relative isolate h-full w-full min-w-0 rounded-md border border-border/50 bg-card/60 p-1.5 transition-transform duration-200 ease-in group-hover:-translate-y-1">
-                                      <div
-                                        className="absolute bottom-[92%] left-1.5 z-10 h-[10px] w-[30px] rounded-t-[5px]"
-                                        style={{ backgroundColor: folderAccentColor }}
-                                      />
-                                      <div
-                                        className="relative z-20 h-full w-full rounded-tr-[6px] rounded-br-[6px] rounded-bl-[6px]"
-                                        style={{ backgroundColor: folderAccentColor }}
-                                      >
-                                        {Array.from({ length: 3 }).map((_, index) => {
-                                          const item = previewItems[index];
-                                          const layerClass =
-                                            index === 0
-                                              ? "z-30 h-[64%] w-[70%] bg-muted group-hover:-translate-y-[20%]"
-                                              : index === 1
-                                                ? "z-40 h-[58%] w-[80%] bg-background group-hover:-translate-y-[24%] delay-75"
-                                                : "z-50 h-[50%] w-[90%] bg-card group-hover:-translate-y-[30%] delay-100";
-
-                                          return (
-                                            <div
-                                              className={cn(
-                                                "absolute bottom-[10%] left-1/2 flex -translate-x-1/2 translate-y-[8%] items-center justify-center rounded-[5px] transition-transform duration-300 ease-in-out",
-                                                layerClass
-                                              )}
-                                              key={`${folder.id}-preview-${index}`}
-                                            >
-                                              {item ? (
-                                                item.kind === "folder" ? (
-                                                  <Folder
-                                                    className="shrink-0"
-                                                    style={{
-                                                      color: folderAccentColor,
-                                                      height: 8,
-                                                      width: 8,
-                                                    }}
-                                                  />
-                                                ) : (
-                                                  getFileTypeIcon(
-                                                    item.fileKind ?? "other",
-                                                    "size-2"
-                                                  )
-                                                )
-                                              ) : null}
-                                            </div>
-                                          );
-                                        })}
-                                        <div
-                                          className="absolute inset-0 z-[70] origin-bottom rounded-[6px] transition-transform duration-300 ease-in-out group-hover:-skew-x-[14deg] group-hover:scale-y-[0.62]"
-                                          style={{ backgroundColor: folderAccentColor }}
-                                        />
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div className="flex w-full min-w-0 max-w-full items-center justify-between gap-2">
-                                    <div className="flex min-w-0 flex-1 items-center gap-2">
-                                      <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                                        folder
-                                      </span>
-                                      <span
-                                        className="min-w-0 flex-1 truncate font-medium text-sm"
-                                        title={folder.name}
-                                      >
-                                        {folder.name}
-                                      </span>
-                                    </div>
-                                    <span className="shrink-0 tabular-nums text-muted-foreground text-xs">
-                                      {folderUpdatedLabel}
-                                    </span>
-                                  </div>
-                                </CardContent>
-                              </Card>
+                              </div>
                             </ContextMenuTrigger>
                             <ContextMenuContent>
                               <ContextMenuItem
                                 onClick={() => navigateToFolder(folder.id)}
                               >
-                                <ArrowRight className="size-3.5" />
                                 Open
                               </ContextMenuItem>
-                              {folder.readOnly ? null : (
+                              {!folder.readOnly ? (
                                 <>
                                   <ContextMenuItem
                                     onClick={() =>
                                       openRenameFolderDialog(folder)
                                     }
                                   >
-                                    <Pencil className="size-3.5" />
                                     Rename
-                                  </ContextMenuItem>
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      void duplicateItem({
-                                        id: folder.id,
-                                        kind: "folder",
-                                        parentId: folder.parentId,
-                                      });
-                                    }}
-                                  >
-                                    <Copy className="size-3.5" />
-                                    Duplicate
-                                  </ContextMenuItem>
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      void copyFolderShareLink(folder);
-                                    }}
-                                  >
-                                    <Share2 className="size-3.5" />
-                                    Share
-                                  </ContextMenuItem>
-                                  <ContextMenuItem
-                                    onClick={() => triggerBannerPicker(folder.id)}
-                                  >
-                                    <FileImage className="size-3.5" />
-                                    Change banner
-                                  </ContextMenuItem>
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      void updateFolderAppearance(folder.id, {
-                                        bannerUrl: null,
-                                        iconColor: null,
-                                      });
-                                    }}
-                                  >
-                                    <XCircle className="size-3.5" />
-                                    Reset banner
                                   </ContextMenuItem>
                                   <ContextMenuItem
                                     onClick={() =>
                                       openCreateFolderDialog(folder.id)
                                     }
                                   >
-                                    <Plus className="size-3.5" />
                                     New folder here
                                   </ContextMenuItem>
                                   <ContextMenuSub>
                                     <ContextMenuSubTrigger>
-                                      <FolderInput className="size-3.5" />
                                       Move to
                                     </ContextMenuSubTrigger>
                                     <ContextMenuSubContent>
@@ -5066,13 +3560,8 @@ export function FileExplorer() {
                                           <ContextMenuItem
                                             key={target.id}
                                             onClick={() => {
-                                              const items =
-                                                resolveContextActionItems(
-                                                  folder.id,
-                                                  "folder"
-                                                );
-                                              void moveItemsToFolder(
-                                                items.map((item) => item.id),
+                                              void moveFolder(
+                                                folder.id,
                                                 target.id
                                               );
                                             }}
@@ -5082,20 +3571,8 @@ export function FileExplorer() {
                                         ))}
                                     </ContextMenuSubContent>
                                   </ContextMenuSub>
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      void downloadItemArchive({
-                                        id: folder.id,
-                                        kind: "folder",
-                                        name: folder.name,
-                                      });
-                                    }}
-                                  >
-                                    <ArrowDownToLine className="size-3.5" />
-                                    Download (as Zip)
-                                  </ContextMenuItem>
                                 </>
-                              )}
+                              ) : null}
                               <ContextMenuItem
                                 onClick={() => {
                                   setPropertiesItem({
@@ -5107,108 +3584,82 @@ export function FileExplorer() {
                                   setPropertiesOpen(true);
                                 }}
                               >
-                                <Info className="size-3.5" />
                                 Properties
                               </ContextMenuItem>
-                              {folder.readOnly ? null : (
+                              {!folder.readOnly ? (
                                 <ContextMenuItem
                                   onClick={() => {
-                                    const items = resolveContextActionItems(
-                                      folder.id,
-                                      "folder"
-                                    );
-                                    void deleteSelectionItems(items);
+                                    void deleteFolder(folder.id);
                                   }}
                                   variant="destructive"
                                 >
-                                  <Trash2 className="size-3.5" />
                                   Delete
                                 </ContextMenuItem>
-                              )}
+                              ) : null}
                             </ContextMenuContent>
                           </ContextMenu>
-                        );
-                      })}
-
-                      {sortedFiles.map((file) => {
-                        const { isImage, isPdf, isVideo, isAudio } =
-                          detectPreviewKind(file);
-                        const openedCached = isFileOpenedCached(file.id);
-                        const isWarmed =
-                          getWarmState(file.storageUrl) === "warm";
-                        const fileKind = detectFileKind(file);
-                        const fileCardType =
-                          fileKind === "sheet" ? "document" : fileKind;
-                        return (
-                          <ContextMenu key={file.id}>
-                            <ContextMenuTrigger>
-                              <Card
-                                className={cn(
-                                  "group grid-card-item relative cursor-pointer overflow-hidden rounded-2xl border border-transparent p-2 transition ring-0 bg-transparent",
-                                  selection.selectedIds.has(file.id) &&
-                                    "border border-primary bg-primary/5"
-                                )}
-                                data-select-item="true"
-                                draggable={!file.readOnly}
-                                onBlur={() => handlePreviewIntentEnd(file)}
-                                onClick={(event) => {
-                                  selection.handleItemClick(
-                                    event,
-                                    file.id,
-                                    visibleItemIds
-                                  );
-                                  handleOpenOnDoubleClick(event, () =>
-                                    selectFile(file.id)
-                                  );
-                                }}
-                                onDragEnd={() => {
-                                  canvasDragDepthRef.current = 0;
-                                  setCanvasDropActive(false);
-                                  setDraggingIds([]);
-                                  setDropTargetId(null);
-                                }}
-                                onDragStart={(event) => {
-                                  if (file.readOnly) {
-                                    event.preventDefault();
-                                    return;
-                                  }
-                                  const sourceIds = selection.prepareDrag(
-                                    file.id
-                                  );
-                                  setDraggingIds(sourceIds);
-                                  event.dataTransfer.effectAllowed = "move";
-                                  configureDragPreview(event);
-                                  event.dataTransfer.setData(
-                                    "text/plain",
-                                    sourceIds.join(",")
-                                  );
-                                }}
-                                onFocus={() => handlePreviewIntentStart(file)}
-                                onMouseEnter={() =>
-                                  handlePreviewIntentStart(file)
-                                }
-                                onMouseLeave={() =>
-                                  handlePreviewIntentEnd(file)
-                                }
-                                onTouchEnd={endTouchDrag}
-                                onTouchMove={moveTouchDrag}
-                                onTouchStart={() => {
-                                  if (file.readOnly) {
-                                    return;
-                                  }
-                                  beginTouchDrag(file.id);
-                                }}
-                                ref={(node: HTMLDivElement | null) => {
-                                  if (!node) {
-                                    itemRefs.current.delete(file.id);
-                                    return;
-                                  }
-                                  itemRefs.current.set(file.id, node);
-                                }}
-                                style={{ width: 160 }}
-                                tabIndex={0}
-                              >
-                                <div className="absolute top-2 left-2 z-10">
+                        ))}
+                        {sortedFiles.map((file) => {
+                          const fileKind = detectFileKind(file);
+                          return (
+                            <ContextMenu key={file.id}>
+                              <ContextMenuTrigger>
+                                <div
+                                  className={cn(
+                                    "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
+                                    selection.selectedIds.has(file.id) &&
+                                      "bg-emerald-500/10"
+                                  )}
+                                  data-select-item="true"
+                                  draggable={!file.readOnly}
+                                  onClick={(event) => {
+                                    selection.handleItemClick(
+                                      event,
+                                      file.id,
+                                      visibleItemIds
+                                    );
+                                    handleOpenOnDoubleClick(event, () =>
+                                      selectFile(file.id)
+                                    );
+                                  }}
+                                  onDragEnd={() => {
+                                    canvasDragDepthRef.current = 0;
+                                    setCanvasDropActive(false);
+                                    setDraggingIds([]);
+                                    setDropTargetId(null);
+                                  }}
+                                  onDragStart={(event) => {
+                                    if (file.readOnly) {
+                                      event.preventDefault();
+                                      return;
+                                    }
+                                    const sourceIds = selection.prepareDrag(
+                                      file.id
+                                    );
+                                    setDraggingIds(sourceIds);
+                                    event.dataTransfer.effectAllowed = "move";
+                                    configureDragPreview(event);
+                                    event.dataTransfer.setData(
+                                      "text/plain",
+                                      sourceIds.join(",")
+                                    );
+                                  }}
+                                  onTouchEnd={endTouchDrag}
+                                  onTouchMove={moveTouchDrag}
+                                  onTouchStart={() => {
+                                    if (file.readOnly) {
+                                      return;
+                                    }
+                                    beginTouchDrag(file.id);
+                                  }}
+                                  ref={(node: HTMLDivElement | null) => {
+                                    if (!node) {
+                                      itemRefs.current.delete(file.id);
+                                      return;
+                                    }
+                                    itemRefs.current.set(file.id, node);
+                                  }}
+                                >
                                   <Checkbox
                                     aria-label={`Select file ${file.name}`}
                                     checked={selection.selectedIds.has(file.id)}
@@ -5217,385 +3668,94 @@ export function FileExplorer() {
                                     }
                                     onClick={(event) => event.stopPropagation()}
                                   />
+                                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted/60">
+                                    {getFileTypeIcon(fileKind)}
+                                  </div>
+                                  <p className="min-w-0 flex-1 truncate font-medium text-sm">
+                                    {file.name}
+                                  </p>
+                                  <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
+                                    <span className="min-w-[110px] text-right tabular-nums">
+                                      {formatBytes(file.sizeBytes)}
+                                    </span>
+                                    <span className="min-w-[72px] text-right tabular-nums">
+                                      {toUpdatedLabel(
+                                        file.updatedAt ?? file.createdAt
+                                      )}
+                                    </span>
+                                  </div>
                                 </div>
-                                <CardContent className="px-0 pt-0">
-                                  <FileCard
-                                    fileType={fileCardType}
-                                    lastUpdated={
-                                      new Date(file.updatedAt ?? file.createdAt)
-                                    }
-                                    name={file.name}
-                                    previewContent={
-                                      isImage ? (
-                                        <img
-                                          alt={file.name}
-                                          className="block h-full w-auto rounded-sm object-contain"
-                                          loading="lazy"
-                                          src={file.storageUrl}
-                                        />
-                                      ) : isVideo ? (
-                                        <VideoThumbnail
-                                          className="h-full w-auto rounded-sm object-contain"
-                                          mimeType={file.mimeType}
-                                          openedCached={
-                                            openedCached || isWarmed
-                                          }
-                                          src={file.storageUrl}
-                                          warm={
-                                            hoveredPreviewFileId === file.id
-                                          }
-                                        />
-                                      ) : isPdf ? (
-                                        <PdfThumbnail
-                                          className="h-full w-auto rounded-sm"
-                                          src={file.storageUrl}
-                                        />
-                                      ) : undefined
-                                    }
-                                  />
-                                </CardContent>
-                              </Card>
-                            </ContextMenuTrigger>
-                            <ContextMenuContent>
-                              <ContextMenuItem
-                                onClick={() => selectFile(file.id)}
-                              >
-                                <ArrowRight className="size-3.5" />
-                                Open
-                              </ContextMenuItem>
-                              {file.readOnly ? null : (
-                                <>
-                                  <ContextMenuItem
-                                    onClick={() => openRenameFileDialog(file)}
-                                  >
-                                    <Pencil className="size-3.5" />
-                                    Rename
-                                  </ContextMenuItem>
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      void duplicateItem({
-                                        id: file.id,
-                                        kind: "file",
-                                        parentId: file.folderId,
-                                      });
-                                    }}
-                                  >
-                                    <Copy className="size-3.5" />
-                                    Duplicate
-                                  </ContextMenuItem>
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      void copyFileShareLink(file);
-                                    }}
-                                  >
-                                    <Share2 className="size-3.5" />
-                                    Share
-                                  </ContextMenuItem>
-                                  <ContextMenuSub>
-                                    <ContextMenuSubTrigger>
-                                      <FolderInput className="size-3.5" />
-                                      Move to
-                                    </ContextMenuSubTrigger>
-                                    <ContextMenuSubContent>
-                                      {allFolders
-                                        .filter((target) => !target.readOnly)
-                                        .slice(0, 20)
-                                        .map((target) => (
-                                          <ContextMenuItem
-                                            key={target.id}
-                                            onClick={() => {
-                                              const items =
-                                                resolveContextActionItems(
+                              </ContextMenuTrigger>
+                              <ContextMenuContent>
+                                <ContextMenuItem
+                                  onClick={() => selectFile(file.id)}
+                                >
+                                  Open
+                                </ContextMenuItem>
+                                {!file.readOnly ? (
+                                  <>
+                                    <ContextMenuItem
+                                      onClick={() => openRenameFileDialog(file)}
+                                    >
+                                      Rename
+                                    </ContextMenuItem>
+                                    <ContextMenuSub>
+                                      <ContextMenuSubTrigger>
+                                        Move to
+                                      </ContextMenuSubTrigger>
+                                      <ContextMenuSubContent>
+                                        {allFolders
+                                          .filter((target) => !target.readOnly)
+                                          .slice(0, 20)
+                                          .map((target) => (
+                                            <ContextMenuItem
+                                              key={target.id}
+                                              onClick={() => {
+                                                void moveFile(
                                                   file.id,
-                                                  "file"
+                                                  target.id
                                                 );
-                                              void moveItemsToFolder(
-                                                items.map((item) => item.id),
-                                                target.id
-                                              );
-                                            }}
-                                          >
-                                            {target.name}
-                                          </ContextMenuItem>
-                                        ))}
-                                    </ContextMenuSubContent>
-                                  </ContextMenuSub>
-                                  <ContextMenuItem
-                                    onClick={() => {
-                                      downloadFileDirect(file);
-                                    }}
-                                  >
-                                    <ArrowDownToLine className="size-3.5" />
-                                    Download
-                                  </ContextMenuItem>
-                                </>
-                              )}
-                              <ContextMenuItem
-                                onClick={() => {
-                                  setPropertiesItem({
-                                    kind: "file",
-                                    id: file.id,
-                                    name: file.name,
-                                    detail: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown"} • ${file.isIngested ? "Ingested" : "Pending"}`,
-                                  });
-                                  setPropertiesOpen(true);
-                                }}
-                              >
-                                <Info className="size-3.5" />
-                                Properties
-                              </ContextMenuItem>
-                              {file.readOnly ? null : (
+                                              }}
+                                            >
+                                              {target.name}
+                                            </ContextMenuItem>
+                                          ))}
+                                      </ContextMenuSubContent>
+                                    </ContextMenuSub>
+                                  </>
+                                ) : null}
                                 <ContextMenuItem
                                   onClick={() => {
-                                    const items = resolveContextActionItems(
-                                      file.id,
-                                      "file"
-                                    );
-                                    void deleteSelectionItems(items);
+                                    setPropertiesItem({
+                                      kind: "file",
+                                      id: file.id,
+                                      name: file.name,
+                                      detail: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown"}`,
+                                    });
+                                    setPropertiesOpen(true);
                                   }}
-                                  variant="destructive"
                                 >
-                                  <Trash2 className="size-3.5" />
-                                  Delete
+                                  Properties
                                 </ContextMenuItem>
-                              )}
-                            </ContextMenuContent>
-                          </ContextMenu>
-                        );
-                      })}
-                    </div>
-                    {viewMode === "list" ? (
-                      <div className="divide-y divide-border/70 rounded-md border border-border/70">
-                        {sortedFolders.map((folder) => (
-                          <div
-                              className={cn(
-                                "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
-                                selection.selectedIds.has(folder.id) &&
-                                "bg-primary/10",
-                                dropTargetId === folder.id &&
-                                "bg-primary/15 outline outline-2 outline-primary/30"
-                              )}
-                            data-drop-folder-id={folder.id}
-                            data-select-item="true"
-                            draggable={!folder.readOnly}
-                            key={folder.id}
-                            onClick={(event) => {
-                              selection.handleItemClick(
-                                event,
-                                folder.id,
-                                visibleItemIds
-                              );
-                              handleOpenOnDoubleClick(event, () =>
-                                navigateToFolder(folder.id)
-                              );
-                            }}
-                            onDragEnd={() => {
-                              canvasDragDepthRef.current = 0;
-                              setCanvasDropActive(false);
-                              setDraggingIds([]);
-                              setDropTargetId(null);
-                            }}
-                            onDragEnter={(event) => {
-                              if (folder.readOnly) {
-                                return;
-                              }
-                              event.preventDefault();
-                              setDropTargetId(folder.id);
-                            }}
-                            onDragLeave={() => {
-                              setDropTargetId((current) =>
-                                current === folder.id ? null : current
-                              );
-                            }}
-                            onDragOver={(event) => {
-                              if (folder.readOnly) {
-                                return;
-                              }
-                              event.preventDefault();
-                              event.dataTransfer.dropEffect = "move";
-                              setDropTargetId(folder.id);
-                            }}
-                            onDragStart={(event) => {
-                              if (folder.readOnly) {
-                                event.preventDefault();
-                                return;
-                              }
-                              const sourceIds = selection.prepareDrag(
-                                folder.id
-                              );
-                              setDraggingIds(sourceIds);
-                              event.dataTransfer.effectAllowed = "move";
-                              configureDragPreview(event);
-                              event.dataTransfer.setData(
-                                "text/plain",
-                                sourceIds.join(",")
-                              );
-                            }}
-                            onDrop={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              if (folder.readOnly) {
-                                canvasDragDepthRef.current = 0;
-                                setCanvasDropActive(false);
-                                setDropTargetId(null);
-                                setDraggingIds([]);
-                                return;
-                              }
-                              const sourceIds =
-                                draggingIds.length > 0
-                                  ? draggingIds
-                                  : Array.from(selection.selectedIds);
-                              canvasDragDepthRef.current = 0;
-                              setCanvasDropActive(false);
-                              setDropTargetId(null);
-                              void moveItemsToFolder(sourceIds, folder.id);
-                              setDraggingIds([]);
-                            }}
-                            onTouchEnd={endTouchDrag}
-                            onTouchMove={moveTouchDrag}
-                            onTouchStart={() => {
-                              if (folder.readOnly) {
-                                return;
-                              }
-                              beginTouchDrag(folder.id);
-                            }}
-                            ref={(node: HTMLDivElement | null) => {
-                              if (!node) {
-                                itemRefs.current.delete(folder.id);
-                                return;
-                              }
-                              itemRefs.current.set(folder.id, node);
-                            }}
-                          >
-                            <Checkbox
-                              checked={selection.selectedIds.has(folder.id)}
-                              onCheckedChange={() =>
-                                selection.toggleSelection(folder.id)
-                              }
-                              onClick={(event) => event.stopPropagation()}
-                            />
-                            <Folder
-                              className="shrink-0"
-                              style={{
-                                color:
-                                  folder.iconColor &&
-                                  folder.iconColor.trim().length > 0
-                                    ? folder.iconColor
-                                    : "var(--primary)",
-                                height: 12,
-                                width: 12,
-                              }}
-                            />
-                            <p className="min-w-0 flex-1 truncate font-medium text-sm">
-                              {folder.name}
-                            </p>
-                            <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
-                              <span className="min-w-[110px] text-right tabular-nums">
-                                {folderSubfolderCount.get(folder.id) ?? 0}{" "}
-                                folders • {folderFileCount.get(folder.id) ?? 0}{" "}
-                                files
-                              </span>
-                              <span className="min-w-[72px] text-right tabular-nums">
-                                {folder.updatedAt
-                                  ? toUpdatedLabel(folder.updatedAt)
-                                  : "—"}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                        {sortedFiles.map((file) => {
-                          const fileKind = detectFileKind(file);
-                          return (
-                            <div
-                              className={cn(
-                                "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
-                                selection.selectedIds.has(file.id) &&
-                                  "bg-primary/10"
-                              )}
-                              data-select-item="true"
-                              draggable={!file.readOnly}
-                              key={file.id}
-                              onClick={(event) => {
-                                selection.handleItemClick(
-                                  event,
-                                  file.id,
-                                  visibleItemIds
-                                );
-                                handleOpenOnDoubleClick(event, () =>
-                                  selectFile(file.id)
-                                );
-                              }}
-                              onDragEnd={() => {
-                                canvasDragDepthRef.current = 0;
-                                setCanvasDropActive(false);
-                                setDraggingIds([]);
-                                setDropTargetId(null);
-                              }}
-                              onDragStart={(event) => {
-                                if (file.readOnly) {
-                                  event.preventDefault();
-                                  return;
-                                }
-                                const sourceIds = selection.prepareDrag(
-                                  file.id
-                                );
-                                setDraggingIds(sourceIds);
-                                event.dataTransfer.effectAllowed = "move";
-                                configureDragPreview(event);
-                                event.dataTransfer.setData(
-                                  "text/plain",
-                                  sourceIds.join(",")
-                                );
-                              }}
-                              onTouchEnd={endTouchDrag}
-                              onTouchMove={moveTouchDrag}
-                              onTouchStart={() => {
-                                if (file.readOnly) {
-                                  return;
-                                }
-                                beginTouchDrag(file.id);
-                              }}
-                              ref={(node: HTMLDivElement | null) => {
-                                if (!node) {
-                                  itemRefs.current.delete(file.id);
-                                  return;
-                                }
-                                itemRefs.current.set(file.id, node);
-                              }}
-                            >
-                              <Checkbox
-                                checked={selection.selectedIds.has(file.id)}
-                                onCheckedChange={() =>
-                                  selection.toggleSelection(file.id)
-                                }
-                                onClick={(event) => event.stopPropagation()}
-                              />
-                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted/60">
-                                {getFileTypeIcon(fileKind)}
-                              </div>
-                              <div className="flex min-w-0 flex-1 items-center gap-2">
-                                <p className="min-w-0 flex-1 truncate font-medium text-sm">
-                                  {file.name}
-                                </p>
-                              </div>
-                              <div className="ml-auto flex items-center gap-6 text-muted-foreground text-xs">
-                                <span className="min-w-[110px] text-right tabular-nums">
-                                  {formatBytes(file.sizeBytes)}
-                                </span>
-                                <span className="min-w-[72px] text-right tabular-nums">
-                                  {toUpdatedLabel(
-                                    file.updatedAt ?? file.createdAt
-                                  )}
-                                </span>
-                              </div>
-                            </div>
+                                {!file.readOnly ? (
+                                  <ContextMenuItem
+                                    onClick={() => {
+                                      void deleteFile(file.id);
+                                    }}
+                                    variant="destructive"
+                                  >
+                                    Delete
+                                  </ContextMenuItem>
+                                ) : null}
+                              </ContextMenuContent>
+                            </ContextMenu>
                           );
                         })}
                       </div>
                     ) : null}
                     {selection.selectionRect ? (
                       <div
-                        className="pointer-events-none absolute z-20 rounded-md border border-primary/30 bg-primary/10"
+                        className="pointer-events-none absolute z-20 rounded-md border border-emerald-400 bg-emerald-400/15"
                         style={{
                           left: selection.selectionRect.x,
                           top: selection.selectionRect.y,
@@ -5614,25 +3774,21 @@ export function FileExplorer() {
               disabled={isCurrentFolderReadOnly}
               onClick={() => openCreateFolderDialog(currentFolderId)}
             >
-              <Plus className="size-3.5" />
               New folder
             </ContextMenuItem>
             <ContextMenuItem
               disabled={isCurrentFolderReadOnly}
               onClick={() => fileInputRef.current?.click()}
             >
-              <Upload className="size-3.5" />
               Upload file
             </ContextMenuItem>
             <ContextMenuItem
               disabled={isCurrentFolderReadOnly}
               onClick={() => folderInputRef.current?.click()}
             >
-              <FilePlus2 className="size-3.5" />
               Upload folder
             </ContextMenuItem>
             <ContextMenuItem onClick={() => void loadFolder()}>
-              <ArrowUpDown className="size-3.5" />
               Refresh
             </ContextMenuItem>
           </ContextMenuContent>
@@ -5704,13 +3860,6 @@ export function FileExplorer() {
                   return;
                 }
                 setEditDialog({ ...editDialog, value: event.target.value });
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || !editDialog?.value.trim()) {
-                  return;
-                }
-                event.preventDefault();
-                void applyEditDialog();
               }}
               placeholder="Name"
               value={editDialog?.value ?? ""}

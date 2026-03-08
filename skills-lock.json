@@ -11,11 +11,6 @@
       "sourceType": "github",
       "computedHash": "63689cc54dad93d286af948ab1792e755e7063541ffe90e248eed6523b0748a0"
     },
-    "frontend-design": {
-      "source": "anthropics/skills",
-      "sourceType": "github",
-      "computedHash": "063a0e6448123cd359ad0044cc46b0e490cc7964d45ef4bb9fd842bd2ffbca67"
-    },
     "shadcn-ui": {
       "source": "giuseppe-trisciuoglio/developer-kit",
       "sourceType": "github",

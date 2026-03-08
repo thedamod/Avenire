@@ -1,7 +1,7 @@
 export type {
   BillingPlan,
   UsageMeterType,
-} from "@avenire/database";
+} from "../../../../packages/database/src";
 export {
   consumeUsageUnits,
   findUserIdByPolarCustomerId,
@@ -10,4 +10,4 @@ export {
   getUsageOverview,
   upsertBillingCustomer,
   upsertBillingSubscription,
-} from "@avenire/database";
+} from "../../../../packages/database/src";

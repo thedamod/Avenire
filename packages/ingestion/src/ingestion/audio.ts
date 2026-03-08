@@ -1,5 +1,5 @@
+import { withExtractedAudioFromVideoUrl } from "../utils/ffmpeg";
 import { config } from "../config";
-import { extractAudioFromVideoUrl } from "../utils/ffmpeg";
 import { assertSafeUrl } from "../utils/safety";
 import { semanticChunkText } from "./chunking";
 import { transcribeAudio } from "./transcription";
@@ -12,15 +12,29 @@ export const ingestAudio = async (input: {
   url: string;
   title?: string;
 }): Promise<CanonicalResource> => {
-  const source = assertSafeUrl(input.url).toString();
-  const audioBytes = await extractAudioFromVideoUrl(source);
-  let transcription:
-    | { text: string; segments: Array<{ startMs: number; endMs: number; text: string }> }
-    | null = null;
+  const source = (await assertSafeUrl(input.url)).toString();
+  let transcription: {
+    text: string;
+    segments: Array<{ startMs: number; endMs: number; text: string }>;
+  } | null = null;
   let transcriptionError: string | null = null;
+  let transcriptionStatus: "ok" | "fallback" = "ok";
   try {
-    transcription = await transcribeAudio(audioBytes);
+    transcription = await withExtractedAudioFromVideoUrl(
+      source,
+      ({ audioPath, mimeType }) =>
+        transcribeAudio({
+          filePath: audioPath,
+          mimeType,
+          filename: "audio.mp3",
+        }),
+      {
+        maxBytes: config.maxAudioBytes,
+        maxDurationSeconds: config.maxAudioDurationSeconds,
+      }
+    );
   } catch (error) {
+    transcriptionStatus = "fallback";
     transcriptionError =
       error instanceof Error ? error.message : "Audio transcription failed";
   }
@@ -34,19 +48,13 @@ export const ingestAudio = async (input: {
     );
   }
 
+  const metadataContent =
+    input.title?.trim() || transcript.slice(0, 300) || "Audio content";
+
   const chunks: CanonicalChunk[] = [
     {
       chunkIndex: 0,
-      content: [
-        `Audio source: ${source}`,
-        input.title ? `Title: ${input.title}` : "",
-        `Transcription model: ${config.groqTranscriptionModel}`,
-        transcriptionError
-          ? `Transcription status: fallback (${transcriptionError})`
-          : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      content: metadataContent,
       kind: "visualization" as const,
       metadata: {
         sourceType: "audio" as const,
@@ -54,6 +62,7 @@ export const ingestAudio = async (input: {
         modality: "text" as const,
         extra: {
           section: "audio-metadata",
+          transcriptionStatus,
         },
       },
     },
@@ -116,8 +125,7 @@ export const ingestAudio = async (input: {
     metadata: {
       hasTranscript: Boolean(transcript),
       segmentCount: transcriptSegments.length,
-      transcriptionModel: config.groqTranscriptionModel,
-      transcriptionError,
+      transcriptionStatus,
     },
     chunks,
   };

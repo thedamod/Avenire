@@ -2025,7 +2025,8 @@ function MediaPlayerSeek(props: MediaPlayerSeekProps) {
       }
 
       const isMousePrimaryClick =
-        event.pointerType !== "mouse" || event.button === 0;
+        (event.pointerType === "mouse" && event.button === 0) ||
+        (event.pointerType !== "mouse" && event.isPrimary);
       if (!isMousePrimaryClick) {
         return;
       }
@@ -2125,17 +2126,29 @@ function MediaPlayerSeek(props: MediaPlayerSeekProps) {
       return (
         <button
           aria-label={`Seek to highlighted segment ${index + 1}`}
+          aria-disabled={isDisabled || undefined}
           className={cn(
             "absolute top-0 h-full rounded-full border border-white/40 transition-opacity",
-            isActive ? "bg-amber-400/85 opacity-100" : "bg-amber-300/55 opacity-80"
+            isDisabled
+              ? "cursor-not-allowed bg-zinc-400/35 opacity-50"
+              : isActive
+                ? "bg-amber-400/85 opacity-100"
+                : "bg-amber-300/55 opacity-80"
           )}
+          disabled={isDisabled}
           key={`retrieval-range-${index}-${start}-${end}`}
           onClick={(event) => {
+            if (isDisabled) {
+              return;
+            }
             event.preventDefault();
             event.stopPropagation();
             onSeekCommit(start);
           }}
           onPointerDown={(event) => {
+            if (isDisabled) {
+              return;
+            }
             event.preventDefault();
             event.stopPropagation();
             onSeekCommit(start);
@@ -2145,6 +2158,7 @@ function MediaPlayerSeek(props: MediaPlayerSeekProps) {
             width: `${width}%`,
             zIndex: 6,
           }}
+          tabIndex={isDisabled ? -1 : 0}
           type="button"
         />
       );

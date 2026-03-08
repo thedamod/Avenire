@@ -14,7 +14,3 @@ dist
 /apps/web/*.jpg
 /apps/web/*.jpeg
 /apps/web/*.webp
-
-Ingestion/*
-
-drizzle/*
