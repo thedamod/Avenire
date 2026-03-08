@@ -48,58 +48,25 @@ function formatTimeAgo(date: Date): string {
 }
 
 function getFileIcon(fileType: FileCardType): React.ReactNode {
-  const iconClass = "h-4 w-4";
-  const iconProps = {
-    "aria-hidden": true,
-    className: iconClass,
-    fill: "currentColor",
-    viewBox: "0 0 24 24",
-  } as const;
+  const iconByType: Record<FileCardType, string> = {
+    archive: "/icons/zip.svg",
+    audio: "/icons/audio.svg",
+    code: "/icons/typescript.svg",
+    document: "/icons/text.svg",
+    image: "/icons/image.svg",
+    other: "/icons/_file.svg",
+    video: "/icons/video.svg",
+  };
 
-  switch (fileType) {
-    case "image":
-      return (
-        <svg {...iconProps}>
-          <path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14h18zm-2 0H5l4.5-6 3.2 4.1 2.3-3.1L19 19zM8.5 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z" />
-        </svg>
-      );
-    case "video":
-      return (
-        <svg {...iconProps}>
-          <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
-        </svg>
-      );
-    case "document":
-      return (
-        <svg {...iconProps}>
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-8-6z" />
-        </svg>
-      );
-    case "audio":
-      return (
-        <svg {...iconProps}>
-          <path d="M12 3v9.28c-.47-.46-1.12-.75-1.84-.75-1.66 0-3 1.34-3 3s1.34 3 3 3c1.66 0 3-1.34 3-3V7h4V3h-4z" />
-        </svg>
-      );
-    case "code":
-      return (
-        <svg {...iconProps}>
-          <path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z" />
-        </svg>
-      );
-    case "archive":
-      return (
-        <svg {...iconProps}>
-          <path d="M20.12 2.04H3.88c-1.04 0-1.88.84-1.88 1.88v15.16c0 1.04.84 1.88 1.88 1.88h16.24c1.04 0 1.88-.84 1.88-1.88V3.92c0-1.04-.84-1.88-1.88-1.88zm-8.06 13.52l-3.38-3.38h2.52V9.52h2.92v2.66h2.52l-3.38 3.38z" />
-        </svg>
-      );
-    default:
-      return (
-        <svg {...iconProps}>
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-8-6z" />
-        </svg>
-      );
-  }
+  return (
+    <img
+      alt=""
+      aria-hidden="true"
+      className="h-4 w-4"
+      loading="lazy"
+      src={iconByType[fileType]}
+    />
+  );
 }
 
 export function FileCard({
@@ -110,50 +77,48 @@ export function FileCard({
   previewContent,
   previewUrl,
 }: FileCardProps) {
-  const [timeAgo, setTimeAgo] = useState(() => formatTimeAgo(lastUpdated));
-
-  useEffect(() => {
-    setTimeAgo(formatTimeAgo(lastUpdated));
-    const timer = setInterval(() => {
-      setTimeAgo(formatTimeAgo(lastUpdated));
-    }, 30_000);
-    return () => clearInterval(timer);
-  }, [lastUpdated]);
+  const timeAgo = useMemo(() => formatTimeAgo(lastUpdated), [lastUpdated]);
+  const hasPreview = Boolean(previewContent || previewUrl);
 
   return (
-    <div className={`space-y-3 ${className}`}>
-      <div className="mx-auto flex h-24 w-24 items-center justify-center">
-        <div className="group relative h-[78px] w-[96px] overflow-hidden rounded-[10px] border border-border/60 bg-neutral-900 shadow-sm">
-          {previewContent ? (
-            <div className="h-full w-full">{previewContent}</div>
-          ) : previewUrl ? (
+    <div className={cn("inline-flex w-full max-w-full flex-col items-center gap-2 overflow-hidden", className)}>
+      <div
+        className={cn(
+          "group relative flex w-full min-w-0 items-center justify-center overflow-hidden rounded-lg border border-border/45 bg-muted/70 p-1.5",
+          hasPreview ? "h-28" : "h-28 aspect-[4/3]"
+        )}
+      >
+        {previewContent ? (
+          <div className="h-full w-auto max-w-full overflow-hidden rounded-md border border-border/50 bg-card/60 p-1 [&_canvas]:h-full [&_canvas]:w-auto [&_canvas]:rounded-sm [&_img]:h-full [&_img]:w-auto [&_img]:rounded-sm [&_img]:object-contain [&_video]:h-full [&_video]:w-auto [&_video]:rounded-sm [&_video]:object-contain">
+            {previewContent}
+          </div>
+        ) : previewUrl ? (
+          <div className="h-full w-auto max-w-full overflow-hidden rounded-md border border-border/50 bg-card/60 p-1">
             <img
               alt={name}
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-              height={78}
+              className="h-full w-auto max-w-full rounded-sm object-contain transition-transform duration-300 group-hover:scale-[1.02]"
               src={previewUrl}
-              width={96}
             />
-          ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center text-neutral-400 transition-colors group-hover:text-neutral-300">
-              <div className="mb-1.5 h-7 w-7 opacity-60">{getFileIcon(fileType)}</div>
-              <span className="px-2 text-center text-[10px] capitalize leading-none">{fileType}</span>
-            </div>
-          )}
-          {previewContent || previewUrl ? (
-            <div className="absolute inset-0 bg-black opacity-0 transition-opacity duration-300 group-hover:opacity-10" />
-          ) : null}
-        </div>
+          </div>
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center text-neutral-400 transition-colors group-hover:text-neutral-300">
+            <div className="h-8 w-8 opacity-60">{getFileIcon(fileType)}</div>
+          </div>
+        )}
+        {hasPreview ? (
+          <div className="absolute inset-0 bg-black opacity-0 transition-opacity duration-300 group-hover:opacity-10" />
+        ) : null}
       </div>
-      <div className="space-y-1">
-        <p className="truncate font-medium text-sm" title={name}>
-          {name}
-        </p>
-        <p className="flex items-center gap-1.5 text-muted-foreground text-xs">
-          <span className="shrink-0">{getFileIcon(fileType)}</span>
-          <span className="capitalize">{fileType}</span>
-          <span className="ml-auto tabular-nums">{timeAgo}</span>
-        </p>
+      <div className="flex w-full min-w-0 max-w-full items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="shrink-0 text-muted-foreground">{getFileIcon(fileType)}</span>
+          <span className="min-w-0 flex-1 truncate font-medium text-sm" title={name}>
+            {name}
+          </span>
+        </div>
+        <span className="shrink-0 tabular-nums text-muted-foreground text-xs">
+          {timeAgo}
+        </span>
       </div>
     </div>
   );
@@ -194,7 +159,7 @@ export function VideoThumbnail({
 
   if (failed) {
     return (
-      <div className={cn("flex h-full w-full items-center justify-center bg-muted/70", className)}>
+      <div className={cn("flex h-full w-auto items-center justify-center bg-muted/70", className)}>
         <FileText className="size-8 text-violet-500" />
       </div>
     );
@@ -202,7 +167,7 @@ export function VideoThumbnail({
 
   return (
     <video
-      className={cn("h-full w-full object-cover", className)}
+      className={cn("h-full w-auto object-contain", className)}
       muted
       onError={() => setFailed(true)}
       playsInline
@@ -274,21 +239,21 @@ export function PdfThumbnail({
 
   if (failed) {
     return (
-      <div className={cn("flex h-full w-full items-center justify-center bg-muted/70", className)}>
+      <div className={cn("flex h-full w-auto items-center justify-center bg-muted/70", className)}>
         <FileText className="size-8 text-rose-500" />
       </div>
     );
   }
 
   return (
-    <div className={cn("relative h-full w-full overflow-hidden", className)}>
+    <div className={cn("relative h-full w-auto overflow-hidden", className)}>
       {!ready && (
         <div className="absolute inset-0 flex items-center justify-center bg-muted/70">
-          <FileText className="size-8 animate-pulse text-rose-400" />
+          <FileText className="size-8 text-rose-400" />
         </div>
       )}
       <canvas
-        className="h-full w-full object-contain"
+        className="h-full w-auto object-contain"
         ref={canvasRef}
         style={{ opacity: ready ? 1 : 0, transition: "opacity 0.2s" }}
       />

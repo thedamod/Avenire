@@ -67,7 +67,7 @@ export default async function DashboardWorkspaceFolderPage({
     redirect("/dashboard");
   }
 
-  const chats = await listChatsForUser(session.user.id);
+  const chats = await listChatsForUser(session.user.id, workspaceUuid);
 
   return (
     <DashboardLayout

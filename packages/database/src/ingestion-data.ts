@@ -1,15 +1,4 @@
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  inArray,
-  isNotNull,
-  isNull,
-  notInArray,
-  sql,
-} from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "./client";
 import {
   fileAsset,
@@ -41,15 +30,6 @@ const DEFAULT_DB_INSERT_BATCH_SIZE = 200;
 const MAX_DB_INSERT_BATCH_SIZE = 200;
 const PG_INT4_MAX = 2_147_483_647;
 const PG_INT4_MIN = -2_147_483_648;
-
-const isPgUniqueViolation = (error: unknown): boolean => {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const code = "code" in error ? String((error as { code?: unknown }).code) : "";
-  return code === "23505";
-};
 
 const splitIntoBatches = <T>(values: T[], batchSize: number): T[][] => {
   if (values.length === 0) {
@@ -87,44 +67,38 @@ export async function enqueueIngestionJob(input: {
 }) {
   const now = new Date();
   return db.transaction(async (tx) => {
-    let created: typeof ingestionJob.$inferSelect | undefined;
-    try {
-      [created] = await tx
-        .insert(ingestionJob)
-        .values({
-          workspaceId: input.workspaceId,
-          fileId: input.fileId,
-          status: "queued",
-          sourceType: input.sourceType ?? null,
-          attempts: 0,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
-    } catch (error) {
-      if (!isPgUniqueViolation(error)) {
-        throw error;
-      }
+    const [existing] = await tx
+      .select()
+      .from(ingestionJob)
+      .where(
+        and(
+          eq(ingestionJob.workspaceId, input.workspaceId),
+          eq(ingestionJob.fileId, input.fileId),
+          inArray(ingestionJob.status, ["queued", "running"])
+        )
+      )
+      .orderBy(desc(ingestionJob.createdAt))
+      .limit(1);
+
+    if (existing) {
+      return mapJobRow(existing);
     }
 
-    if (!created) {
-      const [existing] = await tx
-        .select()
-        .from(ingestionJob)
-        .where(
-          and(
-            eq(ingestionJob.workspaceId, input.workspaceId),
-            eq(ingestionJob.fileId, input.fileId),
-            inArray(ingestionJob.status, ["queued", "running"])
-          )
-        )
-        .orderBy(desc(ingestionJob.createdAt))
-        .limit(1);
-      if (!existing) {
-        throw new Error("Failed to enqueue ingestion job.");
-      }
+    const [created] = await tx
+      .insert(ingestionJob)
+      .values({
+        workspaceId: input.workspaceId,
+        fileId: input.fileId,
+        status: "queued",
+        sourceType: input.sourceType ?? null,
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
 
-      return mapJobRow(existing);
+    if (!created) {
+      throw new Error("Failed to enqueue ingestion job.");
     }
 
     await tx.insert(ingestionJobEvent).values({
@@ -364,6 +338,44 @@ export async function markIngestionJobFailed(input: {
   });
 }
 
+export async function retryIngestionJob(input: {
+  workspaceId: string;
+  jobId: string;
+  error: string;
+  retryInMs: number;
+}) {
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx
+      .update(ingestionJob)
+      .set({
+        status: "queued",
+        finishedAt: null,
+        startedAt: null,
+        updatedAt: now,
+        error: input.error.slice(0, 2000),
+      })
+      .where(
+        and(
+          eq(ingestionJob.workspaceId, input.workspaceId),
+          eq(ingestionJob.id, input.jobId)
+        )
+      );
+
+    await tx.insert(ingestionJobEvent).values({
+      workspaceId: input.workspaceId,
+      jobId: input.jobId,
+      eventType: "job.retry_scheduled",
+      payload: {
+        status: "queued",
+        error: input.error.slice(0, 2000),
+        retryInMs: Math.max(0, Math.trunc(input.retryInMs)),
+      },
+      createdAt: now,
+    });
+  });
+}
+
 export async function listIngestionEventsForWorkspace(input: {
   workspaceId: string;
   sinceIso?: string | null;
@@ -414,6 +426,7 @@ export async function getFileForIngestion(workspaceId: string, fileId: string) {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
+    storageKey: row.storageKey,
     storageUrl: row.storageUrl,
     name: row.name,
     mimeType: row.mimeType ?? null,
@@ -461,6 +474,10 @@ export async function upsertIngestionResource(input: {
       if (!updated?.id) {
         throw new Error("Failed to update ingestion resource.");
       }
+
+      await tx
+        .delete(ingestionChunk)
+        .where(eq(ingestionChunk.resourceId, updated.id));
       return updated.id;
     }
 
@@ -545,17 +562,6 @@ export async function insertIngestionChunks(input: {
             metadata: chunk.metadata ?? {},
           }))
         )
-        .onConflictDoUpdate({
-          target: [ingestionChunk.resourceId, ingestionChunk.chunkIndex],
-          set: {
-            kind: sql`excluded.kind`,
-            content: sql`excluded.content`,
-            page: sql`excluded.page`,
-            startMs: sql`excluded.start_ms`,
-            endMs: sql`excluded.end_ms`,
-            metadata: sql`excluded.metadata`,
-          },
-        })
         .returning({
           id: ingestionChunk.id,
           chunkIndex: ingestionChunk.chunkIndex,
@@ -580,27 +586,6 @@ export async function insertIngestionChunks(input: {
   return rows;
 }
 
-export async function deleteStaleIngestionChunks(input: {
-  resourceId: string;
-  keepChunkIndexes: number[];
-}) {
-  if (input.keepChunkIndexes.length === 0) {
-    await db
-      .delete(ingestionChunk)
-      .where(eq(ingestionChunk.resourceId, input.resourceId));
-    return;
-  }
-
-  await db
-    .delete(ingestionChunk)
-    .where(
-      and(
-        eq(ingestionChunk.resourceId, input.resourceId),
-        notInArray(ingestionChunk.chunkIndex, input.keepChunkIndexes)
-      )
-    );
-}
-
 export async function insertIngestionEmbeddings(input: {
   rows: Array<{
     chunkId: string;
@@ -612,30 +597,13 @@ export async function insertIngestionEmbeddings(input: {
     return;
   }
 
-  const chunkIds = Array.from(new Set(input.rows.map((row) => row.chunkId)));
-  const model = input.rows[0]?.model;
-  if (!model) {
-    return;
-  }
-
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(ingestionEmbedding)
-      .where(
-        and(
-          inArray(ingestionEmbedding.chunkId, chunkIds),
-          eq(ingestionEmbedding.model, model)
-        )
-      );
-
-    await tx.insert(ingestionEmbedding).values(
-      input.rows.map((row) => ({
-        chunkId: row.chunkId,
-        model: row.model,
-        embedding: row.embedding,
-      }))
-    );
-  });
+  await db.insert(ingestionEmbedding).values(
+    input.rows.map((row) => ({
+      chunkId: row.chunkId,
+      model: row.model,
+      embedding: row.embedding,
+    }))
+  );
 }
 
 export async function replaceFileTranscriptCues(input: {
@@ -694,7 +662,6 @@ export async function listFileTranscriptCues(
 export async function retrieveWorkspaceChunks(input: {
   workspaceId: string;
   queryEmbedding: number[];
-  model: string;
   limit: number;
   sourceType?: string;
   provider?: string;
@@ -720,8 +687,6 @@ export async function retrieveWorkspaceChunks(input: {
   const vectorLiteral = `[${input.queryEmbedding.map((value) => Number(value).toString()).join(",")}]`;
   const predicates = [
     sql`r.workspace_id = ${input.workspaceId}::uuid`,
-    sql`e.model = ${input.model}`,
-    sql`(r.file_id IS NULL OR fa.deleted_at IS NULL)`,
     input.sourceType ? sql`r.source_type = ${input.sourceType}` : undefined,
     input.provider ? sql`r.provider = ${input.provider}` : undefined,
   ].filter(Boolean);
@@ -773,7 +738,6 @@ export async function retrieveWorkspaceChunks(input: {
     FROM ingestion_embedding e
     INNER JOIN ingestion_chunk c ON c.id = e.chunk_id
     INNER JOIN ingestion_resource r ON r.id = c.resource_id
-    LEFT JOIN file_asset fa ON fa.id = r.file_id
     WHERE ${whereClause}
     ORDER BY e.embedding <=> ${vectorLiteral}::vector
     LIMIT ${Math.max(1, input.limit)}

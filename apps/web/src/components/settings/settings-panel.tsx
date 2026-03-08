@@ -6,6 +6,14 @@ import type { Route } from "next";
 import { Avatar, AvatarFallback, AvatarImage } from "@avenire/ui/components/avatar";
 import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
 import { Progress } from "@avenire/ui/components/progress";
 import { Switch } from "@avenire/ui/components/switch";
@@ -20,15 +28,21 @@ import {
 } from "@avenire/auth/client";
 import { getFacehashUrl } from "@/lib/avatar";
 import { useUploadThing } from "@/lib/uploadthing";
+import { cn } from "@/lib/utils";
 import {
+  Building2,
   Camera,
   Check,
+  CreditCard,
+  Database,
   Github,
   Globe,
   Key,
+  SlidersHorizontal,
   Shield,
   TriangleAlert,
   Unlink,
+  User,
   Users,
 } from "lucide-react";
 
@@ -85,10 +99,13 @@ type UserSettings = {
 };
 
 const tabs = [
-  { key: "account", label: "Account" },
-  { key: "billing", label: "Billing" },
-  { key: "security", label: "Security" },
-  { key: "workspaces", label: "Workspaces" },
+  { key: "account", label: "Account", icon: User },
+  { key: "preferences", label: "Preferences", icon: SlidersHorizontal },
+  { key: "workspace", label: "Workspace", icon: Building2 },
+  { key: "data", label: "Data", icon: Database },
+  { key: "billing", label: "Billing", icon: CreditCard },
+  { key: "security", label: "Security", icon: Shield },
+  { key: "shortcuts", label: "Keyboard Shortcuts", icon: Key, mobileHidden: true },
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
@@ -106,25 +123,26 @@ const PLAN_LABELS: Record<string, string> = {
   core: "Core Plan",
   scholar: "Scholar Plan",
 };
-
-function getTimeUntil(dateStr: string | null): string {
-  if (!dateStr) return "";
-  const diff = new Date(dateStr).getTime() - Date.now();
-  if (diff <= 0) return "Resetting...";
-  const h = Math.floor(diff / 3_600_000);
-  const m = Math.floor((diff % 3_600_000) / 60_000);
-  return `Resets in ${h}h ${m}m`;
-}
+const PRIVACY_MODE_STORAGE_KEY = "avenire:settings:privacy-mode";
 
 export function SettingsPanel({
   initialWorkspaces,
+  tabMode = "url",
+  initialTab = "account",
 }: {
-  initialWorkspaces: WorkspaceSummary[];
+  initialWorkspaces?: WorkspaceSummary[];
+  tabMode?: "url" | "local";
+  initialTab?: TabKey;
 }) {
   const { data: session } = useSession();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const currentTab = (searchParams.get("tab") as TabKey | null) ?? "account";
+  const [localTab, setLocalTab] = useState<TabKey>(initialTab);
+  const validTabSet = useMemo(() => new Set<TabKey>(tabs.map((tab) => tab.key)), []);
+  const tabFromQuery = searchParams.get("tab");
+  const currentTab = tabMode === "url" && tabFromQuery && validTabSet.has(tabFromQuery as TabKey)
+    ? (tabFromQuery as TabKey)
+    : localTab;
 
   // Profile state
   const [profileName, setProfileName] = useState(session?.user?.name ?? "");
@@ -133,7 +151,9 @@ export function SettingsPanel({
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { startUpload: startAvatarUpload } = useUploadThing("imageUploader");
 
   // Accounts
   const [accounts, setAccounts] = useState<AccountEntry[]>([]);
@@ -144,6 +164,7 @@ export function SettingsPanel({
   const [billingStatus, setBillingStatus] = useState<string | null>(null);
   const [preferencesStatus, setPreferencesStatus] = useState<string | null>(null);
   const [emailReceipts, setEmailReceipts] = useState(true);
+  const [privacyMode, setPrivacyMode] = useState(false);
   const [sessionsStatus, setSessionsStatus] = useState<string | null>(null);
 
   // Passkeys
@@ -151,8 +172,8 @@ export function SettingsPanel({
   const [passkeysStatus, setPasskeysStatus] = useState<string | null>(null);
 
   // Workspaces
-  const [workspaces, setWorkspaces] = useState(initialWorkspaces);
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState(initialWorkspaces[0]?.workspaceId ?? "");
+  const [workspaces, setWorkspaces] = useState(initialWorkspaces ?? []);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState(initialWorkspaces?.[0]?.workspaceId ?? "");
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
   const [workspaceEmail, setWorkspaceEmail] = useState("");
   const [workspaceStatus, setWorkspaceStatus] = useState<string | null>(null);
@@ -165,7 +186,11 @@ export function SettingsPanel({
   const [sudoActive, setSudoActive] = useState(false);
   const [sudoCode, setSudoCode] = useState("");
   const [sudoStatus, setSudoStatus] = useState<string | null>(null);
-  const { startUpload: startAvatarUpload } = useUploadThing("imageUploader");
+  const [sudoDialogOpen, setSudoDialogOpen] = useState(false);
+  const [sudoActionLabel, setSudoActionLabel] = useState("this action");
+  const [sudoRequestingCode, setSudoRequestingCode] = useState(false);
+  const [sudoVerifyingCode, setSudoVerifyingCode] = useState(false);
+  const pendingSudoActionRef = useRef<null | (() => Promise<void>)>(null);
 
   useEffect(() => {
     setProfileName(session?.user?.name ?? "");
@@ -245,12 +270,118 @@ export function SettingsPanel({
     const response = await fetch("/api/security/sudo", { cache: "no-store" });
     if (!response.ok) {
       setSudoActive(false);
+      setSudoStatus(null);
       return;
     }
     const payload = (await response.json()) as { active?: boolean };
     setSudoActive(Boolean(payload.active));
     if (payload.active) {
-      setSudoStatus("Sudo mode is active.");
+      setSudoStatus("Sudo mode is active for this session.");
+    } else {
+      setSudoStatus(null);
+    }
+  };
+
+  const saveProfile = async (nextImage?: string) => {
+    setProfileStatus("Saving...");
+    const result = await updateUser({
+      name: profileName.trim() || undefined,
+      image: (nextImage ?? profileImage).trim() || undefined,
+    });
+    setProfileStatus(result.error ? "Unable to update profile." : "Profile updated.");
+    return !result.error;
+  };
+
+  const handleAvatarFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setAvatarUploading(true);
+    setProfileStatus("Uploading avatar...");
+
+    try {
+      const uploaded = ((await startAvatarUpload([file])) ?? [])[0] as
+        | { ufsUrl?: string | null; url?: string | null }
+        | undefined;
+      const uploadedUrl = uploaded?.ufsUrl ?? uploaded?.url ?? null;
+
+      if (!uploadedUrl) {
+        setProfileStatus("Unable to upload avatar.");
+        return;
+      }
+
+      setProfileImage(uploadedUrl);
+      setAvatarPreview(uploadedUrl);
+
+      const saved = await saveProfile(uploadedUrl);
+      if (saved) {
+        setProfileStatus("Avatar uploaded and saved.");
+      }
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const requestSudoForAction = (actionLabel: string, action: () => Promise<void>) => {
+    pendingSudoActionRef.current = action;
+    setSudoActionLabel(actionLabel);
+    setSudoCode("");
+    setSudoStatus(null);
+    setSudoDialogOpen(true);
+  };
+
+  const requestSudoCode = async () => {
+    setSudoRequestingCode(true);
+    setSudoStatus("Sending verification code...");
+
+    try {
+      const response = await fetch("/api/security/sudo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "request" }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      setSudoStatus(response.ok ? "Verification code sent to your email." : (payload.error ?? "Unable to send code."));
+    } finally {
+      setSudoRequestingCode(false);
+    }
+  };
+
+  const verifySudoCodeAndContinue = async () => {
+    setSudoVerifyingCode(true);
+    setSudoStatus("Verifying code...");
+
+    try {
+      const response = await fetch("/api/security/sudo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "verify", code: sudoCode.trim() }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        setSudoActive(false);
+        setSudoStatus(payload.error ?? "Invalid or expired code.");
+        return;
+      }
+
+      setSudoActive(true);
+      setSudoCode("");
+      setSudoStatus("Sudo mode is active for 12 hours.");
+
+      const pendingAction = pendingSudoActionRef.current;
+      pendingSudoActionRef.current = null;
+      setSudoDialogOpen(false);
+
+      if (pendingAction) {
+        await pendingAction();
+      }
+    } finally {
+      setSudoVerifyingCode(false);
     }
   };
 
@@ -259,8 +390,8 @@ export function SettingsPanel({
     if (currentTab === "billing") void refreshBillingUsage(true);
     if (currentTab === "billing") void refreshUserSettings();
     if (currentTab === "security") void refreshPasskeys();
-    if (currentTab === "security" || currentTab === "workspaces") void refreshSudoStatus();
-    if (currentTab === "workspaces" && activeWorkspaceId) void refreshMembers(activeWorkspaceId);
+    if (currentTab === "security" || currentTab === "workspace") void refreshSudoStatus();
+    if (currentTab === "workspace" && activeWorkspaceId) void refreshMembers(activeWorkspaceId);
   }, [activeWorkspaceId, currentTab]);
 
   useEffect(() => {
@@ -278,163 +409,268 @@ export function SettingsPanel({
     void refreshSudoStatus();
   }, []);
 
+  useEffect(() => {
+    const stored = window.localStorage.getItem(PRIVACY_MODE_STORAGE_KEY);
+    setPrivacyMode(stored === "1");
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      PRIVACY_MODE_STORAGE_KEY,
+      privacyMode ? "1" : "0"
+    );
+  }, [privacyMode]);
+
+  useEffect(() => {
+    if (sudoDialogOpen && !sudoActive) {
+      void requestSudoCode();
+    }
+  }, [sudoActive, sudoDialogOpen]);
+
   const setTab = (tab: TabKey) => {
+    if (tabMode === "local") {
+      setLocalTab(tab);
+      return;
+    }
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", tab);
     router.replace(`/settings?${params.toString()}` as Route);
   };
 
-  const usagePct = billingUsage?.combined.totalCapacity
-    ? (billingUsage.combined.totalBalance / billingUsage.combined.totalCapacity) * 100
-    : 0;
-
   const planLabel = billingUsage ? (PLAN_LABELS[billingUsage.plan] ?? "Free Plan") : "Free Plan";
+  const mobileTabs = tabs.filter((tab) => !("mobileHidden" in tab && tab.mobileHidden));
+  const hasPaidPlan = billingUsage?.plan === "core" || billingUsage?.plan === "scholar";
 
   const displayAvatar = avatarPreview || profileImage || getFacehashUrl(profileName || session?.user?.email || "");
   const fallbackInitials = (profileName || session?.user?.name || "U").slice(0, 2).toUpperCase();
 
+  const handleManageBilling = async () => {
+    if (!hasPaidPlan) {
+      router.push("/pricing" as Route);
+      return;
+    }
+
+    setBillingStatus("Opening billing portal...");
+    const response = await fetch("/api/billing/portal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ returnPath: "/settings?tab=billing" }),
+    });
+    const payload = (await response.json().catch(() => ({}))) as { error?: string; url?: string };
+
+    if (!response.ok || !payload.url) {
+      setBillingStatus(payload.error ?? "Unable to open billing portal.");
+      return;
+    }
+
+    window.location.href = payload.url;
+  };
+
+  const runDeleteAccount = async () => {
+    setDangerStatus("Deleting account...");
+    const response = await fetch("/api/account", { method: "DELETE" });
+
+    if (response.status === 403) {
+      setSudoActive(false);
+      setDangerStatus("Verification required.");
+      requestSudoForAction("delete your account", runDeleteAccount);
+      return;
+    }
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      setDangerStatus(payload.error ?? "Unable to delete account.");
+      return;
+    }
+
+    window.location.href = "/login";
+  };
+
+  const runDeleteWorkspace = async () => {
+    if (!selectedWorkspace) {
+      return;
+    }
+
+    setWorkspaceStatus("Deleting workspace...");
+    const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}`, {
+      method: "DELETE",
+    });
+
+    if (response.status === 403) {
+      setSudoActive(false);
+      setWorkspaceStatus("Verification required.");
+      requestSudoForAction(`delete ${selectedWorkspace.name}`, runDeleteWorkspace);
+      return;
+    }
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      setWorkspaceStatus(payload.error ?? "Unable to delete workspace.");
+      return;
+    }
+
+    const payload = (await response.json()) as { workspaces?: WorkspaceSummary[] };
+    const nextWorkspaces = payload.workspaces ?? [];
+    setWorkspaces(nextWorkspaces);
+    setWorkspaceDeleteConfirm("");
+    if (nextWorkspaces.length > 0) {
+      setActiveWorkspaceId(nextWorkspaces[0].workspaceId);
+    }
+    setWorkspaceStatus("Workspace deleted.");
+  };
+
   return (
-    <div className="flex h-full w-full overflow-hidden">
-      {/* ─── Left Profile Sidebar ─────────────────────────────────── */}
-      <aside className="hidden md:flex w-72 shrink-0 flex-col gap-5 overflow-y-auto border-r border-border/60 bg-sidebar p-6">
-        {/* Avatar + identity */}
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="relative group">
-            <Avatar className="h-24 w-24 ring-2 ring-border ring-offset-2 ring-offset-sidebar">
-              <AvatarImage src={displayAvatar} alt={profileName} />
-              <AvatarFallback className="text-2xl">{fallbackInitials}</AvatarFallback>
-            </Avatar>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="absolute inset-0 flex items-center justify-center rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity"
-              aria-label="Change avatar"
-            >
-              <Camera className="h-5 w-5 text-white" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const inputElement = e.currentTarget;
-                const file = e.target.files?.[0];
-                if (!file) return;
-                void (async () => {
-                  setIsUploadingAvatar(true);
-                  try {
-                    setProfileStatus("Uploading avatar...");
-                    const uploadedFiles = await startAvatarUpload([file]);
-                    const uploaded = uploadedFiles?.[0];
-                    const uploadedFile = uploaded as
-                      | { ufsUrl?: string | null; url?: string | null }
-                      | undefined;
-                    const uploadedUrl = uploadedFile?.ufsUrl ?? uploadedFile?.url ?? null;
-
-                    if (!uploadedUrl) {
-                      setProfileStatus("Unable to upload avatar.");
-                      return;
-                    }
-
-                    setProfileImage(uploadedUrl);
-                    setAvatarPreview(uploadedUrl);
-                    setProfileStatus("Avatar uploaded. Save changes to apply.");
-                  } catch {
-                    setProfileStatus("Unable to upload avatar.");
-                  } finally {
-                    inputElement.value = "";
-                    setIsUploadingAvatar(false);
-                  }
-                })();
-              }}
-            />
-          </div>
-          <div>
-            <p className="font-semibold text-base leading-tight">{session?.user?.name || "User"}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{session?.user?.email}</p>
-            <Badge variant="secondary" className="mt-2 text-xs">{planLabel}</Badge>
-          </div>
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background sm:rounded-xl md:flex-row">
+      {/* ─── Left Settings Navigation ─────────────────────────────── */}
+      <aside className="hidden w-72 shrink-0 flex-col border-r border-border/60 bg-sidebar p-4 md:flex">
+        <div className="mb-4">
+          <h2 className="font-semibold text-xl">Settings</h2>
         </div>
 
-        {/* Usage limit */}
-        <div className="rounded-lg border border-border/60 bg-card p-4 space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium">Usage Limit</span>
-            <span className="text-muted-foreground text-xs">
-              {billingUsage ? `${Math.round(usagePct)}% remaining` : "100% remaining"}
-            </span>
-          </div>
-          <Progress value={usagePct} className="h-1.5" />
-          {billingUsage?.chat.refillAt ? (
-            <p className="text-xs text-muted-foreground">{getTimeUntil(billingUsage.chat.refillAt)}</p>
-          ) : null}
-        </div>
-
-        {/* Keyboard shortcuts */}
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Keyboard Shortcuts</p>
-          <div className="space-y-2">
-            {KEYBOARD_SHORTCUTS.map((shortcut) => (
-              <div key={shortcut.label} className="flex items-center justify-between gap-2">
-                <span className="text-xs text-foreground/80">{shortcut.label}</span>
-                <div className="flex items-center gap-1">
-                  {shortcut.keys.map((key) => (
-                    <kbd
-                      key={key}
-                      className="inline-flex items-center justify-center rounded border border-border/80 bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground leading-none"
-                    >
-                      {key}
-                    </kbd>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+          <p className="px-2 text-muted-foreground text-xs">Account</p>
+          <Button
+            onClick={() => setTab("account")}
+            className={[
+              "h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm transition-colors",
+              currentTab === "account" ? "bg-muted font-medium hover:bg-muted" : "hover:bg-muted/70",
+            ].join(" ")}
+            variant="ghost"
+          >
+            <User className="h-4 w-4" />
+            Account
+          </Button>
+          <Button
+            onClick={() => setTab("preferences")}
+            className={[
+              "h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm transition-colors",
+              currentTab === "preferences" ? "bg-muted font-medium hover:bg-muted" : "hover:bg-muted/70",
+            ].join(" ")}
+            variant="ghost"
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Preferences
+          </Button>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <p className="px-2 text-muted-foreground text-xs">Workspace</p>
+          <Button
+            onClick={() => setTab("workspace")}
+            className={[
+              "h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm transition-colors",
+              currentTab === "workspace" ? "bg-muted font-medium hover:bg-muted" : "hover:bg-muted/70",
+            ].join(" ")}
+            variant="ghost"
+          >
+            <Building2 className="h-4 w-4" />
+            Workspace
+          </Button>
+          <Button
+            onClick={() => setTab("data")}
+            className={[
+              "h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm transition-colors",
+              currentTab === "data" ? "bg-muted font-medium hover:bg-muted" : "hover:bg-muted/70",
+            ].join(" ")}
+            variant="ghost"
+          >
+            <Database className="h-4 w-4" />
+            Data
+          </Button>
+          <Button
+            onClick={() => setTab("billing")}
+            className={[
+              "h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm transition-colors",
+              currentTab === "billing" ? "bg-muted font-medium hover:bg-muted" : "hover:bg-muted/70",
+            ].join(" ")}
+            variant="ghost"
+          >
+            <CreditCard className="h-4 w-4" />
+            Billing
+          </Button>
+          <Button
+            onClick={() => setTab("security")}
+            className={[
+              "h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm transition-colors",
+              currentTab === "security" ? "bg-muted font-medium hover:bg-muted" : "hover:bg-muted/70",
+            ].join(" ")}
+            variant="ghost"
+          >
+            <Shield className="h-4 w-4" />
+            Security
+          </Button>
+          <Button
+            onClick={() => setTab("shortcuts")}
+            className={[
+              "h-auto w-full justify-start gap-2 px-2 py-2 text-left text-sm transition-colors",
+              currentTab === "shortcuts" ? "bg-muted font-medium hover:bg-muted" : "hover:bg-muted/70",
+            ].join(" ")}
+            variant="ghost"
+          >
+            <Key className="h-4 w-4" />
+            Keyboard Shortcuts
+          </Button>
         </div>
       </aside>
 
       {/* ─── Right Content Area ───────────────────────────────────── */}
-      <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {/* Mobile: compact profile header */}
-        <div className="flex md:hidden items-center gap-3 border-b border-border/60 px-4 py-3">
+        <div className="flex items-center gap-3 border-b border-border/60 px-4 py-3 md:hidden">
           <Avatar className="h-9 w-9">
             <AvatarImage src={displayAvatar} alt={profileName} />
             <AvatarFallback>{fallbackInitials}</AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{session?.user?.name || "User"}</p>
-            <p className="truncate text-xs text-muted-foreground">{session?.user?.email}</p>
+            <p className="truncate text-sm font-medium">
+              <SensitiveText
+                className="max-w-full"
+                privacyMode={privacyMode}
+                value={session?.user?.name || "User"}
+              />
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              <SensitiveText
+                className="max-w-full"
+                privacyMode={privacyMode}
+                value={session?.user?.email}
+              />
+            </p>
           </div>
           <Badge variant="secondary" className="ml-auto shrink-0 text-xs">{planLabel}</Badge>
         </div>
 
         {/* Tab nav */}
-        <div className="flex items-center gap-1 border-b border-border/60 px-4 md:px-6 py-2 overflow-x-auto shrink-0">
-          {tabs.map((tab) => (
-            <button
+        <div className="no-scrollbar flex shrink-0 gap-2 overflow-x-auto border-b border-border/60 px-4 py-3 md:hidden">
+          {mobileTabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+            <Button
               key={tab.key}
-              type="button"
               onClick={() => setTab(tab.key)}
               className={[
-                "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "h-9 shrink-0 gap-1.5 rounded-full px-3 text-xs font-medium transition-colors",
                 currentTab === tab.key
                   ? "bg-foreground text-background"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted",
               ].join(" ")}
+              type="button"
+              variant="ghost"
             >
-              {tab.label}
-            </button>
-          ))}
+              <Icon className="h-3.5 w-3.5" />
+              <span>{tab.label}</span>
+            </Button>
+            );
+          })}
         </div>
 
         {/* Tab content */}
-        <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-8">
+        <div className="flex-1 space-y-6 overflow-y-auto px-4 py-5 md:space-y-8 md:px-8 md:py-6">
 
           {/* ── Account Tab ── */}
           {currentTab === "account" ? (
             <>
-              <Section title="Profile" description="Update your display name and avatar URL.">
+              <Section title="Profile" description="Update your display name and avatar.">
                 <div className="space-y-3 max-w-md">
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-muted-foreground">Display Name</label>
@@ -444,31 +680,44 @@ export function SettingsPanel({
                       value={profileName}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-muted-foreground">Avatar URL</label>
-                    <Input
-                      onChange={(e) => { setProfileImage(e.target.value); setAvatarPreview(e.target.value); }}
-                      placeholder="https://example.com/avatar.png"
-                      value={profileImage}
+                  <div className="rounded-lg border border-border/60 bg-card p-4">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-14 w-14">
+                        <AvatarImage src={displayAvatar} alt={profileName} />
+                        <AvatarFallback>{fallbackInitials}</AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">Profile photo</p>
+                        <p className="text-xs text-muted-foreground">
+                          Upload an image and we will save the CDN URL to your account automatically.
+                        </p>
+                      </div>
+                    </div>
+                    <input
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleAvatarFileChange}
+                      ref={fileInputRef}
+                      type="file"
                     />
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        disabled={avatarUploading}
+                        onClick={() => fileInputRef.current?.click()}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        <Camera className="mr-2 h-4 w-4" />
+                        {avatarUploading ? "Uploading..." : "Upload Avatar"}
+                      </Button>
+                    </div>
                   </div>
                   <Button
                     size="sm"
                     disabled={isSavingProfile || isUploadingAvatar}
                     onClick={() => {
-                      void (async () => {
-                        setIsSavingProfile(true);
-                        try {
-                          setProfileStatus("Saving...");
-                          const result = await updateUser({
-                            name: profileName.trim() || undefined,
-                            image: profileImage.trim() || undefined,
-                          });
-                          setProfileStatus(result.error ? "Unable to update profile." : "Profile updated.");
-                        } finally {
-                          setIsSavingProfile(false);
-                        }
-                      })();
+                      void saveProfile();
                     }}
                     type="button"
                   >
@@ -513,7 +762,11 @@ export function SettingsPanel({
                         >
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-xs">{account.providerId ?? "email"}</Badge>
-                            <span className="text-xs text-muted-foreground">{account.accountId ?? account.id}</span>
+                            <SensitiveText
+                              className="max-w-[180px] text-xs text-muted-foreground"
+                              privacyMode={privacyMode}
+                              value={account.accountId ?? account.id}
+                            />
                           </div>
                           <Button
                             size="sm"
@@ -620,22 +873,13 @@ export function SettingsPanel({
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    void (async () => {
-                      const response = await fetch("/api/billing/portal", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ returnPath: "/settings?tab=billing" }),
-                      });
-                      if (!response.ok) { setBillingStatus("No customer portal available yet."); return; }
-                      const payload = (await response.json()) as { url?: string };
-                      if (!payload.url) { setBillingStatus("No customer portal available yet."); return; }
-                      window.location.href = payload.url;
-                    })();
+                    void handleManageBilling();
                   }}
                   type="button"
                 >
-                  Manage Billing &amp; Invoices
+                  {hasPaidPlan ? "Manage Billing & Invoices" : "View Plans"}
                 </Button>
+                {billingStatus ? <p className="mt-2 text-xs text-muted-foreground">{billingStatus}</p> : null}
               </Section>
             </>
           ) : null}
@@ -644,68 +888,39 @@ export function SettingsPanel({
           {currentTab === "security" ? (
             <>
               <Section
-                title="Sudo Verification"
-                description="Sensitive actions require a short-lived verification code, similar to GitHub sudo mode."
+                title="Sensitive Actions"
+                description="Protected actions will prompt for a 6-digit verification code and stay approved for 12 hours."
               >
                 <div className="space-y-3 max-w-md rounded-lg border border-border/60 bg-card p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium">Sudo verification</p>
+                      <p className="text-xs text-muted-foreground">
+                        {sudoActive
+                          ? "Verified for this browser session."
+                          : "You will only be prompted when you start a protected action."}
+                      </p>
+                    </div>
+                    <Badge variant={sudoActive ? "default" : "secondary"}>
+                      {sudoActive ? "Active" : "Inactive"}
+                    </Badge>
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     {sudoActive
-                      ? "Verified. You can now run danger-zone actions for a limited time."
-                      : "Verify your identity before deleting workspaces or your account."}
+                      ? "Your current sudo session is valid for up to 12 hours."
+                      : "Deleting your account or a workspace will open a verification dialog automatically."}
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        void (async () => {
-                          setSudoStatus("Sending verification code...");
-                          const response = await fetch("/api/security/sudo", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ action: "request" }),
-                          });
-                          setSudoStatus(response.ok ? "Verification code sent to your email." : "Unable to send code.");
-                        })();
-                      }}
-                    >
-                      Send Code
-                    </Button>
-                    <Input
-                      value={sudoCode}
-                      onChange={(e) => setSudoCode(e.target.value)}
-                      inputMode="numeric"
-                      maxLength={6}
-                      placeholder="6-digit code"
-                      className="w-36"
-                    />
-                    <Button
-                      size="sm"
-                      type="button"
-                      disabled={sudoCode.trim().length !== 6}
-                      onClick={() => {
-                        void (async () => {
-                          setSudoStatus("Verifying code...");
-                          const response = await fetch("/api/security/sudo", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ action: "verify", code: sudoCode.trim() }),
-                          });
-                          if (!response.ok) {
-                            setSudoActive(false);
-                            setSudoStatus("Invalid or expired code.");
-                            return;
-                          }
-                          setSudoActive(true);
-                          setSudoCode("");
-                          setSudoStatus("Sudo mode is active.");
-                        })();
-                      }}
-                    >
-                      Verify
-                    </Button>
-                  </div>
+                  <Button
+                    disabled={sudoActive}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      requestSudoForAction("verify this session", async () => {});
+                    }}
+                  >
+                    {sudoActive ? "Verification Active" : "Verify Now"}
+                  </Button>
                   {sudoStatus ? <p className="text-xs text-muted-foreground">{sudoStatus}</p> : null}
                 </div>
               </Section>
@@ -801,7 +1016,7 @@ export function SettingsPanel({
                   <div className="flex items-start gap-2 text-red-600">
                     <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
                     <p className="text-xs">
-                      Type <span className="font-semibold">DELETE MY ACCOUNT</span> and use sudo mode first.
+                      Type <span className="font-semibold">DELETE MY ACCOUNT</span>. If needed, we will prompt for verification after you click delete.
                     </p>
                   </div>
                   <Input
@@ -812,18 +1027,14 @@ export function SettingsPanel({
                   <Button
                     size="sm"
                     type="button"
-                    disabled={!sudoActive || accountDeleteConfirm.trim() !== "DELETE MY ACCOUNT"}
+                    disabled={accountDeleteConfirm.trim() !== "DELETE MY ACCOUNT"}
                     className="bg-red-600 text-white hover:bg-red-700"
                     onClick={() => {
-                      void (async () => {
-                        setDangerStatus("Deleting account...");
-                        const response = await fetch("/api/account", { method: "DELETE" });
-                        if (!response.ok) {
-                          setDangerStatus("Unable to delete account.");
-                          return;
-                        }
-                        window.location.href = "/login";
-                      })();
+                      if (!sudoActive) {
+                        requestSudoForAction("delete your account", runDeleteAccount);
+                        return;
+                      }
+                      void runDeleteAccount();
                     }}
                   >
                     Delete Account
@@ -834,12 +1045,56 @@ export function SettingsPanel({
             </>
           ) : null}
 
-          {/* ── Workspaces Tab ── */}
-          {currentTab === "workspaces" ? (
+          {/* ── Preferences Tab ── */}
+          {currentTab === "preferences" ? (
+            <>
+              <Section title="Preferences" description="Control your account defaults and behavior.">
+                <div className="space-y-1">
+                  <ToggleRow
+                    label="Email me receipts"
+                    description="Send receipts to your account email when a payment succeeds."
+                    checked={emailReceipts}
+                    onCheckedChange={(nextValue) => {
+                      const previous = emailReceipts;
+                      setEmailReceipts(nextValue);
+                      void (async () => {
+                        setPreferencesStatus("Saving preferences...");
+                        const response = await fetch("/api/user-settings", {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ emailReceipts: nextValue }),
+                        });
+                        if (!response.ok) {
+                          setEmailReceipts(previous);
+                          setPreferencesStatus("Unable to save preferences.");
+                          return;
+                        }
+                        setPreferencesStatus("Preferences saved.");
+                      })();
+                    }}
+                  />
+                  <ToggleRow
+                    checked={privacyMode}
+                    description="Blur personal details in settings until you click to reveal them."
+                    label="Privacy mode"
+                    onCheckedChange={(nextValue) => {
+                      setPrivacyMode(nextValue);
+                    }}
+                  />
+                  {preferencesStatus ? (
+                    <p className="mt-2 text-xs text-muted-foreground">{preferencesStatus}</p>
+                  ) : null}
+                </div>
+              </Section>
+            </>
+          ) : null}
+
+          {/* ── Workspace Tab ── */}
+          {currentTab === "workspace" ? (
             <>
               <Section title="Your Workspaces" description="Create and switch between workspaces.">
-                <div className="space-y-3 max-w-md">
-                  <div className="flex gap-2">
+                <div className="max-w-md space-y-3">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
                       onChange={(e) => setWorkspaceName(e.target.value)}
                       placeholder="New workspace name"
@@ -873,15 +1128,16 @@ export function SettingsPanel({
                   </div>
                   <div className="space-y-2">
                     {workspaces.map((workspace) => (
-                      <button
+                      <Button
                         key={workspace.workspaceId}
-                        type="button"
                         className={[
-                          "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-muted",
+                          "h-auto w-full justify-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-muted",
                           workspace.workspaceId === activeWorkspaceId
                             ? "border-primary bg-accent/40"
                             : "border-border/60 bg-card",
                         ].join(" ")}
+                        type="button"
+                        variant="ghost"
                         onClick={() => { setActiveWorkspaceId(workspace.workspaceId); setWorkspaceStatus(null); }}
                       >
                         <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -889,7 +1145,7 @@ export function SettingsPanel({
                         {workspace.workspaceId === activeWorkspaceId && (
                           <Check className="h-4 w-4 text-primary" />
                         )}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </div>
@@ -901,8 +1157,8 @@ export function SettingsPanel({
                 title="Workspace Members"
                 description={`Add or remove people from ${selectedWorkspace?.name ?? "this workspace"}.`}
               >
-                <div className="space-y-3 max-w-md">
-                  <div className="flex gap-2">
+                <div className="max-w-md space-y-3">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
                       onChange={(e) => setWorkspaceEmail(e.target.value)}
                       placeholder="teammate@example.com"
@@ -938,49 +1194,40 @@ export function SettingsPanel({
                       <p className="text-xs text-muted-foreground">No members found.</p>
                     ) : (
                       workspaceMembers.map((member, index) => (
-                        (() => {
-                          const currentUserId = session?.user?.id ?? null;
-                          const currentUserEmail = session?.user?.email?.toLowerCase() ?? null;
-                          const memberEmail = member.email?.toLowerCase() ?? null;
-                          const isSelf =
-                            (currentUserId && (member.userId === currentUserId || member.id === currentUserId)) ||
-                            (currentUserEmail && memberEmail === currentUserEmail);
-                          const isOwner = member.role === "owner";
-                          const canRemove = Boolean(!isSelf && !isOwner);
-
-                          return (
-                            <div
-                              key={member.id ?? member.email ?? member.userId ?? `member-${index}`}
-                              className="flex items-center justify-between rounded-lg border border-border/60 bg-card px-3 py-2"
-                            >
-                              <div>
-                                <p className="text-sm font-medium">{member.name ?? member.email ?? "Unknown user"}</p>
-                                <p className="text-xs text-muted-foreground capitalize">{member.role}</p>
-                              </div>
-                              {canRemove ? (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  type="button"
-                                  onClick={() => {
-                                    if (!selectedWorkspace || !(member.id ?? member.email)) return;
-                                    void (async () => {
-                                      const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}/share/members`, {
-                                        method: "DELETE",
-                                        headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ memberIdOrEmail: member.id ?? member.email }),
-                                      });
-                                      setWorkspaceStatus(response.ok ? "Member removed." : "Unable to remove member.");
-                                      if (response.ok) await refreshMembers(selectedWorkspace.workspaceId);
-                                    })();
-                                  }}
-                                >
-                                  Remove
-                                </Button>
-                              ) : null}
-                            </div>
-                          );
-                        })()
+                        <div
+                          key={member.id ?? member.email ?? member.userId ?? `member-${index}`}
+                          className="flex items-center justify-between rounded-lg border border-border/60 bg-card px-3 py-2"
+                        >
+                          <div>
+                            <p className="text-sm font-medium">
+                              <SensitiveText
+                                className="max-w-[220px]"
+                                privacyMode={privacyMode}
+                                value={member.name ?? member.email ?? "Unknown user"}
+                              />
+                            </p>
+                            <p className="text-xs text-muted-foreground capitalize">{member.role}</p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            type="button"
+                            onClick={() => {
+                              if (!selectedWorkspace || !(member.id ?? member.email)) return;
+                              void (async () => {
+                                const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}/share/members`, {
+                                  method: "DELETE",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ memberIdOrEmail: member.id ?? member.email }),
+                                });
+                                setWorkspaceStatus(response.ok ? "Member removed." : "Unable to remove member.");
+                                if (response.ok) await refreshMembers(selectedWorkspace.workspaceId);
+                              })();
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        </div>
                       ))
                     )}
                   </div>
@@ -1013,7 +1260,7 @@ export function SettingsPanel({
                   <div className="flex items-start gap-2 text-red-600">
                     <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
                     <p className="text-xs">
-                      Type the workspace name exactly to confirm deletion.
+                      Type the workspace name exactly. If verification is needed, we will prompt you after you continue.
                     </p>
                   </div>
                   <Input
@@ -1028,29 +1275,15 @@ export function SettingsPanel({
                     className="bg-red-600 text-white hover:bg-red-700"
                     disabled={
                       !selectedWorkspace
-                      || !sudoActive
                       || workspaceDeleteConfirm.trim() !== (selectedWorkspace?.name ?? "")
                     }
                     onClick={() => {
                       if (!selectedWorkspace) return;
-                      void (async () => {
-                        setWorkspaceStatus("Deleting workspace...");
-                        const response = await fetch(`/api/workspaces/${selectedWorkspace.workspaceId}`, {
-                          method: "DELETE",
-                        });
-                        if (!response.ok) {
-                          setWorkspaceStatus("Unable to delete workspace.");
-                          return;
-                        }
-                        const payload = (await response.json()) as { workspaces?: WorkspaceSummary[] };
-                        const nextWorkspaces = payload.workspaces ?? [];
-                        setWorkspaces(nextWorkspaces);
-                        setWorkspaceDeleteConfirm("");
-                        if (nextWorkspaces.length > 0) {
-                          setActiveWorkspaceId(nextWorkspaces[0].workspaceId);
-                        }
-                        setWorkspaceStatus("Workspace deleted.");
-                      })();
+                      if (!sudoActive) {
+                        requestSudoForAction(`delete ${selectedWorkspace.name}`, runDeleteWorkspace);
+                        return;
+                      }
+                      void runDeleteWorkspace();
                     }}
                   >
                     Delete Workspace
@@ -1059,8 +1292,109 @@ export function SettingsPanel({
               </Section>
             </>
           ) : null}
+
+          {/* ── Data Tab ── */}
+          {currentTab === "data" ? (
+            <>
+              <Section title="Data Retention" description="How workspace data is retained and cleaned up.">
+                <div className="max-w-md space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Deleted files and folders are moved to Trash and retained for 30 days before permanent cleanup.
+                  </p>
+                </div>
+              </Section>
+            </>
+          ) : null}
+
+          {/* ── Keyboard Shortcuts Tab ── */}
+          {currentTab === "shortcuts" ? (
+            <>
+              <Section title="Keyboard Shortcuts" description="Implemented shortcuts available in Avenire.">
+                <div className="max-w-xl space-y-2">
+                  {KEYBOARD_SHORTCUTS.map((shortcut) => (
+                    <div
+                      key={shortcut.label}
+                      className="flex items-center justify-between rounded-lg border border-border/60 bg-card px-3 py-2"
+                    >
+                      <span className="text-sm">{shortcut.label}</span>
+                      <div className="flex items-center gap-1">
+                        {shortcut.keys.map((key) => (
+                          <kbd
+                            key={`${shortcut.label}-${key}`}
+                            className="inline-flex items-center justify-center rounded border border-border/80 bg-muted px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground"
+                          >
+                            {key}
+                          </kbd>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            </>
+          ) : null}
         </div>
       </div>
+
+      <Dialog
+        onOpenChange={(open) => {
+          setSudoDialogOpen(open);
+          if (!open) {
+            pendingSudoActionRef.current = null;
+            setSudoCode("");
+          }
+        }}
+        open={sudoDialogOpen}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Verify Sensitive Action</DialogTitle>
+            <DialogDescription>
+              Enter the 6-digit code sent to{" "}
+              <SensitiveText
+                className="inline-block align-baseline"
+                privacyMode={privacyMode}
+                value={session?.user?.email}
+              />{" "}
+              to {sudoActionLabel}. Approval stays active for 12 hours.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <Input
+              className="text-center tracking-[0.35em]"
+              inputMode="numeric"
+              maxLength={6}
+              onChange={(event) => setSudoCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="123456"
+              value={sudoCode}
+            />
+            {sudoStatus ? <p className="text-xs text-muted-foreground">{sudoStatus}</p> : null}
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-between">
+            <Button
+              disabled={sudoRequestingCode}
+              onClick={() => {
+                void requestSudoCode();
+              }}
+              type="button"
+              variant="outline"
+            >
+              {sudoRequestingCode ? "Sending..." : "Resend Code"}
+            </Button>
+            <Button
+              disabled={sudoCode.trim().length !== 6 || sudoVerifyingCode}
+              onClick={() => {
+                void verifySudoCodeAndContinue();
+              }}
+              type="button"
+            >
+              {sudoVerifyingCode ? "Verifying..." : "Verify and Continue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1091,6 +1425,50 @@ function Divider() {
   return <div className="border-t border-border/40" />;
 }
 
+function SensitiveText({
+  value,
+  privacyMode,
+  className,
+  fallback = "—",
+}: {
+  value?: string | null;
+  privacyMode: boolean;
+  className?: string;
+  fallback?: string;
+}) {
+  const [revealed, setRevealed] = useState(false);
+
+  useEffect(() => {
+    if (!privacyMode) {
+      setRevealed(false);
+    }
+  }, [privacyMode, value]);
+
+  if (!value) {
+    return <span className={className}>{fallback}</span>;
+  }
+
+  if (!privacyMode || revealed) {
+    return <span className={className}>{value}</span>;
+  }
+
+  return (
+    <button
+      className={cn(
+        "max-w-full cursor-pointer appearance-none border-0 bg-transparent p-0 text-left",
+        className
+      )}
+      onClick={() => setRevealed(true)}
+      title="Click to reveal"
+      type="button"
+    >
+      <span className="inline-block max-w-full truncate blur-[6px] select-none">
+        {value}
+      </span>
+    </button>
+  );
+}
+
 function ToggleRow({
   label,
   description,
@@ -1103,8 +1481,8 @@ function ToggleRow({
   onCheckedChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-card px-4 py-3">
-      <div>
+    <div className="flex flex-col gap-3 rounded-lg border border-border/60 bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
         <p className="text-sm font-medium">{label}</p>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>

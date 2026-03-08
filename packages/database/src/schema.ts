@@ -43,6 +43,9 @@ export const chatThread = pgTable(
   "chat_thread",
   {
     id: text("id").primaryKey(),
+    workspaceId: uuid("workspace_id").references(() => workspace.id, {
+      onDelete: "cascade",
+    }),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -55,6 +58,10 @@ export const chatThread = pgTable(
     lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
   },
   (table) => [
+    index("chat_thread_workspace_last_message_idx").on(
+      table.workspaceId,
+      table.lastMessageAt
+    ),
     index("chat_thread_user_id_idx").on(table.userId),
     index("chat_thread_branching_idx").on(table.branching),
     index("chat_thread_user_last_message_idx").on(
@@ -82,6 +89,36 @@ export const chatMessage = pgTable(
   ]
 );
 
+export const chatArtifact = pgTable(
+  "chat_artifact",
+  {
+    id: text("id").primaryKey(),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chatThread.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    sourceMessageId: text("source_message_id"),
+    toolName: text("tool_name").notNull(),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    status: text("status").notNull().default("completed"),
+    content: jsonb("content")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("chat_artifact_chat_created_idx").on(table.chatId, table.createdAt),
+    index("chat_artifact_chat_kind_idx").on(table.chatId, table.kind),
+    index("chat_artifact_source_message_idx").on(table.sourceMessageId),
+    index("chat_artifact_user_id_idx").on(table.userId),
+  ]
+);
+
 export const workspace = pgTable(
   "workspace",
   {
@@ -106,6 +143,8 @@ export const fileFolder = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     parentId: uuid("parent_id"),
     name: text("name").notNull(),
+    bannerUrl: text("banner_url"),
+    iconColor: text("icon_color"),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -191,7 +230,7 @@ export const resourceShareGrant = pgTable(
     granteeUserId: text("grantee_user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    permission: text("permission").notNull().default("read"),
+    permission: text("permission").notNull().default("viewer"),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -217,7 +256,7 @@ export const resourceShareLink = pgTable(
     resourceType: text("resource_type").notNull(),
     resourceId: text("resource_id").notNull(),
     tokenHash: text("token_hash").notNull(),
-    permission: text("permission").notNull().default("read"),
+    permission: text("permission").notNull().default("viewer"),
     allowPublic: boolean("allow_public").notNull().default(true),
     expiresAt: timestamp("expires_at").notNull(),
     revokedAt: timestamp("revoked_at"),
@@ -419,9 +458,7 @@ export const ingestionEmbedding = pgTable(
       .notNull()
       .references(() => ingestionChunk.id, { onDelete: "cascade" }),
     model: text("model").notNull(),
-    embedding: vector("embedding", {
-      dimensions: ingestionEmbeddingDimensions,
-    }).notNull(),
+    embedding: vector("embedding", { dimensions: 1024 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -458,9 +495,6 @@ export const ingestionJob = pgTable(
   (table) => [
     index("ingestion_job_workspace_idx").on(table.workspaceId),
     index("ingestion_job_file_idx").on(table.fileId),
-    uniqueIndex("ingestion_job_workspace_file_active_uidx")
-      .on(table.workspaceId, table.fileId)
-      .where(sql`${table.status} IN ('queued', 'running')`),
     index("ingestion_job_status_idx").on(table.status),
     index("ingestion_job_status_created_idx").on(table.status, table.createdAt),
   ]

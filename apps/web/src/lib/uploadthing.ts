@@ -1,4 +1,5 @@
-import { generateReactHelpers } from "@avenire/storage/client";
-import type { UploadRouter } from "@/lib/upload";
+"use client";
 
-export const { useUploadThing } = generateReactHelpers<UploadRouter>();
+import { generateReactHelpers } from "@avenire/storage/client";
+
+export const { useUploadThing } = generateReactHelpers();

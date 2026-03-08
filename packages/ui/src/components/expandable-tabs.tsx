@@ -20,7 +20,10 @@ type ExpandableTabsProps = {
   onValueChange?: (value: string | null) => void
   allowDeselect?: boolean
   className?: string
+  persistenceKey?: string
 }
+
+const lastMountedValueByPersistenceKey = new Map<string, string | null>()
 
 function getNextIndex(
   startIndex: number,
@@ -42,14 +45,38 @@ export function ExpandableTabs({
   onValueChange,
   allowDeselect = true,
   className,
+  persistenceKey,
 }: ExpandableTabsProps) {
   const isControlled = value !== undefined
   const [internalValue, setInternalValue] = React.useState<string | null>(
     defaultValue
   )
   const currentValue = isControlled ? value : internalValue
+  const [hasMounted, setHasMounted] = React.useState(false)
+  const initialPersistedValue = React.useMemo(
+    () =>
+      persistenceKey
+        ? (lastMountedValueByPersistenceKey.get(persistenceKey) ?? null)
+        : null,
+    [persistenceKey]
+  )
+  const shouldAnimateOnInitialMount = persistenceKey
+    ? initialPersistedValue !== null && initialPersistedValue !== currentValue
+    : true
 
   const tabRefs = React.useRef<Array<HTMLButtonElement | null>>([])
+
+  React.useEffect(() => {
+    setHasMounted(true)
+  }, [])
+
+  React.useEffect(() => {
+    if (!persistenceKey) {
+      return
+    }
+
+    lastMountedValueByPersistenceKey.set(persistenceKey, currentValue ?? null)
+  }, [currentValue, persistenceKey])
 
   const setValue = React.useCallback(
     (nextValue: string | null) => {
@@ -140,7 +167,11 @@ export function ExpandableTabs({
             <AnimatePresence initial={false}>
               {isSelected && (
                 <motion.span
-                  initial={{ width: 0, opacity: 0 }}
+                  initial={
+                    hasMounted || shouldAnimateOnInitialMount
+                      ? { width: 0, opacity: 0 }
+                      : false
+                  }
                   animate={{ width: "auto", opacity: 1 }}
                   exit={{ width: 0, opacity: 0 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}

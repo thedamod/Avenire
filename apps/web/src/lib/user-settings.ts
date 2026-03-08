@@ -1,5 +1,5 @@
 export {
   getUserSettings,
-  upsertUserSettings,
   type UserSettingsRecord,
-} from "../../../../packages/database/src";
+  upsertUserSettings,
+} from "@avenire/database";

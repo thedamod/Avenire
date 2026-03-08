@@ -1,18 +1,20 @@
-import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
+  consumeSudoChallenge,
   createSudoChallenge as createSudoChallengeRecord,
-  invalidateSudoChallenge as invalidateSudoChallengeRecord,
-  verifyAndConsumeLatestSudoChallenge,
-} from "../../../../packages/database/src";
+  getLatestActiveSudoChallenge,
+} from "@avenire/database";
 
 export const SUDO_COOKIE_NAME = "avenire_sudo";
 export const SUDO_CHALLENGE_TTL_SECONDS = 10 * 60;
-export const SUDO_SESSION_TTL_SECONDS = 15 * 60;
+export const SUDO_SESSION_TTL_SECONDS = 12 * 60 * 60;
 
 function getSudoSecret() {
   const secret = process.env.BETTER_AUTH_SECRET;
   if (!secret || secret.length < 16) {
-    throw new Error("BETTER_AUTH_SECRET must be configured for sudo verification");
+    throw new Error(
+      "BETTER_AUTH_SECRET must be configured for sudo verification"
+    );
   }
   return secret;
 }
@@ -35,15 +37,13 @@ function safeCompare(a: string, b: string) {
 }
 
 export function generateSudoCode() {
-  const value = Math.floor(100000 + Math.random() * 900000);
+  const value = Math.floor(100_000 + Math.random() * 900_000);
   return String(value);
 }
 
 export function hashSudoCode(code: string) {
   const secret = getSudoSecret();
-  return createHash("sha256")
-    .update(`${secret}:${code}`)
-    .digest("hex");
+  return createHash("sha256").update(`${secret}:${code}`).digest("hex");
 }
 
 export async function createSudoChallenge(userId: string) {
@@ -95,13 +95,16 @@ export function createSudoCookieValue(userId: string, expiresAt: Date) {
   return `${encodedPayload}.${signature}`;
 }
 
-export function validateSudoCookie(input: { userId: string; cookieValue?: string | null }) {
+export function validateSudoCookie(input: {
+  userId: string;
+  cookieValue?: string | null;
+}) {
   if (!input.cookieValue) {
     return false;
   }
 
   const [encodedPayload, signature] = input.cookieValue.split(".");
-  if (!encodedPayload || !signature) {
+  if (!(encodedPayload && signature)) {
     return false;
   }
 
