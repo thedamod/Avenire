@@ -22,7 +22,7 @@ import {
   CHAT_NAME_UPDATED_EVENT,
   type ChatNameUpdatedDetail,
 } from "@/lib/chat-events";
-import type { ShareSuggestion } from "@/components/files/explorer/shared";
+import type { ShareSuggestion } from "@/types/share";
 import { useDashboardViewStore } from "@/stores/dashboardViewStore";
 
 interface ChatWorkspaceProps {
@@ -62,7 +62,9 @@ export function ChatWorkspace({
   const view = useDashboardViewStore((state) => state.view);
   const setView = useDashboardViewStore((state) => state.setView);
   const [shareEmail, setShareEmail] = useState("");
-  const [shareSuggestions, setShareSuggestions] = useState<ShareSuggestion[]>([]);
+  const [shareSuggestions, setShareSuggestions] = useState<ShareSuggestion[]>(
+    []
+  );
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
@@ -78,6 +80,15 @@ export function ChatWorkspace({
   useEffect(() => {
     setTitle(chatTitle);
   }, [chatTitle]);
+
+  useEffect(() => {
+    setShareEmail("");
+    setShareSuggestions([]);
+    setShareLink(null);
+    setShareBusy(false);
+    setShareStatus(null);
+    setIsShareDialogOpen(false);
+  }, [chatSlug]);
 
   useEffect(() => {
     const onChatNameUpdated = (event: Event) => {
@@ -103,7 +114,10 @@ export function ChatWorkspace({
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const url = new URL(`/api/chats/${chatSlug}/share/suggestions`, window.location.origin);
+          const url = new URL(
+            `/api/chats/${chatSlug}/share/suggestions`,
+            window.location.origin
+          );
           if (shareEmail.trim()) {
             url.searchParams.set("q", shareEmail.trim());
           }
@@ -118,7 +132,9 @@ export function ChatWorkspace({
             setShareSuggestions([]);
             return;
           }
-          const payload = (await response.json()) as { suggestions?: ShareSuggestion[] };
+          const payload = (await response.json()) as {
+            suggestions?: ShareSuggestion[];
+          };
           if (!controller.signal.aborted) {
             setShareSuggestions(payload.suggestions ?? []);
           }
@@ -147,7 +163,6 @@ export function ChatWorkspace({
       </div>
     );
   }
-
 
   const createChat = async () => {
     const response = await fetch("/api/chats", {
@@ -238,98 +253,107 @@ export function ChatWorkspace({
         </div>
         <div className="flex w-1/3 justify-end">
           {!isReadonly ? (
-          <Dialog onOpenChange={setIsShareDialogOpen} open={isShareDialogOpen}>
-            <DialogTrigger
-              render={
-                <Button
-                  className="size-5 rounded-md"
-                  size="icon-xs"
-                  type="button"
-                  variant="outline"
-                />
-              }
+            <Dialog
+              onOpenChange={setIsShareDialogOpen}
+              open={isShareDialogOpen}
             >
-              <Share2 className="size-3" />
-              <span className="sr-only">Share</span>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Share chat</DialogTitle>
-                <DialogDescription>
-                  Grant read-only access by email or create a signed link.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-2">
-                <label className="font-medium text-sm" htmlFor="share-email">
-                  Add people
-                </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="share-email"
-                    list="chat-share-email-suggestions"
-                    onChange={(event) => setShareEmail(event.target.value)}
-                    placeholder="name@example.com"
-                    type="email"
-                    value={shareEmail}
-                  />
-                  <datalist id="chat-share-email-suggestions">
-                    {shareSuggestions.map((item) => (
-                      <option
-                        key={item.email}
-                        label={item.name ? `${item.name} (${item.email})` : item.email}
-                        value={item.email}
-                      />
-                    ))}
-                  </datalist>
+              <DialogTrigger
+                render={
                   <Button
-                    disabled={shareBusy}
-                    onClick={() => void shareWithEmail()}
-                    size="sm"
-                    type="button"
-                    variant="secondary"
-                  >
-                    Add
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="font-medium text-sm">Share link (7 days)</label>
-                <div className="flex items-center gap-2">
-                  <Input readOnly value={shareLink ?? ""} />
-                  <Button
-                    disabled={shareBusy}
-                    onClick={() => void generateShareLink()}
-                    size="sm"
+                    className="size-5 rounded-md"
+                    size="icon-xs"
                     type="button"
                     variant="outline"
-                  >
-                    <Link2 className="size-4" />
-                    Generate
-                  </Button>
-                  <Button
-                    disabled={!shareLink}
-                    onClick={() => {
-                      if (!shareLink) {
-                        return;
-                      }
-                      void navigator.clipboard.writeText(shareLink);
-                      setShareStatus("Link copied.");
-                    }}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    Copy
-                  </Button>
+                  />
+                }
+              >
+                <Share2 className="size-3" />
+                <span className="sr-only">Share</span>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Share chat</DialogTitle>
+                  <DialogDescription>
+                    Grant read-only access by email or create a signed link.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="space-y-2">
+                  <label className="font-medium text-sm" htmlFor="share-email">
+                    Add people
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="share-email"
+                      list="chat-share-email-suggestions"
+                      onChange={(event) => setShareEmail(event.target.value)}
+                      placeholder="name@example.com"
+                      type="email"
+                      value={shareEmail}
+                    />
+                    <datalist id="chat-share-email-suggestions">
+                      {shareSuggestions.map((item) => (
+                        <option
+                          key={item.email}
+                          label={
+                            item.name
+                              ? `${item.name} (${item.email})`
+                              : item.email
+                          }
+                          value={item.email}
+                        />
+                      ))}
+                    </datalist>
+                    <Button
+                      disabled={shareBusy}
+                      onClick={() => void shareWithEmail()}
+                      size="sm"
+                      type="button"
+                      variant="secondary"
+                    >
+                      Add
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              {shareStatus ? (
-                <p className="text-muted-foreground text-xs">{shareStatus}</p>
-              ) : null}
-            </DialogContent>
-          </Dialog>
+
+                <div className="space-y-2">
+                  <label className="font-medium text-sm">
+                    Share link (7 days)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input readOnly value={shareLink ?? ""} />
+                    <Button
+                      disabled={shareBusy}
+                      onClick={() => void generateShareLink()}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <Link2 className="size-4" />
+                      Generate
+                    </Button>
+                    <Button
+                      disabled={!shareLink}
+                      onClick={() => {
+                        if (!shareLink) {
+                          return;
+                        }
+                        void navigator.clipboard.writeText(shareLink);
+                        setShareStatus("Link copied.");
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+                {shareStatus ? (
+                  <p className="text-muted-foreground text-xs">{shareStatus}</p>
+                ) : null}
+              </DialogContent>
+            </Dialog>
           ) : null}
         </div>
       </header>

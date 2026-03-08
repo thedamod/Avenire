@@ -59,14 +59,17 @@ const TRUSTED_STORAGE_HOSTS = new Set(
   (process.env.TRUSTED_STORAGE_HOSTS ?? "")
     .split(",")
     .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean),
+    .filter(Boolean)
 );
 
 function sharedFilesFolderId(workspaceId: string) {
   return `${SHARED_FILES_FOLDER_PREFIX}${workspaceId}`;
 }
 
-export function isSharedFilesVirtualFolderId(folderId: string, workspaceId: string) {
+export function isSharedFilesVirtualFolderId(
+  folderId: string,
+  workspaceId: string
+) {
   return folderId === sharedFilesFolderId(workspaceId);
 }
 
@@ -79,7 +82,7 @@ function isTrustedStorageHostname(hostname: string) {
     return true;
   }
   return TRUSTED_STORAGE_HOST_SUFFIXES.some(
-    (suffix) => normalized === suffix.slice(1) || normalized.endsWith(suffix),
+    (suffix) => normalized === suffix.slice(1) || normalized.endsWith(suffix)
   );
 }
 
@@ -124,15 +127,20 @@ function mapFolder(row: typeof fileFolder.$inferSelect): ExplorerFolderRecord {
 }
 
 function mapFile(row: typeof fileAsset.$inferSelect): ExplorerFileRecord {
+  const storageKey = row.optimizedStorageKey ?? row.storageKey;
+  const storageUrl = row.optimizedStorageUrl ?? row.storageUrl;
+  const mimeType = row.optimizedMimeType ?? row.mimeType ?? null;
+  const sizeBytes = row.optimizedSizeBytes ?? row.sizeBytes;
+
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     folderId: row.folderId,
-    storageKey: row.storageKey,
-    storageUrl: row.storageUrl,
+    storageKey,
+    storageUrl,
     name: row.name,
-    mimeType: row.mimeType ?? null,
-    sizeBytes: row.sizeBytes,
+    mimeType,
+    sizeBytes,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -149,15 +157,15 @@ async function listSharedFileRecordsForUser(userId: string) {
       fileAsset,
       and(
         eq(resourceShareGrant.resourceType, "file"),
-        sql`${resourceShareGrant.resourceId} = ${fileAsset.id}::text`,
-      ),
+        sql`${resourceShareGrant.resourceId} = ${fileAsset.id}::text`
+      )
     )
     .where(
       and(
         eq(resourceShareGrant.granteeUserId, userId),
         eq(resourceShareGrant.resourceType, "file"),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     )
     .orderBy(desc(resourceShareGrant.createdAt));
 
@@ -170,7 +178,9 @@ async function listSharedFileRecordsForUser(userId: string) {
   }));
 }
 
-export async function listUserOrganizationIds(userId: string): Promise<string[]> {
+export async function listUserOrganizationIds(
+  userId: string
+): Promise<string[]> {
   const rows = await db
     .select({ organizationId: member.organizationId })
     .from(member)
@@ -273,7 +283,12 @@ export async function addWorkspaceMemberByEmail(input: {
   const [existingMember] = await db
     .select({ id: member.id, role: member.role })
     .from(member)
-    .where(and(eq(member.organizationId, organizationId), eq(member.userId, targetUser.id)))
+    .where(
+      and(
+        eq(member.organizationId, organizationId),
+        eq(member.userId, targetUser.id)
+      )
+    )
     .limit(1);
 
   if (existingMember) {
@@ -333,8 +348,8 @@ export async function listWorkspaceShareSuggestions(input: {
       .where(
         and(
           eq(resourceShareGrant.workspaceId, input.workspaceId),
-          eq(resourceShareGrant.createdBy, input.userId),
-        ),
+          eq(resourceShareGrant.createdBy, input.userId)
+        )
       )
       .orderBy(desc(resourceShareGrant.createdAt))
       .limit(120),
@@ -360,7 +375,10 @@ export async function listWorkspaceShareSuggestions(input: {
       continue;
     }
     entry.count += 1;
-    if (!entry.lastSharedAt || row.createdAt.getTime() > new Date(entry.lastSharedAt).getTime()) {
+    if (
+      !entry.lastSharedAt ||
+      row.createdAt.getTime() > new Date(entry.lastSharedAt).getTime()
+    ) {
       entry.lastSharedAt = row.createdAt.toISOString();
     }
   }
@@ -402,7 +420,10 @@ export async function listWorkspaceShareSuggestions(input: {
         return b.count - a.count;
       }
       if (a.lastSharedAt && b.lastSharedAt) {
-        return new Date(b.lastSharedAt).getTime() - new Date(a.lastSharedAt).getTime();
+        return (
+          new Date(b.lastSharedAt).getTime() -
+          new Date(a.lastSharedAt).getTime()
+        );
       }
       if (a.lastSharedAt && !b.lastSharedAt) {
         return -1;
@@ -450,9 +471,14 @@ export async function ensureWorkspaceForOrganization(organizationId: string) {
   });
 }
 
-export async function ensureWorkspaceRootFolder(workspaceId: string, userId: string) {
+export async function ensureWorkspaceRootFolder(
+  workspaceId: string,
+  userId: string
+) {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`
+    );
 
     const [existing] = await tx
       .select()
@@ -461,8 +487,8 @@ export async function ensureWorkspaceRootFolder(workspaceId: string, userId: str
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -495,8 +521,8 @@ export async function ensureWorkspaceRootFolder(workspaceId: string, userId: str
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -511,7 +537,7 @@ export async function ensureWorkspaceRootFolder(workspaceId: string, userId: str
 
 export async function resolveWorkspaceForUser(
   userId: string,
-  preferredOrganizationId?: string | null,
+  preferredOrganizationId?: string | null
 ) {
   let memberships = await listUserOrganizationIds(userId);
   if (memberships.length === 0) {
@@ -538,7 +564,9 @@ export async function resolveWorkspaceForUser(
   };
 }
 
-export async function listWorkspacesForUser(userId: string): Promise<UserWorkspaceSummary[]> {
+export async function listWorkspacesForUser(
+  userId: string
+): Promise<UserWorkspaceSummary[]> {
   const memberships = await db
     .select({
       organizationId: member.organizationId,
@@ -554,7 +582,9 @@ export async function listWorkspacesForUser(userId: string): Promise<UserWorkspa
 
   return Promise.all(
     memberships.map(async (membership) => {
-      const ws = await ensureWorkspaceForOrganization(membership.organizationId);
+      const ws = await ensureWorkspaceForOrganization(
+        membership.organizationId
+      );
       const root = await ensureWorkspaceRootFolder(ws.id, userId);
       return {
         workspaceId: ws.id,
@@ -562,7 +592,7 @@ export async function listWorkspacesForUser(userId: string): Promise<UserWorkspa
         name: membership.organizationName,
         rootFolderId: root.id,
       };
-    }),
+    })
   );
 }
 
@@ -607,7 +637,10 @@ export async function createWorkspaceForUser(userId: string, name: string) {
   } satisfies UserWorkspaceSummary;
 }
 
-export async function deleteWorkspaceForUser(userId: string, workspaceId: string) {
+export async function deleteWorkspaceForUser(
+  userId: string,
+  workspaceId: string
+) {
   const [ws] = await db
     .select({ organizationId: workspace.organizationId })
     .from(workspace)
@@ -621,7 +654,12 @@ export async function deleteWorkspaceForUser(userId: string, workspaceId: string
   const [membership] = await db
     .select({ role: member.role })
     .from(member)
-    .where(and(eq(member.organizationId, ws.organizationId), eq(member.userId, userId)))
+    .where(
+      and(
+        eq(member.organizationId, ws.organizationId),
+        eq(member.userId, userId)
+      )
+    )
     .limit(1);
 
   if (!membership) {
@@ -665,11 +703,12 @@ async function ensureDefaultOrganizationForUser(userId: string) {
     userRecord?.name?.trim() ||
     userRecord?.email?.split("@")[0]?.trim() ||
     "workspace";
-  const slugBase = nameBase
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "")
-    .slice(0, 32) || "workspace";
+  const slugBase =
+    nameBase
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "")
+      .slice(0, 32) || "workspace";
   const orgId = randomUUID();
   const now = new Date();
 
@@ -695,7 +734,10 @@ async function ensureDefaultOrganizationForUser(userId: string) {
   return orgId;
 }
 
-export async function userCanAccessWorkspace(userId: string, workspaceId: string) {
+export async function userCanAccessWorkspace(
+  userId: string,
+  workspaceId: string
+) {
   const [ws] = await db
     .select()
     .from(workspace)
@@ -709,7 +751,12 @@ export async function userCanAccessWorkspace(userId: string, workspaceId: string
   const [membership] = await db
     .select({ id: member.id })
     .from(member)
-    .where(and(eq(member.userId, userId), eq(member.organizationId, ws.organizationId)))
+    .where(
+      and(
+        eq(member.userId, userId),
+        eq(member.organizationId, ws.organizationId)
+      )
+    )
     .limit(1);
 
   return Boolean(membership);
@@ -718,7 +765,7 @@ export async function userCanAccessWorkspace(userId: string, workspaceId: string
 export async function getFolderWithAncestors(
   workspaceId: string,
   folderId: string,
-  userId?: string,
+  userId?: string
 ) {
   if (userId && isSharedFilesVirtualFolderId(folderId, workspaceId)) {
     const sharedFiles = await listSharedFileRecordsForUser(userId);
@@ -733,8 +780,8 @@ export async function getFolderWithAncestors(
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -766,8 +813,8 @@ export async function getFolderWithAncestors(
       and(
         eq(fileFolder.id, folderId),
         eq(fileFolder.workspaceId, workspaceId),
-        isNull(fileFolder.deletedAt),
-      ),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .limit(1);
 
@@ -775,7 +822,7 @@ export async function getFolderWithAncestors(
     return null;
   }
 
-  const ancestors: typeof fileFolder.$inferSelect[] = [];
+  const ancestors: (typeof fileFolder.$inferSelect)[] = [];
   let cursor: typeof fileFolder.$inferSelect | undefined = folder;
   let depth = 0;
   const MAX_DEPTH = 1000;
@@ -783,7 +830,7 @@ export async function getFolderWithAncestors(
   while (cursor) {
     if (depth++ >= MAX_DEPTH) {
       throw new Error(
-        "Folder ancestry depth exceeded MAX_DEPTH (1000). Possible cycle; expected validateFolderParentId to prevent this.",
+        "Folder ancestry depth exceeded MAX_DEPTH (1000). Possible cycle; expected validateFolderParentId to prevent this."
       );
     }
     ancestors.unshift(cursor);
@@ -798,8 +845,8 @@ export async function getFolderWithAncestors(
         and(
           eq(fileFolder.id, cursor.parentId),
           eq(fileFolder.workspaceId, workspaceId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .limit(1);
 
@@ -816,7 +863,10 @@ export async function getFolderWithAncestors(
   };
 }
 
-export async function listFolderContents(workspaceId: string, folderId: string) {
+export async function listFolderContents(
+  workspaceId: string,
+  folderId: string
+) {
   if (isSharedFilesVirtualFolderId(folderId, workspaceId)) {
     return {
       folders: [],
@@ -832,8 +882,8 @@ export async function listFolderContents(workspaceId: string, folderId: string) 
         and(
           eq(fileFolder.workspaceId, workspaceId),
           eq(fileFolder.parentId, folderId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .orderBy(asc(fileFolder.name)),
     db
@@ -843,8 +893,8 @@ export async function listFolderContents(workspaceId: string, folderId: string) 
         and(
           eq(fileAsset.workspaceId, workspaceId),
           eq(fileAsset.folderId, folderId),
-          isNull(fileAsset.deletedAt),
-        ),
+          isNull(fileAsset.deletedAt)
+        )
       )
       .orderBy(desc(fileAsset.createdAt)),
   ]);
@@ -858,7 +908,7 @@ export async function listFolderContents(workspaceId: string, folderId: string) 
 export async function listFolderContentsForUser(
   workspaceId: string,
   folderId: string,
-  userId: string,
+  userId: string
 ) {
   if (isSharedFilesVirtualFolderId(folderId, workspaceId)) {
     const sharedFiles = await listSharedFileRecordsForUser(userId);
@@ -880,8 +930,8 @@ export async function listFolderContentsForUser(
       and(
         eq(fileFolder.workspaceId, workspaceId),
         isNull(fileFolder.parentId),
-        isNull(fileFolder.deletedAt),
-      ),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .orderBy(asc(fileFolder.createdAt))
     .limit(1);
@@ -907,16 +957,23 @@ export async function listFolderContentsForUser(
   };
 
   return {
-    folders: [...base.folders, sharedFolder].sort((a, b) => a.name.localeCompare(b.name)),
+    folders: [...base.folders, sharedFolder].sort((a, b) =>
+      a.name.localeCompare(b.name)
+    ),
     files: base.files,
   };
 }
 
-export async function listWorkspaceFolders(workspaceId: string, userId?: string) {
+export async function listWorkspaceFolders(
+  workspaceId: string,
+  userId?: string
+) {
   const rows = await db
     .select()
     .from(fileFolder)
-    .where(and(eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.deletedAt)))
+    .where(
+      and(eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.deletedAt))
+    )
     .orderBy(asc(fileFolder.name));
 
   const folders = rows.map(mapFolder);
@@ -953,7 +1010,9 @@ export async function listWorkspaceFiles(workspaceId: string, userId?: string) {
   const rows = await db
     .select()
     .from(fileAsset)
-    .where(and(eq(fileAsset.workspaceId, workspaceId), isNull(fileAsset.deletedAt)))
+    .where(
+      and(eq(fileAsset.workspaceId, workspaceId), isNull(fileAsset.deletedAt))
+    )
     .orderBy(asc(fileAsset.name));
 
   const files = rows.map(mapFile);
@@ -996,8 +1055,8 @@ async function validateFolderParentId(input: {
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .limit(2);
 
@@ -1020,8 +1079,8 @@ async function validateFolderParentId(input: {
       and(
         eq(fileFolder.id, parentId),
         eq(fileFolder.workspaceId, workspaceId),
-        isNull(fileFolder.deletedAt),
-      ),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .limit(1);
 
@@ -1030,13 +1089,16 @@ async function validateFolderParentId(input: {
   }
 
   if (currentFolderId) {
-    const parentWithAncestors = await getFolderWithAncestors(workspaceId, parentId);
+    const parentWithAncestors = await getFolderWithAncestors(
+      workspaceId,
+      parentId
+    );
     if (!parentWithAncestors) {
       return { status: "invalid" };
     }
 
     const createsCycle = parentWithAncestors.ancestors.some(
-      (ancestor) => ancestor.id === currentFolderId,
+      (ancestor) => ancestor.id === currentFolderId
     );
     if (createsCycle) {
       return { status: "invalid" };
@@ -1050,7 +1112,7 @@ export async function createFolder(
   workspaceId: string,
   parentId: string | null,
   name: string,
-  userId: string,
+  userId: string
 ) {
   const trimmedName = name.trim().slice(0, 160);
   if (trimmedName.length === 0) {
@@ -1085,7 +1147,7 @@ export async function updateFolder(
   workspaceId: string,
   folderId: string,
   userId: string,
-  updates: { name?: string; parentId?: string | null },
+  updates: { name?: string; parentId?: string | null }
 ) {
   let nextParentId: string | null | undefined;
   if (typeof updates.parentId !== "undefined") {
@@ -1106,7 +1168,9 @@ export async function updateFolder(
       ...(typeof updates.name === "string"
         ? { name: updates.name.trim().slice(0, 160) || "Untitled Folder" }
         : {}),
-      ...(typeof nextParentId !== "undefined" ? { parentId: nextParentId } : {}),
+      ...(typeof nextParentId !== "undefined"
+        ? { parentId: nextParentId }
+        : {}),
       updatedBy: userId,
       updatedAt: new Date(),
     })
@@ -1114,15 +1178,19 @@ export async function updateFolder(
       and(
         eq(fileFolder.id, folderId),
         eq(fileFolder.workspaceId, workspaceId),
-        isNull(fileFolder.deletedAt),
-      ),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .returning();
 
   return folder ? mapFolder(folder) : null;
 }
 
-export async function softDeleteFolder(workspaceId: string, folderId: string, userId: string) {
+export async function softDeleteFolder(
+  workspaceId: string,
+  folderId: string,
+  userId: string
+) {
   const now = new Date();
 
   const descendants = await collectDescendantFolderIds(workspaceId, folderId);
@@ -1135,8 +1203,8 @@ export async function softDeleteFolder(workspaceId: string, folderId: string, us
       and(
         eq(fileAsset.workspaceId, workspaceId),
         inArray(fileAsset.folderId, folderIds),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     );
 
   const folders = await db
@@ -1146,8 +1214,8 @@ export async function softDeleteFolder(workspaceId: string, folderId: string, us
       and(
         eq(fileFolder.workspaceId, workspaceId),
         inArray(fileFolder.id, folderIds),
-        isNull(fileFolder.deletedAt),
-      ),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .returning();
 
@@ -1155,7 +1223,10 @@ export async function softDeleteFolder(workspaceId: string, folderId: string, us
   return rootFolder ? mapFolder(rootFolder) : null;
 }
 
-async function collectDescendantFolderIds(workspaceId: string, rootFolderId: string) {
+async function collectDescendantFolderIds(
+  workspaceId: string,
+  rootFolderId: string
+) {
   const descendants: string[] = [];
   let frontier = [rootFolderId];
   let depth = 0;
@@ -1164,7 +1235,7 @@ async function collectDescendantFolderIds(workspaceId: string, rootFolderId: str
   while (frontier.length > 0) {
     if (depth++ >= MAX_DEPTH) {
       throw new Error(
-        "Folder descendant walk exceeded MAX_DEPTH (1000). Possible cycle; expected validateFolderParentId to prevent this.",
+        "Folder descendant walk exceeded MAX_DEPTH (1000). Possible cycle; expected validateFolderParentId to prevent this."
       );
     }
     const children = await db
@@ -1174,8 +1245,8 @@ async function collectDescendantFolderIds(workspaceId: string, rootFolderId: str
         and(
           eq(fileFolder.workspaceId, workspaceId),
           inArray(fileFolder.parentId, frontier),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       );
 
     const next = children.map((child) => child.id);
@@ -1197,7 +1268,7 @@ export async function registerFileAsset(
     mimeType?: string | null;
     sizeBytes: number;
     metadata?: Record<string, unknown>;
-  },
+  }
 ) {
   const [folder] = await db
     .select({ id: fileFolder.id })
@@ -1206,8 +1277,8 @@ export async function registerFileAsset(
       and(
         eq(fileFolder.id, input.folderId),
         eq(fileFolder.workspaceId, workspaceId),
-        isNull(fileFolder.deletedAt),
-      ),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .limit(1);
 
@@ -1240,7 +1311,7 @@ export async function updateFileAsset(
   workspaceId: string,
   fileId: string,
   userId: string,
-  updates: { folderId?: string; name?: string },
+  updates: { folderId?: string; name?: string }
 ) {
   if (updates.folderId) {
     const [folder] = await db
@@ -1250,8 +1321,8 @@ export async function updateFileAsset(
         and(
           eq(fileFolder.id, updates.folderId),
           eq(fileFolder.workspaceId, workspaceId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .limit(1);
 
@@ -1274,8 +1345,8 @@ export async function updateFileAsset(
       and(
         eq(fileAsset.id, fileId),
         eq(fileAsset.workspaceId, workspaceId),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     )
     .returning();
 
@@ -1287,23 +1358,32 @@ export async function updateFileAssetStorageMetadata(
   fileId: string,
   userId: string,
   updates: {
-    storageKey: string;
-    storageUrl: string;
-    name?: string;
-    mimeType?: string | null;
-    sizeBytes?: number;
-  },
+    optimizedStorageKey: string;
+    optimizedStorageUrl: string;
+    optimizedName?: string;
+    optimizedMimeType?: string | null;
+    optimizedSizeBytes?: number;
+  }
 ) {
   const [record] = await db
     .update(fileAsset)
     .set({
-      storageKey: updates.storageKey,
-      storageUrl: normalizeTrustedStorageUrl(updates.storageUrl),
-      ...(typeof updates.name === "string"
-        ? { name: updates.name.trim().slice(0, 255) || "Untitled" }
+      optimizedStorageKey: updates.optimizedStorageKey,
+      optimizedStorageUrl: normalizeTrustedStorageUrl(
+        updates.optimizedStorageUrl
+      ),
+      ...(typeof updates.optimizedName === "string"
+        ? {
+            optimizedName:
+              updates.optimizedName.trim().slice(0, 255) || "Untitled",
+          }
         : {}),
-      ...(typeof updates.mimeType !== "undefined" ? { mimeType: updates.mimeType } : {}),
-      ...(typeof updates.sizeBytes === "number" ? { sizeBytes: updates.sizeBytes } : {}),
+      ...(typeof updates.optimizedMimeType !== "undefined"
+        ? { optimizedMimeType: updates.optimizedMimeType }
+        : {}),
+      ...(typeof updates.optimizedSizeBytes === "number"
+        ? { optimizedSizeBytes: updates.optimizedSizeBytes }
+        : {}),
       updatedBy: userId,
       updatedAt: new Date(),
     })
@@ -1311,8 +1391,8 @@ export async function updateFileAssetStorageMetadata(
       and(
         eq(fileAsset.id, fileId),
         eq(fileAsset.workspaceId, workspaceId),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     )
     .returning();
 
@@ -1327,15 +1407,18 @@ export async function getFileAssetById(workspaceId: string, fileId: string) {
       and(
         eq(fileAsset.id, fileId),
         eq(fileAsset.workspaceId, workspaceId),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     )
     .limit(1);
 
   return record ? mapFile(record) : null;
 }
 
-export async function getFileAssetByStorageKey(workspaceId: string, storageKey: string) {
+export async function getFileAssetByStorageKey(
+  workspaceId: string,
+  storageKey: string
+) {
   const [record] = await db
     .select()
     .from(fileAsset)
@@ -1343,15 +1426,19 @@ export async function getFileAssetByStorageKey(workspaceId: string, storageKey: 
       and(
         eq(fileAsset.workspaceId, workspaceId),
         eq(fileAsset.storageKey, storageKey),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     )
     .limit(1);
 
   return record ? mapFile(record) : null;
 }
 
-export async function softDeleteFileAsset(workspaceId: string, fileId: string, userId: string) {
+export async function softDeleteFileAsset(
+  workspaceId: string,
+  fileId: string,
+  userId: string
+) {
   const now = new Date();
   const [record] = await db
     .update(fileAsset)
@@ -1360,8 +1447,8 @@ export async function softDeleteFileAsset(workspaceId: string, fileId: string, u
       and(
         eq(fileAsset.id, fileId),
         eq(fileAsset.workspaceId, workspaceId),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     )
     .returning();
 
@@ -1403,7 +1490,11 @@ export async function grantResourceToUserByEmail(input: {
       createdAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [resourceShareGrant.resourceType, resourceShareGrant.resourceId, resourceShareGrant.granteeUserId],
+      target: [
+        resourceShareGrant.resourceType,
+        resourceShareGrant.resourceId,
+        resourceShareGrant.granteeUserId,
+      ],
       set: { permission: input.permission ?? "read" },
     })
     .returning();
@@ -1465,8 +1556,8 @@ export async function grantAllChatsFromUserToUser(input: {
     .where(
       and(
         eq(workspace.id, input.workspaceId),
-        eq(member.userId, input.ownerUserId),
-      ),
+        eq(member.userId, input.ownerUserId)
+      )
     )
     .limit(1);
 
@@ -1494,8 +1585,8 @@ export async function grantAllChatsFromUserToUser(input: {
         granteeUserId: input.granteeUserId,
         createdBy: input.createdBy,
         permission: "read",
-      }),
-    ),
+      })
+    )
   );
 
   return chats.length;
@@ -1516,15 +1607,17 @@ export async function createResourceShareLink(input: {
   const rawToken = randomBytes(24).toString("base64url");
   const tokenHash = hashShareToken(rawToken);
   const now = Date.now();
-  const expiresAt = new Date(now + (input.expiresInDays ?? 7) * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(
+    now + (input.expiresInDays ?? 7) * 24 * 60 * 60 * 1000
+  );
   const [existingGrant] = await db
     .select({ id: resourceShareGrant.id })
     .from(resourceShareGrant)
     .where(
       and(
         eq(resourceShareGrant.resourceType, input.resourceType),
-        eq(resourceShareGrant.resourceId, input.resourceId),
-      ),
+        eq(resourceShareGrant.resourceId, input.resourceId)
+      )
     )
     .limit(1);
   const hasSpecificGrants = Boolean(existingGrant);
@@ -1587,8 +1680,8 @@ export async function canUserAccessSharedResource(input: {
     .where(
       and(
         eq(resourceShareGrant.resourceType, link.resourceType),
-        eq(resourceShareGrant.resourceId, link.resourceId),
-      ),
+        eq(resourceShareGrant.resourceId, link.resourceId)
+      )
     )
     .limit(1);
   const hasSpecificGrants = Boolean(existingGrant);
@@ -1612,8 +1705,8 @@ export async function canUserAccessSharedResource(input: {
       and(
         eq(resourceShareGrant.resourceType, link.resourceType),
         eq(resourceShareGrant.resourceId, link.resourceId),
-        eq(resourceShareGrant.granteeUserId, userId),
-      ),
+        eq(resourceShareGrant.granteeUserId, userId)
+      )
     )
     .limit(1);
 

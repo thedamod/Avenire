@@ -63,7 +63,11 @@ import {
   useState,
 } from "react";
 import { NavUser } from "@/components/dashboard/nav-user";
-import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/files/tree";
+import {
+  FileTree,
+  FileTreeFile,
+  FileTreeFolder,
+} from "@/components/files/tree";
 import type { ChatSummary } from "@/lib/chat-data";
 import {
   CHAT_NAME_UPDATED_EVENT,
@@ -104,7 +108,17 @@ function SectionButton({
   );
 }
 
-const imageExt = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp", "ico"]);
+const imageExt = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "avif",
+  "bmp",
+  "ico",
+]);
 const videoExt = new Set(["mp4", "mov", "m4v", "webm", "avi", "mkv"]);
 const audioExt = new Set(["mp3", "wav", "flac", "m4a", "aac", "ogg"]);
 const codeExt = new Set([
@@ -220,7 +234,9 @@ function ChatListSection({
                           {chat.title}
                         </TooltipTrigger>
                         <TooltipContent side="top">
-                          <span className="max-w-72 break-words">{chat.title}</span>
+                          <span className="max-w-72 break-words">
+                            {chat.title}
+                          </span>
                         </TooltipContent>
                       </Tooltip>
                     </SidebarMenuButton>
@@ -299,7 +315,9 @@ async function parseResponse<T>(response: Response): Promise<T | null> {
 }
 
 function getTreeFileIcon(name: string) {
-  const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() ?? "" : "";
+  const ext = name.includes(".")
+    ? (name.split(".").pop()?.toLowerCase() ?? "")
+    : "";
 
   if (imageExt.has(ext)) {
     return <FileImage className="size-4 text-emerald-600" />;
@@ -353,36 +371,58 @@ export function DashboardSidebar({
   const [editingTitle, setEditingTitle] = useState("");
   const [workspaceUuid, setWorkspaceUuid] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<
-    Array<{ workspaceId: string; organizationId: string; rootFolderId: string; name: string }>
+    Array<{
+      workspaceId: string;
+      organizationId: string;
+      rootFolderId: string;
+      name: string;
+    }>
   >([]);
   const [folderTree, setFolderTree] = useState<
-    Array<{ id: string; name: string; parentId: string | null; readOnly?: boolean }>
+    Array<{
+      id: string;
+      name: string;
+      parentId: string | null;
+      readOnly?: boolean;
+    }>
   >([]);
   const [fileTree, setFileTree] = useState<
     Array<{ id: string; name: string; folderId: string; readOnly?: boolean }>
   >([]);
-  const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(new Set());
-  const [hydratedTreeStorageKey, setHydratedTreeStorageKey] = useState<string | null>(null);
+  const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(
+    new Set()
+  );
+  const [hasSavedExpandedTreeState, setHasSavedExpandedTreeState] =
+    useState(false);
+  const [hydratedTreeStorageKey, setHydratedTreeStorageKey] = useState<
+    string | null
+  >(null);
   const [treeDropFolderId, setTreeDropFolderId] = useState<string | null>(null);
   const [draggedTreeItem, setDraggedTreeItem] = useState<{
     id: string;
     kind: "file" | "folder";
   } | null>(null);
-  const [highlightedTreePath, setHighlightedTreePath] = useState<string | null>(null);
+  const [highlightedTreePath, setHighlightedTreePath] = useState<string | null>(
+    null
+  );
   const fileTreePanelRef = useRef<HTMLDivElement | null>(null);
   const dragPreviewPixelRef = useRef<HTMLImageElement | null>(null);
   const [sseConnected, setSseConnected] = useState(false);
-  const treeRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const treeRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const sseRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeView: Exclude<DashboardView, null> = view ?? "chat";
   const currentFolderId = useMemo(() => {
-    const match = pathname.match(/^\/dashboard\/files\/[^/]+\/folder\/([^/?#]+)/);
+    const match = pathname.match(
+      /^\/dashboard\/files\/[^/]+\/folder\/([^/?#]+)/
+    );
     return match?.[1] ?? undefined;
   }, [pathname]);
   const currentFileId = searchParams.get("file") ?? undefined;
   const expandedTreeStorageKey = useMemo(
     () => (workspaceUuid ? `files-tree-expanded:${workspaceUuid}` : null),
-    [workspaceUuid],
+    [workspaceUuid]
   );
 
   useEffect(() => {
@@ -424,8 +464,8 @@ export function DashboardSidebar({
                 title: detail.name,
                 updatedAt: new Date().toISOString(),
               }
-            : chat,
-        ),
+            : chat
+        )
       );
     };
 
@@ -438,22 +478,22 @@ export function DashboardSidebar({
   const sortedChats = useMemo(
     () =>
       [...chats].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)),
-    [chats],
+    [chats]
   );
 
   const pinnedChats = useMemo(
     () => sortedChats.filter((chat) => chat.pinned),
-    [sortedChats],
+    [sortedChats]
   );
 
   const otherChats = useMemo(
     () => sortedChats.filter((chat) => !chat.pinned),
-    [sortedChats],
+    [sortedChats]
   );
 
   const refreshChats = async () => {
     const data = await parseResponse<{ chats: ChatSummary[] }>(
-      await fetch("/api/chat/history"),
+      await fetch("/api/chat/history")
     );
     if (data?.chats) {
       setChats(data.chats);
@@ -467,14 +507,16 @@ export function DashboardSidebar({
           ? window.localStorage.getItem("preferredWorkspaceId")
           : null;
       const preferred = preferredWorkspaceId
-        ? workspaces.find((workspace) => workspace.workspaceId === preferredWorkspaceId)
+        ? workspaces.find(
+            (workspace) => workspace.workspaceId === preferredWorkspaceId
+          )
         : undefined;
       const targetWorkspace = preferred ?? workspaces[0];
 
       if (targetWorkspace) {
         setWorkspaceUuid(targetWorkspace.workspaceId);
         router.push(
-          `/dashboard/files/${targetWorkspace.workspaceId}/folder/${targetWorkspace.rootFolderId}` as Route,
+          `/dashboard/files/${targetWorkspace.workspaceId}/folder/${targetWorkspace.rootFolderId}` as Route
         );
         return;
       }
@@ -493,7 +535,7 @@ export function DashboardSidebar({
       if (payload.workspaceUuid && payload.rootFolderUuid) {
         setWorkspaceUuid(payload.workspaceUuid);
         router.push(
-          `/dashboard/files/${payload.workspaceUuid}/folder/${payload.rootFolderUuid}` as Route,
+          `/dashboard/files/${payload.workspaceUuid}/folder/${payload.rootFolderUuid}` as Route
         );
         return;
       }
@@ -506,7 +548,9 @@ export function DashboardSidebar({
 
   const loadWorkspaces = useCallback(async () => {
     try {
-      const response = await fetch("/api/workspaces/list", { cache: "no-store" });
+      const response = await fetch("/api/workspaces/list", {
+        cache: "no-store",
+      });
       if (!response.ok) {
         return;
       }
@@ -537,16 +581,28 @@ export function DashboardSidebar({
         return;
       }
       const payload = (await response.json()) as {
-        folders?: Array<{ id: string; name: string; parentId: string | null; readOnly?: boolean }>;
-        files?: Array<{ id: string; name: string; folderId: string; readOnly?: boolean }>;
+        folders?: Array<{
+          id: string;
+          name: string;
+          parentId: string | null;
+          readOnly?: boolean;
+        }>;
+        files?: Array<{
+          id: string;
+          name: string;
+          folderId: string;
+          readOnly?: boolean;
+        }>;
       };
       setFolderTree(payload.folders ?? []);
-      setFileTree((payload.files ?? []).map((file) => ({
-        id: file.id,
-        name: file.name,
-        folderId: file.folderId,
-        readOnly: file.readOnly,
-      })));
+      setFileTree(
+        (payload.files ?? []).map((file) => ({
+          id: file.id,
+          name: file.name,
+          folderId: file.folderId,
+          readOnly: file.readOnly,
+        }))
+      );
     } catch {
       // ignore
     }
@@ -562,7 +618,7 @@ export function DashboardSidebar({
         void loadWorkspaceTree(workspaceId);
       }, 150);
     },
-    [loadWorkspaceTree],
+    [loadWorkspaceTree]
   );
 
   useEffect(() => {
@@ -570,7 +626,9 @@ export function DashboardSidebar({
       return;
     }
 
-    const match = pathname.match(/^\/dashboard\/files\/([^/]+)\/folder\/([^/]+)/);
+    const match = pathname.match(
+      /^\/dashboard\/files\/([^/]+)\/folder\/([^/]+)/
+    );
     const currentWorkspace = match?.[1] ?? workspaceUuid;
     if (!currentWorkspace) {
       return;
@@ -585,6 +643,7 @@ export function DashboardSidebar({
       return;
     }
     setExpandedTreePaths(new Set());
+    setHasSavedExpandedTreeState(false);
     setHydratedTreeStorageKey(null);
   }, [expandedTreeStorageKey]);
 
@@ -599,6 +658,7 @@ export function DashboardSidebar({
         const parsed = JSON.parse(raw) as string[];
         if (Array.isArray(parsed)) {
           setExpandedTreePaths(new Set(parsed));
+          setHasSavedExpandedTreeState(true);
         }
       }
     } catch {
@@ -609,13 +669,16 @@ export function DashboardSidebar({
   }, [expandedTreeStorageKey]);
 
   useEffect(() => {
-    if (!expandedTreeStorageKey || hydratedTreeStorageKey !== expandedTreeStorageKey) {
+    if (
+      !expandedTreeStorageKey ||
+      hydratedTreeStorageKey !== expandedTreeStorageKey
+    ) {
       return;
     }
     try {
       window.localStorage.setItem(
         expandedTreeStorageKey,
-        JSON.stringify(Array.from(expandedTreePaths)),
+        JSON.stringify(Array.from(expandedTreePaths))
       );
     } catch (error) {
       console.error("Failed to persist expanded tree paths", error);
@@ -627,9 +690,11 @@ export function DashboardSidebar({
       return;
     }
 
-    const foldersById = new Map(folderTree.map((folder) => [folder.id, folder]));
+    const foldersById = new Map(
+      folderTree.map((folder) => [folder.id, folder])
+    );
     const nextExpanded = new Set(
-      folderTree.filter((folder) => !folder.parentId).map((folder) => folder.id),
+      folderTree.filter((folder) => !folder.parentId).map((folder) => folder.id)
     );
 
     const expandAncestors = (folderId: string) => {
@@ -654,8 +719,20 @@ export function DashboardSidebar({
       }
     }
 
-    setExpandedTreePaths((previous) => new Set([...previous, ...nextExpanded]));
-  }, [activeView, currentFileId, currentFolderId, fileTree, folderTree]);
+    setExpandedTreePaths((previous) => {
+      if (hasSavedExpandedTreeState || previous.size > 0) {
+        return previous;
+      }
+      return new Set(nextExpanded);
+    });
+  }, [
+    activeView,
+    currentFileId,
+    currentFolderId,
+    fileTree,
+    folderTree,
+    hasSavedExpandedTreeState,
+  ]);
 
   useEffect(() => {
     if (activeView !== "files") {
@@ -670,7 +747,9 @@ export function DashboardSidebar({
     let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
     const timer = setTimeout(() => {
       const panel = fileTreePanelRef.current;
-      const target = panel?.querySelector<HTMLElement>(`[data-tree-path="${targetPath}"]`);
+      const target = panel?.querySelector<HTMLElement>(
+        `[data-tree-path="${targetPath}"]`
+      );
       if (!target) {
         return;
       }
@@ -717,7 +796,12 @@ export function DashboardSidebar({
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener(DASHBOARD_FILES_SYNC_EVENT, onSync);
     };
-  }, [activeView, loadWorkspaceTree, refreshWorkspaceTreeDebounced, workspaceUuid]);
+  }, [
+    activeView,
+    loadWorkspaceTree,
+    refreshWorkspaceTreeDebounced,
+    workspaceUuid,
+  ]);
 
   useEffect(() => {
     if (activeView !== "files" || !workspaceUuid) {
@@ -820,7 +904,7 @@ export function DashboardSidebar({
       await fetch("/api/chats", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
     if (!data?.chat) {
@@ -838,14 +922,14 @@ export function DashboardSidebar({
 
   const updateChat = async (
     chatSlug: string,
-    updates: { title?: string; pinned?: boolean },
+    updates: { title?: string; pinned?: boolean }
   ) => {
     const data = await parseResponse<{ chat: ChatSummary }>(
       await fetch(`/api/chats/${chatSlug}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
-      }),
+      })
     );
 
     if (!data?.chat) {
@@ -853,7 +937,7 @@ export function DashboardSidebar({
     }
 
     setChats((prev) =>
-      prev.map((chat) => (chat.slug === chatSlug ? data.chat : chat)),
+      prev.map((chat) => (chat.slug === chatSlug ? data.chat : chat))
     );
   };
 
@@ -861,8 +945,8 @@ export function DashboardSidebar({
     const response = await fetch(
       `/api/chat?${new URLSearchParams({ id: chatSlug }).toString()}`,
       {
-      method: "DELETE",
-      },
+        method: "DELETE",
+      }
     );
 
     if (!response.ok) {
@@ -886,11 +970,14 @@ export function DashboardSidebar({
     if (!organizationId) {
       return;
     }
-    await fetch("/api/auth/organization/set-active", {
+    const response = await fetch("/api/auth/organization/set-active", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ organizationId }),
     });
+    if (!response.ok) {
+      throw new Error("Unable to switch active organization");
+    }
   };
 
   const switchWorkspace = async (workspace: {
@@ -902,13 +989,13 @@ export function DashboardSidebar({
     try {
       await setActiveOrganization(workspace.organizationId ?? null);
     } catch {
-      // continue with workspace navigation even if org switch fails
+      return;
     }
     setWorkspaceUuid(workspace.workspaceId);
     setView("files");
     window.localStorage.setItem("preferredWorkspaceId", workspace.workspaceId);
     router.push(
-      `/dashboard/files/${workspace.workspaceId}/folder/${workspace.rootFolderId}` as Route,
+      `/dashboard/files/${workspace.workspaceId}/folder/${workspace.rootFolderId}` as Route
     );
   };
 
@@ -959,15 +1046,20 @@ export function DashboardSidebar({
       }
       return false;
     },
-    [folderTree],
+    [folderTree]
   );
 
   const moveTreeItem = useCallback(
-    async (item: { id: string; kind: "file" | "folder" }, targetFolderId: string) => {
+    async (
+      item: { id: string; kind: "file" | "folder" },
+      targetFolderId: string
+    ) => {
       if (!workspaceUuid) {
         return;
       }
-      const targetFolder = folderTree.find((folder) => folder.id === targetFolderId);
+      const targetFolder = folderTree.find(
+        (folder) => folder.id === targetFolderId
+      );
       if (targetFolder?.readOnly) {
         return;
       }
@@ -977,7 +1069,10 @@ export function DashboardSidebar({
         if (sourceFolder?.readOnly) {
           return;
         }
-        if (item.id === targetFolderId || isFolderDescendant(item.id, targetFolderId)) {
+        if (
+          item.id === targetFolderId ||
+          isFolderDescendant(item.id, targetFolderId)
+        ) {
           return;
         }
         await fetch(`/api/workspaces/${workspaceUuid}/folders/${item.id}`, {
@@ -1001,58 +1096,71 @@ export function DashboardSidebar({
       window.dispatchEvent(
         new CustomEvent(DASHBOARD_FILES_SYNC_EVENT, {
           detail: { source: "sidebar", workspaceUuid, ts: Date.now() },
-        }),
+        })
       );
       router.refresh();
     },
-    [fileTree, folderTree, isFolderDescendant, loadWorkspaceTree, router, workspaceUuid],
+    [
+      fileTree,
+      folderTree,
+      isFolderDescendant,
+      loadWorkspaceTree,
+      router,
+      workspaceUuid,
+    ]
   );
 
   return (
     <Sidebar variant="inset" {...props}>
       <SidebarContent>
         <TooltipProvider delay={280}>
-        <SidebarGroup className="px-2 pb-1">
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-          <ExpandableTabs
-            allowDeselect={false}
-            className="mt-1"
-            items={[
-              { value: "chat", label: "Chat", icon: MessageSquare },
-              { value: "flashcards", label: "Flashcards", icon: Sparkles },
-              { value: "files", label: "Files", icon: Files },
-            ]}
-            onValueChange={(nextValue) => {
-              if (!nextValue) {
-                return;
-              }
-              const nextView = nextValue as Exclude<DashboardView, null>;
-              if (nextView === activeView) {
-                return;
-              }
-
-              if (nextView === "files" && !pathname.startsWith("/dashboard/files")) {
-                void navigateToFilesRoot();
-                return;
-              }
-
-              if (nextView === "chat" && !pathname.startsWith("/dashboard/chats/")) {
-                const chatSlug = activeChatSlug || chats[0]?.slug;
-                if (chatSlug) {
-                  router.push(`/dashboard/chats/${chatSlug}` as Route);
+          <SidebarGroup className="px-2 pb-1">
+            <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+            <ExpandableTabs
+              allowDeselect={false}
+              className="mt-1"
+              items={[
+                { value: "chat", label: "Chat", icon: MessageSquare },
+                { value: "flashcards", label: "Flashcards", icon: Sparkles },
+                { value: "files", label: "Files", icon: Files },
+              ]}
+              onValueChange={(nextValue) => {
+                if (!nextValue) {
                   return;
                 }
-                void createChat();
-                return;
-              }
+                const nextView = nextValue as Exclude<DashboardView, null>;
+                if (nextView === activeView) {
+                  return;
+                }
 
-              setView(nextView);
-            }}
-            value={activeView}
-          />
-        </SidebarGroup>
-        <div className="relative min-h-0 flex-1 overflow-hidden">
-          {activeView === "chat" ? (
+                if (
+                  nextView === "files" &&
+                  !pathname.startsWith("/dashboard/files")
+                ) {
+                  void navigateToFilesRoot();
+                  return;
+                }
+
+                if (
+                  nextView === "chat" &&
+                  !pathname.startsWith("/dashboard/chats/")
+                ) {
+                  const chatSlug = activeChatSlug || chats[0]?.slug;
+                  if (chatSlug) {
+                    router.push(`/dashboard/chats/${chatSlug}` as Route);
+                    return;
+                  }
+                  void createChat();
+                  return;
+                }
+
+                setView(nextView);
+              }}
+              value={activeView}
+            />
+          </SidebarGroup>
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            {activeView === "chat" ? (
               <div className="absolute inset-0 overflow-y-auto">
                 <SidebarGroup>
                   <SidebarGroupContent>
@@ -1148,7 +1256,10 @@ export function DashboardSidebar({
                 />
               </div>
             ) : activeView === "files" ? (
-              <div className="absolute inset-0 overflow-y-auto" ref={fileTreePanelRef}>
+              <div
+                className="absolute inset-0 overflow-y-auto"
+                ref={fileTreePanelRef}
+              >
                 <SidebarGroup>
                   <SidebarGroupLabel>Files</SidebarGroupLabel>
                   <SidebarGroupContent>
@@ -1157,14 +1268,18 @@ export function DashboardSidebar({
                         icon={FilePlus2}
                         label="New Note"
                         onClick={() => {
-                          window.dispatchEvent(new Event(DASHBOARD_FILES_NEW_NOTE_EVENT));
+                          window.dispatchEvent(
+                            new Event(DASHBOARD_FILES_NEW_NOTE_EVENT)
+                          );
                         }}
                       />
                       <SectionButton
                         icon={Search}
                         label="Search Files"
                         onClick={() => {
-                          window.dispatchEvent(new Event(DASHBOARD_FILES_FOCUS_SEARCH_EVENT));
+                          window.dispatchEvent(
+                            new Event(DASHBOARD_FILES_FOCUS_SEARCH_EVENT)
+                          );
                         }}
                       />
                     </SidebarMenu>
@@ -1184,18 +1299,22 @@ export function DashboardSidebar({
                             return;
                           }
 
-                          const folder = folderTree.find((entry) => entry.id === path);
+                          const folder = folderTree.find(
+                            (entry) => entry.id === path
+                          );
                           if (folder) {
                             router.push(
-                              `/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route,
+                              `/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route
                             );
                             return;
                           }
 
-                          const file = fileTree.find((entry) => entry.id === path);
+                          const file = fileTree.find(
+                            (entry) => entry.id === path
+                          );
                           if (file) {
                             router.push(
-                              `/dashboard/files/${workspaceUuid}/folder/${file.folderId}?file=${file.id}` as Route,
+                              `/dashboard/files/${workspaceUuid}/folder/${file.folderId}?file=${file.id}` as Route
                             );
                           }
                         }}
@@ -1210,7 +1329,7 @@ export function DashboardSidebar({
                             event.dataTransfer.setDragImage(
                               getDragPreviewPixel(dragPreviewPixelRef),
                               0,
-                              0,
+                              0
                             );
                             setDraggedTreeItem(item);
                           },
@@ -1226,7 +1345,8 @@ export function DashboardSidebar({
                             setDraggedTreeItem(null);
                             setTreeDropFolderId(null);
                           },
-                          onDragTargetChange: (folderId) => setTreeDropFolderId(folderId),
+                          onDragTargetChange: (folderId) =>
+                            setTreeDropFolderId(folderId),
                           highlightedPath: highlightedTreePath,
                           treeDropFolderId,
                         })}
@@ -1264,7 +1384,7 @@ export function DashboardSidebar({
                 </SidebarGroup>
               </div>
             )}
-        </div>
+          </div>
         </TooltipProvider>
       </SidebarContent>
       <SidebarFooter>
@@ -1283,11 +1403,24 @@ export function DashboardSidebar({
 }
 
 function renderWorkspaceTree(input: {
-  folders: Array<{ id: string; name: string; parentId: string | null; readOnly?: boolean }>;
-  files: Array<{ id: string; name: string; folderId: string; readOnly?: boolean }>;
+  folders: Array<{
+    id: string;
+    name: string;
+    parentId: string | null;
+    readOnly?: boolean;
+  }>;
+  files: Array<{
+    id: string;
+    name: string;
+    folderId: string;
+    readOnly?: boolean;
+  }>;
   treeDropFolderId: string | null;
   highlightedPath: string | null;
-  onDragStart: (event: DragEvent<HTMLDivElement>, item: { id: string; kind: "file" | "folder" }) => void;
+  onDragStart: (
+    event: DragEvent<HTMLDivElement>,
+    item: { id: string; kind: "file" | "folder" }
+  ) => void;
   onDragEnd: () => void;
   onDropToFolder: (folderId: string) => void;
   onDragTargetChange: (folderId: string | null) => void;
@@ -1298,18 +1431,16 @@ function renderWorkspaceTree(input: {
       .sort((a, b) => a.name.localeCompare(b.name));
 
     return folders.map((folder, folderIndex) => (
-        <FileTreeFolder
-        className={
-          cn(
-            "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-150",
-            input.treeDropFolderId === folder.id
-              ? "rounded-md bg-emerald-500/10 outline outline-1 outline-emerald-400/70"
-              : "",
-            input.highlightedPath === folder.id
-              ? "rounded bg-emerald-500/10 ring-1 ring-emerald-400/60"
-              : "",
-          )
-        }
+      <FileTreeFolder
+        className={cn(
+          "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-150",
+          input.treeDropFolderId === folder.id
+            ? "rounded-md bg-emerald-500/10 outline outline-1 outline-emerald-400/70"
+            : "",
+          input.highlightedPath === folder.id
+            ? "rounded bg-emerald-500/10 ring-1 ring-emerald-400/60"
+            : ""
+        )}
         draggable={!folder.readOnly}
         key={folder.id}
         name={folder.name}
@@ -1354,7 +1485,7 @@ function renderWorkspaceTree(input: {
                 "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-150",
                 input.highlightedPath === file.id
                   ? "rounded bg-emerald-500/10 ring-1 ring-emerald-400/60"
-                  : "",
+                  : ""
               )}
               draggable={!file.readOnly}
               key={file.id}

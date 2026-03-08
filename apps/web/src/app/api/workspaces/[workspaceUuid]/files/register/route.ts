@@ -6,6 +6,7 @@ import {
   softDeleteFileAsset,
   updateFileAssetStorageMetadata,
 } from "@/lib/file-data";
+import { UTApi } from "@avenire/storage";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { NextResponse } from "next/server";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
@@ -28,7 +29,7 @@ function classifyStoredFileType(mimeType: string | null) {
 
 export async function POST(
   request: Request,
-  context: { params: Promise<{ workspaceUuid: string }> },
+  context: { params: Promise<{ workspaceUuid: string }> }
 ) {
   const user = await getSessionUser();
   const apiLogger = createApiLogger({
@@ -73,15 +74,28 @@ export async function POST(
     !body.name ||
     typeof body.sizeBytes !== "number"
   ) {
-    void apiLogger.requestFailed(400, "Missing file metadata", { workspaceUuid });
-    return NextResponse.json({ error: "Missing file metadata" }, { status: 400 });
+    void apiLogger.requestFailed(400, "Missing file metadata", {
+      workspaceUuid,
+    });
+    return NextResponse.json(
+      { error: "Missing file metadata" },
+      { status: 400 }
+    );
   }
   if (isSharedFilesVirtualFolderId(body.folderId, workspaceUuid)) {
-    void apiLogger.requestFailed(400, "Cannot create items in Shared Files", { workspaceUuid });
-    return NextResponse.json({ error: "Cannot create items in Shared Files" }, { status: 400 });
+    void apiLogger.requestFailed(400, "Cannot create items in Shared Files", {
+      workspaceUuid,
+    });
+    return NextResponse.json(
+      { error: "Cannot create items in Shared Files" },
+      { status: 400 }
+    );
   }
 
-  const existing = await getFileAssetByStorageKey(workspaceUuid, body.storageKey);
+  const existing = await getFileAssetByStorageKey(
+    workspaceUuid,
+    body.storageKey
+  );
   if (existing) {
     void apiLogger.requestSucceeded(200, {
       workspaceUuid,
@@ -119,27 +133,53 @@ export async function POST(
         error: "Upload usage limit reached",
         retryAfter,
       },
-      { status: 429 },
+      { status: 429 }
     );
   }
 
   let storedFile = file;
   if (storedFile.mimeType?.startsWith("video/")) {
+    const originalStorageKey = storedFile.storageKey;
     const optimized = await optimizeAndReuploadVideo({
       sourceUrl: storedFile.storageUrl,
       sourceName: storedFile.name,
     }).catch(() => null);
 
     if (optimized) {
-      const updated = await updateFileAssetStorageMetadata(workspaceUuid, storedFile.id, user.id, {
-        storageKey: optimized.storageKey,
-        storageUrl: optimized.storageUrl,
-        name: optimized.name,
-        mimeType: optimized.mimeType,
-        sizeBytes: optimized.sizeBytes,
-      });
-      if (updated) {
-        storedFile = updated;
+      try {
+        const updated = await updateFileAssetStorageMetadata(
+          workspaceUuid,
+          storedFile.id,
+          user.id,
+          {
+            optimizedStorageKey: optimized.storageKey,
+            optimizedStorageUrl: optimized.storageUrl,
+            optimizedName: optimized.name,
+            optimizedMimeType: optimized.mimeType,
+            optimizedSizeBytes: optimized.sizeBytes,
+          }
+        );
+
+        if (updated) {
+          storedFile = updated;
+          if (
+            process.env.UPLOADTHING_TOKEN &&
+            originalStorageKey &&
+            originalStorageKey !== optimized.storageKey
+          ) {
+            const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+            await utapi.deleteFiles(originalStorageKey).catch(() => undefined);
+          }
+        } else if (process.env.UPLOADTHING_TOKEN) {
+          const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+          await utapi.deleteFiles(optimized.storageKey).catch(() => undefined);
+        }
+      } catch (error) {
+        if (process.env.UPLOADTHING_TOKEN) {
+          const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+          await utapi.deleteFiles(optimized.storageKey).catch(() => undefined);
+        }
+        throw error;
       }
     }
   }

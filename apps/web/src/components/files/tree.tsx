@@ -160,6 +160,7 @@ export const FileTreeFolder = ({
       <Collapsible onOpenChange={handleOpenChange} open={isExpanded}>
         <div
           className={cn("", className)}
+          aria-selected={isSelected}
           data-tree-item=""
           data-tree-path={path}
           onKeyDown={handleItemKeyDown}
@@ -180,7 +181,9 @@ export const FileTreeFolder = ({
               if (
                 event.currentTarget !== target ||
                 (target !== event.currentTarget &&
-                  target.closest('button, [role="button"], [data-collapsible-trigger]'))
+                  target.closest(
+                    'button, [role="button"], [data-collapsible-trigger]'
+                  ))
               ) {
                 return;
               }
@@ -287,6 +290,7 @@ export const FileTreeFile = ({
           isSelected && "bg-muted",
           className
         )}
+        aria-selected={isSelected}
         data-tree-item=""
         data-tree-path={path}
         onClick={handleClick}
@@ -330,7 +334,10 @@ export const FileTreeName = ({
   ...props
 }: FileTreeNameProps) => (
   <span
-    className={cn("min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap", className)}
+    className={cn(
+      "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap",
+      className
+    )}
     {...props}
   >
     {children}

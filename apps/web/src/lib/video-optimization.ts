@@ -1,8 +1,7 @@
 import { UTApi, UTFile } from "@avenire/storage";
 import { spawn } from "node:child_process";
 import { lookup } from "node:dns/promises";
-import { createReadStream } from "node:fs";
-import { mkdtemp, open, rm, stat } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
@@ -29,7 +28,10 @@ const METADATA_IPV4 = new Set(["169.254.169.254", "100.100.100.200"]);
 
 function isPrivateOrLocalIpv4(ip: string) {
   const parts = ip.split(".").map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)
+  ) {
     return true;
   }
   const [a, b] = parts;
@@ -50,7 +52,12 @@ function isPrivateOrLocalIpv6(ip: string) {
   if (normalized === "::1" || normalized === "::") {
     return true;
   }
-  if (normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb")) {
+  if (
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
+  ) {
     return true;
   }
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) {
@@ -82,7 +89,11 @@ async function validateSourceUrl(sourceUrl: string) {
   }
 
   const normalizedHost = parsed.hostname.trim().toLowerCase();
-  if (!normalizedHost || normalizedHost === "localhost" || normalizedHost.endsWith(".localhost")) {
+  if (
+    !normalizedHost ||
+    normalizedHost === "localhost" ||
+    normalizedHost.endsWith(".localhost")
+  ) {
     throw new Error("Source URL hostname is not allowed");
   }
 
@@ -91,7 +102,10 @@ async function validateSourceUrl(sourceUrl: string) {
   }
 
   const resolved = await lookup(normalizedHost, { all: true, verbatim: true });
-  if (resolved.length === 0 || resolved.some((entry) => isDisallowedAddress(entry.address))) {
+  if (
+    resolved.length === 0 ||
+    resolved.some((entry) => isDisallowedAddress(entry.address))
+  ) {
     throw new Error("Source URL resolved to a disallowed address");
   }
 
@@ -127,7 +141,11 @@ async function runFfmpeg(args: string[]) {
       }
       settled = true;
       child.kill("SIGKILL");
-      reject(new Error(`ffmpeg timed out after ${FFMPEG_TIMEOUT_MS}ms\n${stderr}`.trim()));
+      reject(
+        new Error(
+          `ffmpeg timed out after ${FFMPEG_TIMEOUT_MS}ms\n${stderr}`.trim()
+        )
+      );
     }, FFMPEG_TIMEOUT_MS);
 
     child.stderr.on("data", (chunk) => {
@@ -158,7 +176,7 @@ async function runFfmpeg(args: string[]) {
 }
 
 export async function optimizeAndReuploadVideo(
-  input: OptimizeAndReuploadVideoInput,
+  input: OptimizeAndReuploadVideoInput
 ): Promise<OptimizedVideoUpload | null> {
   if (!process.env.UPLOADTHING_TOKEN) {
     return null;
@@ -249,16 +267,20 @@ export async function optimizeAndReuploadVideo(
 
     const optimizedStats = await stat(optimizedPath);
     const optimizedName = buildMp4Name(input.sourceName);
-    const optimizedStream = createReadStream(optimizedPath) as unknown as BlobPart;
+    const optimizedBytes = await readFile(optimizedPath);
 
     const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
     const uploadResult = await utapi.uploadFiles(
-      new UTFile([optimizedStream], optimizedName, { type: "video/mp4" }),
+      new UTFile([optimizedBytes], optimizedName, { type: "video/mp4" })
     );
     const result = Array.isArray(uploadResult) ? uploadResult[0] : uploadResult;
     const uploaded = result?.data;
 
-    if (!uploaded || typeof uploaded.key !== "string" || typeof uploaded.ufsUrl !== "string") {
+    if (
+      !uploaded ||
+      typeof uploaded.key !== "string" ||
+      typeof uploaded.ufsUrl !== "string"
+    ) {
       return null;
     }
 
