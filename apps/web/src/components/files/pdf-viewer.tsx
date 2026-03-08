@@ -69,6 +69,8 @@ function PDFViewerContent({ source }: { source: string }) {
   const resolvedZoomInput =
     isZoomInputDirty ? zoomInput : String(Math.round((zoomLevel || 1) * 100));
 
+  // Workaround: nudge zoom by +0.01 then -0.01 after pdfProxy is ready to force
+  // an initial renderer reflow; didNudgeZoom prevents repeating this fixup.
   useEffect(() => {
     if (!pdfProxy || didNudgeZoom.current) {
       return;
@@ -290,8 +292,7 @@ function PDFViewerContent({ source }: { source: string }) {
         <div className="min-h-0 flex-1 bg-muted/30">
           <Pages
             className={cn(
-              "h-full w-full overflow-y-scroll overflow-x-hidden p-4 text-foreground sm:p-6",
-              "dark:invert-[94%] dark:hue-rotate-180 dark:brightness-[80%] dark:contrast-[228%]",
+              "h-full w-full overflow-y-scroll overflow-x-hidden p-4 text-foreground sm:p-6"
             )}
           >
             <Page className="mx-auto w-fit rounded-md border border-border/40 bg-white shadow-sm">

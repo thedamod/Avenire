@@ -222,7 +222,7 @@ export function Chat({
                 key="composer-center"
                 transition={{ duration: 0.24, ease: "easeOut" }}
               >
-                <div className="w-full max-w-3xl">
+                <div className="w-full max-w-3xl flex flex-col items-center justify-center">
                   <div className="mb-6">
                     <Overview />
                   </div>

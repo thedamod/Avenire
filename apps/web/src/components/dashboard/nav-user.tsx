@@ -178,7 +178,9 @@ export function NavUser({
 
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
-                  <DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => router.push("/pricing" as Route)}
+                  >
                     <Sparkles />
                     Upgrade to Pro
                   </DropdownMenuItem>

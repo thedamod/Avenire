@@ -28,11 +28,6 @@ export interface UploadQueueItem {
   status: UploadStatus;
 }
 
-export interface ShareSuggestion {
-  email: string;
-  name: string | null;
-}
-
 export function formatBytes(bytes: number) {
   if (bytes < 1024) {
     return `${bytes} B`;
@@ -82,7 +77,15 @@ function getExtension(name: string) {
 export function detectPreviewKind(file: FileRecord) {
   const mime = file.mimeType?.toLowerCase() ?? "";
   const ext = getExtension(file.name);
-  const imageExt = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"]);
+  const imageExt = new Set([
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".avif",
+  ]);
   const videoExt = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
   const audioExt = new Set([".mp3", ".wav", ".ogg", ".aac", ".m4a", ".flac"]);
 

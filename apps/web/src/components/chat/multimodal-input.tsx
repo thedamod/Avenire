@@ -150,9 +150,7 @@ function PureMultimodalInput({
           throw new Error("Missing uploaded file metadata");
         }
 
-        const uploadedUrl =
-          ("ufsUrl" in uploaded && uploaded.ufsUrl) ||
-          ("url" in uploaded && uploaded.url);
+        const uploadedUrl = "ufsUrl" in uploaded ? uploaded.ufsUrl : undefined;
 
         if (!uploadedUrl) {
           throw new Error("Upload returned no URL");

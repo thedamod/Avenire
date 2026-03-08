@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { Toaster } from "@avenire/ui/components/sonner";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
 import { metadataBase } from "@/lib/page-metadata";
 import "./globals.css";
@@ -50,6 +51,7 @@ export default function RootLayout({
       >
         <ServiceWorkerRegistration />
         {children}
+        <Toaster closeButton richColors />
       </body>
     </html>
   );

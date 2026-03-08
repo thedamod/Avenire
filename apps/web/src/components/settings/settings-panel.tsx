@@ -35,7 +35,6 @@ import {
 type WorkspaceSummary = {
   workspaceId: string;
   organizationId: string;
-  ownerId?: string;
   rootFolderId: string;
   name: string;
 };
@@ -946,9 +945,7 @@ export function SettingsPanel({
                           const isSelf =
                             (currentUserId && (member.userId === currentUserId || member.id === currentUserId)) ||
                             (currentUserEmail && memberEmail === currentUserEmail);
-                          const isOwner =
-                            member.role === "owner" ||
-                            (selectedWorkspace?.ownerId ? member.userId === selectedWorkspace.ownerId : false);
+                          const isOwner = member.role === "owner";
                           const canRemove = Boolean(!isSelf && !isOwner);
 
                           return (

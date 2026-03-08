@@ -19,6 +19,19 @@ export function useFileSelection({ gridRef, itemRefs }: UseFileSelectionOptions)
     setSelectionAnchorId(null);
   }, []);
 
+  const toggleSelection = useCallback((itemId: string) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+    setSelectionAnchorId(itemId);
+  }, []);
+
   const setSelection = useCallback((itemIds: string[], anchorId?: string | null) => {
     setSelectedIds(new Set(itemIds));
     setSelectionAnchorId(anchorId ?? itemIds[0] ?? null);
@@ -31,7 +44,7 @@ export function useFileSelection({ gridRef, itemRefs }: UseFileSelectionOptions)
       }
 
       const target = event.target as HTMLElement;
-      if (target.closest("[data-item-card='true']")) {
+      if (target.closest("[data-select-item='true']")) {
         return;
       }
 
@@ -125,22 +138,13 @@ export function useFileSelection({ gridRef, itemRefs }: UseFileSelectionOptions)
       }
 
       if (isMultiToggle) {
-        setSelectedIds((previous) => {
-          const next = new Set(previous);
-          if (next.has(itemId)) {
-            next.delete(itemId);
-          } else {
-            next.add(itemId);
-          }
-          return next;
-        });
-        setSelectionAnchorId(itemId);
+        toggleSelection(itemId);
         return;
       }
 
       setSelection([itemId], itemId);
     },
-    [selectedIds, selectionAnchorId, setSelection],
+    [selectedIds, selectionAnchorId, setSelection, toggleSelection],
   );
 
   const prepareDrag = useCallback(
@@ -161,6 +165,7 @@ export function useFileSelection({ gridRef, itemRefs }: UseFileSelectionOptions)
     selectionRect,
     clearSelection,
     setSelection,
+    toggleSelection,
     startDragSelection,
     handleItemClick,
     prepareDrag,

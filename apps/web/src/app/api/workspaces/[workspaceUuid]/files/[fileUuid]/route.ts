@@ -37,7 +37,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Cannot move items into Shared Files" }, { status: 400 });
   }
 
-  const file = await updateFileAsset(workspaceUuid, fileUuid, {
+  const file = await updateFileAsset(workspaceUuid, fileUuid, user.id, {
     folderId: body.folderId,
     name: body.name,
   });
@@ -84,8 +84,8 @@ export async function DELETE(
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
-  const ok = await softDeleteFileAsset(workspaceUuid, fileUuid);
-  if (!ok) {
+  const deletedFile = await softDeleteFileAsset(workspaceUuid, fileUuid, user.id);
+  if (!deletedFile) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 

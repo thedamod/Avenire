@@ -95,7 +95,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
               Email
             </Label>
             <div className="relative">
-              <Mail className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
+              <Mail className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 id="email"
                 type="email"
@@ -142,7 +142,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
               </Button>
             </div>
             <div className="relative">
-              <Lock className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
+              <Lock className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 id="password"
                 type="password"
@@ -178,7 +178,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
         <div className="grid grid-cols-3 gap-4">
           <Button
             variant="outline"
-            className="w-full transition-all"
+            className="w-full justify-center transition-all"
             type="button"
             onClick={() => {
               signIn.social({
@@ -187,12 +187,14 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
               })
             }}
           >
-            <GoogleIcon />
+            <span className="inline-flex h-4 w-4 items-center justify-center">
+              <GoogleIcon />
+            </span>
             <span className="sr-only">Login with Google</span>
           </Button>
           <Button
             variant="outline"
-            className="w-full transition-all"
+            className="w-full justify-center transition-all"
             type="button"
             onClick={() => {
               signIn.social({
@@ -201,12 +203,14 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
               })
             }}
           >
-            <GithubIcon />
+            <span className="inline-flex h-4 w-4 items-center justify-center">
+              <GithubIcon />
+            </span>
             <span className="sr-only">Login with Github</span>
           </Button>
           <Button
             variant="outline"
-            className="w-full transition-all"
+            className="w-full justify-center transition-all"
             type="button"
             onClick={async () => {
               const data = await signIn.passkey()
@@ -219,7 +223,9 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
               }
             }}
           >
-            <PasskeyIcon />
+            <span className="inline-flex h-4 w-4 items-center justify-center">
+              <PasskeyIcon />
+            </span>
             <span className="sr-only">Login with Passkey</span>
           </Button>
         </div>

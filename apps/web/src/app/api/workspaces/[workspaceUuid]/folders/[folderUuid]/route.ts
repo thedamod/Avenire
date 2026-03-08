@@ -76,7 +76,7 @@ export async function PATCH(
   }
   const oldParentId = existing.folder.parentId;
 
-  const folder = await updateFolder(workspaceUuid, folderUuid, {
+  const folder = await updateFolder(workspaceUuid, folderUuid, user.id, {
     name: body.name,
     parentId: body.parentId,
   });
@@ -133,7 +133,10 @@ export async function DELETE(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  await softDeleteFolder(workspaceUuid, folderUuid);
+  const deletedFolder = await softDeleteFolder(workspaceUuid, folderUuid, user.id);
+  if (!deletedFolder) {
+    return NextResponse.json({ error: "Folder not found" }, { status: 404 });
+  }
   await publishFilesInvalidationEvent({
     workspaceUuid,
     folderId: folderUuid,

@@ -326,7 +326,7 @@ export function PreviewAttachment({
   };
 
   return (
-    <TooltipProvider>
+    <TooltipProvider delay={280}>
       <motion.div
         animate={{ opacity: 1, scale: 1 }}
         className="group relative max-w-sm"
