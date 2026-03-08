@@ -179,7 +179,12 @@ export async function POST(
           const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
           await utapi.deleteFiles(optimized.storageKey).catch(() => undefined);
         }
-        throw error;
+        void apiLogger.error("files.video_optimization.failed", {
+          workspaceUuid,
+          fileId: storedFile.id,
+          optimizedStorageKey: optimized.storageKey,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }

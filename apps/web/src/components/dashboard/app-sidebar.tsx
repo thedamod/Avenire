@@ -765,7 +765,7 @@ export function DashboardSidebar({
         clearTimeout(cleanupTimer);
       }
     };
-  }, [activeView, currentFileId, currentFolderId, expandedTreePaths]);
+  }, [activeView, currentFileId, currentFolderId]);
 
   useEffect(() => {
     if (activeView !== "files" || !workspaceUuid) {

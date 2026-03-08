@@ -10,6 +10,15 @@ import { isTrustedStorageUrl } from "@/lib/file-data";
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
 const FFMPEG_TIMEOUT_MS = 3 * 60_000;
+const DEFAULT_MAX_UPLOAD_BUFFER_BYTES = 500 * 1024 * 1024;
+const parsedMaxUploadBufferBytes = Number.parseInt(
+  process.env.VIDEO_OPTIMIZATION_MAX_UPLOAD_BUFFER_BYTES ?? "",
+  10
+);
+const MAX_UPLOAD_BUFFER_BYTES =
+  Number.isFinite(parsedMaxUploadBufferBytes) && parsedMaxUploadBufferBytes > 0
+    ? parsedMaxUploadBufferBytes
+    : DEFAULT_MAX_UPLOAD_BUFFER_BYTES;
 
 interface OptimizeAndReuploadVideoInput {
   sourceUrl: string;
@@ -267,6 +276,12 @@ export async function optimizeAndReuploadVideo(
 
     const optimizedStats = await stat(optimizedPath);
     const optimizedName = buildMp4Name(input.sourceName);
+    // UTFile upload is buffered in memory here, so oversized transcodes are rejected early.
+    if (optimizedStats.size > MAX_UPLOAD_BUFFER_BYTES) {
+      throw new Error(
+        `Optimized video exceeds upload buffer limit (${MAX_UPLOAD_BUFFER_BYTES} bytes)`
+      );
+    }
     const optimizedBytes = await readFile(optimizedPath);
 
     const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });

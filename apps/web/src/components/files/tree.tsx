@@ -136,9 +136,8 @@ export const FileTreeFolder = ({
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const target = event.target as HTMLElement;
       if (
-        event.currentTarget !== target ||
-        (target !== event.currentTarget &&
-          target.closest('button, [role="button"], [data-collapsible-trigger]'))
+        event.currentTarget !== target &&
+        target.closest('button, [role="button"], [data-collapsible-trigger]')
       ) {
         return;
       }
@@ -179,11 +178,10 @@ export const FileTreeFolder = ({
               const target = event.target as HTMLElement;
               event.stopPropagation();
               if (
-                event.currentTarget !== target ||
-                (target !== event.currentTarget &&
-                  target.closest(
-                    'button, [role="button"], [data-collapsible-trigger]'
-                  ))
+                event.currentTarget !== target &&
+                target.closest(
+                  'button, [role="button"], [data-collapsible-trigger]'
+                )
               ) {
                 return;
               }
@@ -222,7 +220,7 @@ export const FileTreeFolder = ({
             {isExpanded ? (
               <div
                 className="ml-4 border-l pl-2"
-                data-tree-children={isExpanded ? "open" : "closed"}
+                data-tree-children="open"
                 role="group"
               >
                 {children}

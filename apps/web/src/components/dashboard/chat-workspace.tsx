@@ -334,12 +334,17 @@ export function ChatWorkspace({
                     </Button>
                     <Button
                       disabled={!shareLink}
-                      onClick={() => {
+                      onClick={async () => {
                         if (!shareLink) {
                           return;
                         }
-                        void navigator.clipboard.writeText(shareLink);
-                        setShareStatus("Link copied.");
+                        try {
+                          await navigator.clipboard.writeText(shareLink);
+                          setShareStatus("Link copied.");
+                        } catch (error) {
+                          console.error("Failed to copy share link", error);
+                          setShareStatus("Failed to copy link");
+                        }
                       }}
                       size="sm"
                       type="button"
