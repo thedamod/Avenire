@@ -4,13 +4,13 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   text,
   timestamp,
   uniqueIndex,
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
 import { organization, user } from "./auth-schema";
 
 const resolveEmbeddingDimensions = (): number => {
@@ -25,19 +25,6 @@ const resolveEmbeddingDimensions = (): number => {
 };
 
 export const ingestionEmbeddingDimensions = resolveEmbeddingDimensions();
-
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  email: text("email").notNull().unique(),
-  name: text("name").notNull(),
-  emailVerified: boolean("email_verified").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
 
 export const chatThread = pgTable(
   "chat_thread",
@@ -86,36 +73,6 @@ export const chatMessage = pgTable(
   (table) => [
     index("chat_message_chat_id_idx").on(table.chatId),
     index("chat_message_chat_position_idx").on(table.chatId, table.position),
-  ]
-);
-
-export const chatArtifact = pgTable(
-  "chat_artifact",
-  {
-    id: text("id").primaryKey(),
-    chatId: text("chat_id")
-      .notNull()
-      .references(() => chatThread.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    sourceMessageId: text("source_message_id"),
-    toolName: text("tool_name").notNull(),
-    kind: text("kind").notNull(),
-    title: text("title").notNull(),
-    status: text("status").notNull().default("completed"),
-    content: jsonb("content")
-      .notNull()
-      .$type<Record<string, unknown>>()
-      .default({}),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  },
-  (table) => [
-    index("chat_artifact_chat_created_idx").on(table.chatId, table.createdAt),
-    index("chat_artifact_chat_kind_idx").on(table.chatId, table.kind),
-    index("chat_artifact_source_message_idx").on(table.sourceMessageId),
-    index("chat_artifact_user_id_idx").on(table.userId),
   ]
 );
 
@@ -218,6 +175,35 @@ export const fileAsset = pgTable(
   ]
 );
 
+export const noteContent = pgTable(
+  "note_content",
+  {
+    fileId: uuid("file_id")
+      .primaryKey()
+      .references(() => fileAsset.id, { onDelete: "cascade" }),
+    content: text("content").notNull().default(""),
+    needsReindex: boolean("needs_reindex").notNull().default(false),
+    lastIndexedAt: timestamp("last_indexed_at", { withTimezone: true }),
+    updatedBy: text("updated_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("note_content_needs_reindex_idx").on(table.needsReindex)]
+);
+
+export const maintenanceLock = pgTable(
+  "maintenance_lock",
+  {
+    name: text("name").primaryKey(),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+  },
+  (table) => [index("maintenance_lock_heartbeat_idx").on(table.heartbeatAt)]
+);
+
 export const resourceShareGrant = pgTable(
   "resource_share_grant",
   {
@@ -270,6 +256,204 @@ export const resourceShareLink = pgTable(
     index("resource_share_link_resource_idx").on(
       table.resourceType,
       table.resourceId
+    ),
+  ]
+);
+
+export const flashcardSet = pgTable(
+  "flashcard_set",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description"),
+    sourceType: text("source_type").notNull().default("manual"),
+    sourceChatSlug: text("source_chat_slug"),
+    tags: jsonb("tags").notNull().$type<string[]>().default([]),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    updatedBy: text("updated_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("flashcard_set_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt
+    ),
+    index("flashcard_set_workspace_archived_idx").on(
+      table.workspaceId,
+      table.archivedAt
+    ),
+  ]
+);
+
+export const flashcardCard = pgTable(
+  "flashcard_card",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    setId: uuid("set_id")
+      .notNull()
+      .references(() => flashcardSet.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    kind: text("kind").notNull().default("flashcard"),
+    frontMarkdown: text("front_markdown").notNull(),
+    backMarkdown: text("back_markdown").notNull(),
+    notesMarkdown: text("notes_markdown"),
+    payload: jsonb("payload")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    tags: jsonb("tags").notNull().$type<string[]>().default([]),
+    source: jsonb("source")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    updatedBy: text("updated_by").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("flashcard_card_set_ordinal_uidx").on(
+      table.setId,
+      table.ordinal
+    ),
+    index("flashcard_card_set_archived_ordinal_idx").on(
+      table.setId,
+      table.archivedAt,
+      table.ordinal
+    ),
+  ]
+);
+
+export const flashcardSetEnrollment = pgTable(
+  "flashcard_set_enrollment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    setId: uuid("set_id")
+      .notNull()
+      .references(() => flashcardSet.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    newCardsPerDay: integer("new_cards_per_day").notNull().default(20),
+    lastStudiedAt: timestamp("last_studied_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("flashcard_set_enrollment_set_user_uidx").on(
+      table.setId,
+      table.userId
+    ),
+    index("flashcard_set_enrollment_user_status_idx").on(
+      table.userId,
+      table.status
+    ),
+  ]
+);
+
+export const flashcardReviewState = pgTable(
+  "flashcard_review_state",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    flashcardId: uuid("flashcard_id")
+      .notNull()
+      .references(() => flashcardCard.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    state: text("state").notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    lastReviewedAt: timestamp("last_reviewed_at", { withTimezone: true }),
+    stability: real("stability"),
+    difficulty: real("difficulty"),
+    elapsedDays: integer("elapsed_days").notNull().default(0),
+    scheduledDays: integer("scheduled_days").notNull().default(0),
+    reps: integer("reps").notNull().default(0),
+    lapses: integer("lapses").notNull().default(0),
+    lastRating: text("last_rating"),
+    schedulerVersion: integer("scheduler_version").notNull().default(1),
+    suspended: boolean("suspended").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("flashcard_review_state_card_user_uidx").on(
+      table.flashcardId,
+      table.userId
+    ),
+    index("flashcard_review_state_user_due_idx").on(table.userId, table.dueAt),
+    index("flashcard_review_state_user_suspended_due_idx").on(
+      table.userId,
+      table.suspended,
+      table.dueAt
+    ),
+  ]
+);
+
+export const flashcardReviewLog = pgTable(
+  "flashcard_review_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    flashcardId: uuid("flashcard_id")
+      .notNull()
+      .references(() => flashcardCard.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    rating: text("rating").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+    previousState: text("previous_state"),
+    nextState: text("next_state").notNull(),
+    previousStability: real("previous_stability"),
+    nextStability: real("next_stability"),
+    previousDifficulty: real("previous_difficulty"),
+    nextDifficulty: real("next_difficulty"),
+    elapsedDays: integer("elapsed_days").notNull().default(0),
+    scheduledDays: integer("scheduled_days").notNull().default(0),
+    metadata: jsonb("metadata")
+      .notNull()
+      .$type<Record<string, unknown>>()
+      .default({}),
+  },
+  (table) => [
+    index("flashcard_review_log_user_reviewed_idx").on(
+      table.userId,
+      table.reviewedAt
+    ),
+    index("flashcard_review_log_card_reviewed_idx").on(
+      table.flashcardId,
+      table.reviewedAt
     ),
   ]
 );

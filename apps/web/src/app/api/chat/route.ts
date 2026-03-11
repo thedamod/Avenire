@@ -1,21 +1,22 @@
+import { createHash, randomUUID } from "node:crypto";
 import {
-  createUIMessageStream,
-  createUIMessageStreamResponse,
-  type ApolloModelName,
   APOLLO_PROMPT,
+  type ApolloModelName,
   apollo,
   convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
   generateText,
   smoothStream,
   stepCountIs,
   streamText,
 } from "@avenire/ai";
-import type { UIMessage } from "@avenire/ai/message-types";
+import type { AgentActivityData, UIMessage } from "@avenire/ai/message-types";
 import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
-import { NextResponse, after } from "next/server";
-import { createHash, randomUUID } from "node:crypto";
+import { after, NextResponse } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
+import { consumeChatUnits } from "@/lib/billing";
 import {
   createChatForUser,
   deleteChatForUser,
@@ -24,7 +25,7 @@ import {
   saveMessagesForChatSlug,
   updateChatForUser,
 } from "@/lib/chat-data";
-import { consumeChatUnits } from "@/lib/billing";
+import { createChatTools } from "@/lib/chat-tools";
 import { resolveWorkspaceForUser } from "@/lib/file-data";
 import { normalizeMediaType } from "@/lib/media-type";
 import { createApiLogger } from "@/lib/observability";
@@ -39,6 +40,23 @@ import {
 const DEFAULT_CHAT_TITLE = "New Chat";
 const LOG_PREFIX = "[api/chat]";
 const DEFAULT_CHAT_TOKENS_PER_CREDIT = 4000;
+const DEFAULT_CHAT_TITLE_MODEL: ApolloModelName = "apollo-sprint";
+const MODEL_TOOL_ALLOW_LIST = new Set([
+  "apollo_agent",
+  "file_manager_agent",
+  "create_note",
+  "update_note",
+  "read_note",
+  "read_workspace_file",
+  "list_files",
+  "get_file_summary",
+  "move_file",
+  "delete_file",
+  "generate_flashcards",
+  "render_graph",
+  "get_due_cards",
+  "quiz_me",
+]);
 
 function logInfo(message: string, meta?: Record<string, unknown>) {
   if (meta) {
@@ -78,14 +96,67 @@ function sanitizeChatName(value: string) {
 }
 
 function fallbackChatNameFromText(value: string) {
-  const normalized = sanitizeChatName(
-    value
-      .split(/\s+/)
-      .slice(0, 6)
-      .join(" ")
-  );
+  const normalized = sanitizeChatName(value.split(/\s+/).slice(0, 6).join(" "));
 
   return normalized.length > 0 ? normalized : DEFAULT_CHAT_TITLE;
+}
+
+function resolveChatTitleModel(): ApolloModelName {
+  const raw = process.env.CHAT_TITLE_MODEL?.trim();
+  if (!raw) {
+    return DEFAULT_CHAT_TITLE_MODEL;
+  }
+
+  const allowed = new Set<ApolloModelName>([
+    "apollo-sprint",
+    "apollo-core",
+    "apollo-apex",
+    "apollo-agent",
+    "apollo-tiny",
+    "apollo-core",
+    "apollo-agent",
+  ]);
+
+  if (allowed.has(raw as ApolloModelName)) {
+    return raw as ApolloModelName;
+  }
+
+  return DEFAULT_CHAT_TITLE_MODEL;
+}
+
+function stripNonHttpFileParts(messages: UIMessage[]) {
+  let changed = false;
+
+  const nextMessages = messages.map((message) => {
+    const nextParts = message.parts.flatMap((part): typeof message.parts => {
+      if (part.type !== "file") {
+        return [part];
+      }
+
+      const url =
+        typeof (part as { url?: unknown }).url === "string"
+          ? ((part as { url: string }).url ?? "").trim()
+          : "";
+
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        return [part];
+      }
+
+      changed = true;
+      return [];
+    });
+
+    if (!changed) {
+      return message;
+    }
+
+    return {
+      ...message,
+      parts: nextParts,
+    };
+  });
+
+  return changed ? nextMessages : messages;
 }
 
 function extractLatestUserText(messages: UIMessage[]) {
@@ -100,7 +171,10 @@ function extractLatestUserText(messages: UIMessage[]) {
   return textPart?.type === "text" ? textPart.text.trim() : "";
 }
 
-async function generateChatName(messages: UIMessage[], abortSignal?: AbortSignal) {
+async function generateChatName(
+  messages: UIMessage[],
+  abortSignal?: AbortSignal
+) {
   const latestUserText = extractLatestUserText(messages);
   if (!latestUserText) {
     logInfo("Skipping chat title generation: latest user text missing");
@@ -108,18 +182,20 @@ async function generateChatName(messages: UIMessage[], abortSignal?: AbortSignal
   }
 
   try {
+    const modelName = resolveChatTitleModel();
     logInfo("Generating chat title", {
-      model: apollo.languageModel("apollo-sprint"),
+      model: apollo.languageModel(modelName),
       sourceLength: latestUserText.length,
     });
 
     const { text } = await generateText({
-      model: apollo.languageModel("apollo-sprint"),
+      model: apollo.languageModel(modelName),
       prompt: [
         "Generate a concise, descriptive chat title based only on the user's request.",
         "Use 4-8 words when possible.",
         "Avoid generic labels and single-word replies.",
-        "No quotes. No punctuation at the end. Return only the title text.",
+        "No quotes. No punctuation at the end.",
+        "Return ONLY the title text. No labels, no extra sentences, and no questions.",
         `User message: ${latestUserText}`,
       ].join("\n"),
       maxOutputTokens: 32,
@@ -127,10 +203,22 @@ async function generateChatName(messages: UIMessage[], abortSignal?: AbortSignal
       abortSignal,
     });
 
+    if (!text || text.trim().length === 0) {
+      const fallback = fallbackChatNameFromText(latestUserText);
+      logInfo("Generated chat title result", {
+        raw: text ?? "",
+        normalized: "",
+        accepted: false,
+        fallback,
+      });
+      return fallback;
+    }
+
     const normalized = sanitizeChatName(text);
     const fallback = fallbackChatNameFromText(latestUserText);
     const accepted =
-      normalized.length >= 8 || latestUserText.trim().length <= normalized.length + 4;
+      normalized.length >= 8 ||
+      latestUserText.trim().length <= normalized.length + 4;
     logInfo("Generated chat title result", {
       raw: text,
       normalized,
@@ -151,7 +239,10 @@ async function generateChatName(messages: UIMessage[], abortSignal?: AbortSignal
 
 function extractMessageText(message: UIMessage) {
   return message.parts
-    .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+    .filter(
+      (part): part is Extract<typeof part, { type: "text" }> =>
+        part.type === "text"
+    )
     .map((part) => part.text)
     .join("\n")
     .trim();
@@ -159,7 +250,7 @@ function extractMessageText(message: UIMessage) {
 
 function resolveChatContextMaxChars() {
   const parsed = Number.parseInt(process.env.CHAT_CONTEXT_MAX_CHARS ?? "", 10);
-  if (!Number.isFinite(parsed) || parsed < 2_000) {
+  if (!Number.isFinite(parsed) || parsed < 2000) {
     return 24_000;
   }
   return parsed;
@@ -188,6 +279,12 @@ function trimMessagesForModelContext(messages: UIMessage[]) {
   }
 
   return out.reverse();
+}
+
+function pickModelTools<T extends Record<string, unknown>>(tools: T) {
+  return Object.fromEntries(
+    Object.entries(tools).filter(([name]) => MODEL_TOOL_ALLOW_LIST.has(name))
+  ) as T;
 }
 
 function normalizeMessageFileMediaTypes(messages: UIMessage[]) {
@@ -377,31 +474,6 @@ function getPersistedMessages(input: {
   ];
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function inferArtifactKind(toolName: string, output: Record<string, unknown>) {
-  if (typeof output.kind === "string" && output.kind.length > 0) {
-    return output.kind;
-  }
-  if (toolName.includes("flashcard")) return "flashcards";
-  if (toolName.includes("quiz")) return "quiz";
-  if (toolName.includes("plot")) return "matplotlib";
-  if (toolName.includes("graph")) return "desmos";
-  return "artifact";
-}
-
-function inferArtifactTitle(kind: string, output: Record<string, unknown>) {
-  if (typeof output.title === "string" && output.title.trim().length > 0) {
-    return output.title.trim();
-  }
-  if (typeof output.topic === "string" && output.topic.trim().length > 0) {
-    return `${kind}: ${output.topic.trim()}`;
-  }
-  return kind.slice(0, 1).toUpperCase() + kind.slice(1);
-}
-
 export async function POST(request: Request) {
   const session = await auth.api.getSession({ headers: await headers() });
   const apiLogger = createApiLogger({
@@ -421,15 +493,18 @@ export async function POST(request: Request) {
     }
 
     const activeOrganizationId =
-      (session as { session?: { activeOrganizationId?: string | null } }).session
-        ?.activeOrganizationId ?? null;
+      (session as { session?: { activeOrganizationId?: string | null } })
+        .session?.activeOrganizationId ?? null;
     const workspace = await resolveWorkspaceForUser(
       session.user.id,
       activeOrganizationId
     );
     if (!workspace) {
       void apiLogger.requestFailed(404, "Workspace not found");
-      return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Workspace not found" },
+        { status: 404 }
+      );
     }
 
     const body = (await request.json().catch(() => ({}))) as {
@@ -446,8 +521,11 @@ export async function POST(request: Request) {
       void apiLogger.requestFailed(400, "Missing chatId");
       return NextResponse.json({ error: "Missing chatId" }, { status: 400 });
     }
+    const idempotencyHeader = request.headers.get("idempotency-key")?.trim();
 
-    const originalMessages = normalizeMessageFileMediaTypes(body.messages ?? []);
+    const originalMessages = stripNonHttpFileParts(
+      normalizeMessageFileMediaTypes(body.messages ?? [])
+    );
     const modelContextMessages = trimMessagesForModelContext(originalMessages);
     logInfo("Incoming chat request", {
       chatId: body.chatId ?? null,
@@ -457,11 +535,53 @@ export async function POST(request: Request) {
       modelContextCount: modelContextMessages.length,
     });
 
-    type ExistingChat = NonNullable<Awaited<ReturnType<typeof getChatBySlugForUser>>>;
+    type ExistingChat = NonNullable<
+      Awaited<ReturnType<typeof getChatBySlugForUser>>
+    >;
     type CreatedChat = Awaited<ReturnType<typeof createChatForUser>>;
     let chat: ExistingChat | CreatedChat | null = null;
     let chatCreatedFromNew = false;
     if (chatSlug === "new") {
+      if (idempotencyHeader) {
+        idempotencyRedisKey = buildChatIdempotencyRedisKey({
+          userId: session.user.id,
+          workspaceId: workspace.workspaceId,
+          chatSlug,
+          idempotencyKey: idempotencyHeader,
+        });
+
+        const state = await getIdempotencyState(idempotencyRedisKey);
+        if (state) {
+          void apiLogger.requestFailed(409, "Duplicate request", {
+            chatId: chatSlug,
+            idempotencyKey: idempotencyHeader,
+          });
+          return NextResponse.json(
+            {
+              error: "Duplicate request",
+              chatId: chatSlug,
+            },
+            { status: 409 }
+          );
+        }
+
+        idempotencyLockAcquired =
+          await tryAcquireIdempotencyLock(idempotencyRedisKey);
+        if (!idempotencyLockAcquired) {
+          void apiLogger.requestFailed(409, "Request in progress", {
+            chatId: chatSlug,
+            idempotencyKey: idempotencyHeader,
+          });
+          return NextResponse.json(
+            {
+              error: "Request already in progress",
+              chatId: chatSlug,
+            },
+            { status: 409 }
+          );
+        }
+      }
+
       const createdChat = await createChatForUser(
         session.user.id,
         workspace.workspaceId,
@@ -478,14 +598,22 @@ export async function POST(request: Request) {
       );
 
       if (!chat) {
-        void apiLogger.requestFailed(404, "Chat not found", { chatId: chatSlug });
+        void apiLogger.requestFailed(404, "Chat not found", {
+          chatId: chatSlug,
+        });
         return NextResponse.json({ error: "Chat not found" }, { status: 404 });
       }
       if (
         Boolean(chat.readOnly) ||
-        !(await isChatOwnerForUser(session.user.id, chatSlug, workspace.workspaceId))
+        !(await isChatOwnerForUser(
+          session.user.id,
+          chatSlug,
+          workspace.workspaceId
+        ))
       ) {
-        void apiLogger.requestFailed(403, "Read-only chat", { chatId: chatSlug });
+        void apiLogger.requestFailed(403, "Read-only chat", {
+          chatId: chatSlug,
+        });
         return NextResponse.json({ error: "Read-only chat" }, { status: 403 });
       }
     }
@@ -499,8 +627,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const idempotencyHeader = request.headers.get("idempotency-key")?.trim();
-    if (idempotencyHeader) {
+    if (idempotencyHeader && !idempotencyRedisKey) {
       idempotencyRedisKey = buildChatIdempotencyRedisKey({
         userId: session.user.id,
         workspaceId: workspace.workspaceId,
@@ -523,9 +650,8 @@ export async function POST(request: Request) {
         );
       }
 
-      idempotencyLockAcquired = await tryAcquireIdempotencyLock(
-        idempotencyRedisKey
-      );
+      idempotencyLockAcquired =
+        await tryAcquireIdempotencyLock(idempotencyRedisKey);
       if (!idempotencyLockAcquired) {
         void apiLogger.requestFailed(409, "Request in progress", {
           chatId: chatSlug,
@@ -557,243 +683,291 @@ export async function POST(request: Request) {
       );
     }
 
+    const streamId = randomUUID();
     const previousStreamId = await getActiveStreamId(chatSlug);
     if (previousStreamId) {
       await clearActiveStreamId(chatSlug, previousStreamId);
     }
 
-  const stream = createUIMessageStream<UIMessage>({
-    execute: async ({ writer }) => {
-      if (chatCreatedFromNew) {
-        writer.write({
-          type: "data-chatCreated",
-          transient: true,
-          data: {
-            fromId: body.chatId?.trim() ?? "new",
-            id: chatSlug,
-            title: chat.title,
-          },
-        });
-      }
-
-      if (shouldGenerateTitle(chat.title, originalMessages)) {
-        const nextName = await generateChatName(originalMessages, request.signal);
-        if (nextName) {
-          logInfo("Streaming generated chat title event", {
-            chatId: chatSlug,
-            nameLength: nextName.length,
-          });
+    const stream = createUIMessageStream<UIMessage>({
+      execute: async ({ writer }) => {
+        if (chatCreatedFromNew) {
           writer.write({
-            type: "data-chatName",
+            type: "data-chatCreated",
             transient: true,
             data: {
+              fromId: body.chatId?.trim() ?? "new",
               id: chatSlug,
-              name: nextName,
+              title: chat.title,
             },
           });
-
-          await updateChatForUser(session.user.id, chatSlug, {
-            title: nextName,
-          }, workspace.workspaceId);
-          logInfo("Persisted generated chat title", {
-            chatId: chatSlug,
-            name: nextName,
-          });
         }
-      }
 
-      logInfo("Starting model stream", {
-        chatId: chatSlug,
-        model:
-          body.selectedModel ??
-          body.selectedReasoningModel ??
-          "apollo-core",
-      });
+        if (shouldGenerateTitle(chat.title, originalMessages)) {
+          const nextName = await generateChatName(
+            originalMessages,
+            request.signal
+          );
+          if (nextName) {
+            logInfo("Streaming generated chat title event", {
+              chatId: chatSlug,
+              nameLength: nextName.length,
+            });
+            writer.write({
+              type: "data-chatName",
+              transient: true,
+              data: {
+                id: chatSlug,
+                name: nextName,
+              },
+            });
 
-      let result: ReturnType<typeof streamText<any, any>>;
-      const mergedContext = [body.context?.trim()]
-        .filter((value) => Boolean(value))
-        .join("\n\n");
+            await updateChatForUser(
+              session.user.id,
+              chatSlug,
+              {
+                title: nextName,
+              },
+              workspace.workspaceId
+            );
+            logInfo("Persisted generated chat title", {
+              chatId: chatSlug,
+              name: nextName,
+            });
+          }
+        }
 
-      try {
-        result = streamText({
-          model: apollo.languageModel(
-            body.selectedModel ?? body.selectedReasoningModel ?? "apollo-core",
-          ),
-          system: APOLLO_PROMPT(
-            body.userName ?? session.user.name ?? undefined,
-            mergedContext || undefined,
-          ),
-          messages: await convertToModelMessages(modelContextMessages),
-          stopWhen: stepCountIs(5),
-          abortSignal: request.signal,
-          experimental_transform: smoothStream({ chunking: "word" }),
-          onChunk: async ({ chunk }) => {
-            try {
-            } catch (error) {
-            }
-          },
-        });
-      } catch (error) {
-        await clearActiveStreamId(chatSlug, streamId);
-        logError("Failed to start model stream", {
+        logInfo("Starting model stream", {
           chatId: chatSlug,
           model:
-            body.selectedModel ??
-            body.selectedReasoningModel ??
-            "apollo-core",
-          error,
+            body.selectedModel ?? body.selectedReasoningModel ?? "apollo-apex",
         });
-        void apiLogger.requestFailed(500, error, { chatId: chatSlug });
-        throw error;
-      }
 
-      writer.merge(
-        result.toUIMessageStream({
-          originalMessages,
-          generateMessageId: randomUUID,
-          onFinish: async ({ messages, responseMessage, isContinuation }) => {
-            try {
-              const persistedMessages = getPersistedMessages({
-                originalMessages,
-                streamedMessages: messages as unknown as UIMessage[],
-                responseMessage: responseMessage as unknown as UIMessage,
-                isContinuation,
-              });
-              const activeStreamId = await getActiveStreamId(chatSlug);
-              if (activeStreamId !== streamId) {
-                logInfo("Skipped persisting stale stream messages", {
-                  chatId: chatSlug,
-                  messageCount: messages.length,
-                  streamId,
-                  activeStreamId,
-                });
-                return;
-              }
-              logInfo("Model stream finished", {
-                chatId: chatSlug,
-                messageCount: persistedMessages.length,
-              });
-              await saveMessagesForChatSlug(
-                session.user.id,
-                chatSlug,
-                persistedMessages,
-                workspace.workspaceId,
-              );
-              logInfo("Persisted streamed messages", {
-                chatId: chatSlug,
-                messageCount: persistedMessages.length,
-              });
+        let result: ReturnType<typeof streamText<any, any>>;
+        const mergedContext = [body.context?.trim()]
+          .filter((value) => Boolean(value))
+          .join("\n\n");
+        const agentActivityId = randomUUID();
+        const emitAgentActivity = (data: AgentActivityData) => {
+          writer.write({
+            type: "data-agent_activity",
+            id: data.id,
+            data,
+            transient: true,
+          });
+        };
+        const tools = createChatTools({
+          chatSlug,
+          agentActivityId,
+          emitAgentActivity,
+          rootFolderId: workspace.rootFolderId,
+          userId: session.user.id,
+          workspaceId: workspace.workspaceId,
+        });
+        const modelTools = pickModelTools(tools);
 
+        try {
+          result = streamText({
+            model: apollo.languageModel(
+              body.selectedModel ?? body.selectedReasoningModel ?? "apollo-apex"
+            ),
+            system: APOLLO_PROMPT(
+              body.userName ?? session.user.name ?? undefined,
+              mergedContext || undefined
+            ),
+            providerOptions: {
+              baseten: {
+                reasoning: true, // This enables the extraction of thinking tokens
+              },
+            },
+            messages: await convertToModelMessages(modelContextMessages, {
+              tools,
+            }),
+            stopWhen: stepCountIs(8),
+            tools: modelTools,
+            abortSignal: request.signal,
+            experimental_transform: smoothStream({ chunking: "word" }),
+            onChunk: async ({ chunk }) => {
               try {
-                const totalUsage = await result.totalUsage;
-                const totalTokens = resolveTotalTokens(totalUsage);
-                const requiredCredits = getRequiredChatCredits(totalTokens);
-                const additionalCredits = Math.max(0, requiredCredits - 1);
-                const modelName =
-                  body.selectedModel ??
-                  body.selectedReasoningModel ??
-                  "apollo-core";
-
-                if (additionalCredits > 0) {
-                  const meteredUsage = await consumeChatUnits(
-                    session.user.id,
-                    additionalCredits,
-                  );
-                  if (!meteredUsage.ok) {
-                    logInfo("Chat usage over-limit after stream completion", {
-                      chatId: chatSlug,
-                      totalTokens,
-                      requiredCredits,
-                      additionalCredits,
-                    });
-                  }
+                if (chunk.type === "tool-call") {
+                  logInfo("Streaming tool call chunk", {
+                    chatId: chatSlug,
+                    toolCallId: chunk.toolCallId,
+                    toolName: chunk.toolName,
+                  });
                 }
 
-                logInfo("Applied token-based chat usage", {
-                  chatId: chatSlug,
-                  totalTokens,
-                  requiredCredits,
-                  additionalCredits,
+                if (chunk.type === "tool-result") {
+                  logInfo("Streaming tool result chunk", {
+                    chatId: chatSlug,
+                    toolCallId: chunk.toolCallId,
+                    toolName: chunk.toolName,
+                  });
+                }
+              } catch (error) {}
+            },
+          });
+        } catch (error) {
+          await clearActiveStreamId(chatSlug, streamId);
+          logError("Failed to start model stream", {
+            chatId: chatSlug,
+            model:
+              body.selectedModel ??
+              body.selectedReasoningModel ??
+              "apollo-apex",
+            error,
+          });
+          void apiLogger.requestFailed(500, error, { chatId: chatSlug });
+          throw error;
+        }
+
+        writer.merge(
+          result.toUIMessageStream({
+            originalMessages,
+            generateMessageId: randomUUID,
+            onFinish: async ({ messages, responseMessage, isContinuation }) => {
+              try {
+                const persistedMessages = getPersistedMessages({
+                  originalMessages,
+                  streamedMessages: messages as unknown as UIMessage[],
+                  responseMessage: responseMessage as unknown as UIMessage,
+                  isContinuation,
                 });
-                void apiLogger.meter("meter.chat.tokens", {
+                const activeStreamId = await getActiveStreamId(chatSlug);
+                if (activeStreamId !== streamId) {
+                  logInfo("Skipped persisting stale stream messages", {
+                    chatId: chatSlug,
+                    messageCount: messages.length,
+                    streamId,
+                    activeStreamId,
+                  });
+                  return;
+                }
+                logInfo("Model stream finished", {
                   chatId: chatSlug,
-                  model: modelName,
-                  inputTokens: totalUsage.inputTokens ?? null,
-                  outputTokens: totalUsage.outputTokens ?? null,
-                  totalTokens,
-                  creditsCharged: requiredCredits,
-                });
-                void apiLogger.meter("meter.chat.request", {
-                  chatId: chatSlug,
-                  model: modelName,
                   messageCount: persistedMessages.length,
                 });
-                void apiLogger.featureUsed("chat", {
+                await saveMessagesForChatSlug(
+                  session.user.id,
+                  chatSlug,
+                  persistedMessages,
+                  workspace.workspaceId
+                );
+                logInfo("Persisted streamed messages", {
                   chatId: chatSlug,
-                  model: modelName,
+                  messageCount: persistedMessages.length,
                 });
-              } catch (usageError) {
-                logError("Failed to apply token-based chat usage", {
+
+                try {
+                  const totalUsage = await result.totalUsage;
+                  const totalTokens = resolveTotalTokens(totalUsage);
+                  const requiredCredits = getRequiredChatCredits(totalTokens);
+                  const additionalCredits = Math.max(0, requiredCredits - 1);
+                  const modelName =
+                    body.selectedModel ??
+                    body.selectedReasoningModel ??
+                    "apollo-apex";
+
+                  if (additionalCredits > 0) {
+                    const meteredUsage = await consumeChatUnits(
+                      session.user.id,
+                      additionalCredits
+                    );
+                    if (!meteredUsage.ok) {
+                      logInfo("Chat usage over-limit after stream completion", {
+                        chatId: chatSlug,
+                        totalTokens,
+                        requiredCredits,
+                        additionalCredits,
+                      });
+                    }
+                  }
+
+                  logInfo("Applied token-based chat usage", {
+                    chatId: chatSlug,
+                    totalTokens,
+                    requiredCredits,
+                    additionalCredits,
+                  });
+                  void apiLogger.meter("meter.chat.tokens", {
+                    chatId: chatSlug,
+                    model: modelName,
+                    inputTokens: totalUsage.inputTokens ?? null,
+                    outputTokens: totalUsage.outputTokens ?? null,
+                    totalTokens,
+                    creditsCharged: requiredCredits,
+                  });
+                  void apiLogger.meter("meter.chat.request", {
+                    chatId: chatSlug,
+                    model: modelName,
+                    messageCount: persistedMessages.length,
+                  });
+                  void apiLogger.featureUsed("chat", {
+                    chatId: chatSlug,
+                    model: modelName,
+                  });
+                } catch (usageError) {
+                  logError("Failed to apply token-based chat usage", {
+                    chatId: chatSlug,
+                    error: usageError,
+                  });
+                }
+              } catch (error) {
+                logError("Failed to persist streamed chat messages", {
                   chatId: chatSlug,
-                  error: usageError,
+                  error,
                 });
+              } finally {
+                await clearActiveStreamId(chatSlug, streamId);
+                if (idempotencyRedisKey && idempotencyLockAcquired) {
+                  await markIdempotencyDone(idempotencyRedisKey, chatSlug);
+                }
+                logInfo("Cleared active stream id", { chatId: chatSlug });
               }
-            } catch (error) {
-              logError("Failed to persist streamed chat messages", {
-                chatId: chatSlug,
-                error,
-              });
-            } finally {
-              await clearActiveStreamId(chatSlug, streamId);
-              if (idempotencyRedisKey && idempotencyLockAcquired) {
-                await markIdempotencyDone(idempotencyRedisKey, chatSlug);
-              }
-              logInfo("Cleared active stream id", { chatId: chatSlug });
-            }
-          },
-        }),
-      );
-    },
-  });
-
-  const baseResponse = createUIMessageStreamResponse({ stream });
-  if (!baseResponse.body) {
-    return baseResponse;
-  }
-
-  const [clientBody, resumableBody] = baseResponse.body.tee();
-  const resumableTextStream = resumableBody.pipeThrough(
-    new TextDecoderStream(),
-  );
-
-  try {
-    const streamContext = createResumableStreamContext({
-      waitUntil: after,
-      publisher: await getRedisClient(),
-      subscriber: await getRedisSubscriber(),
+            },
+          })
+        );
+      },
     });
 
-      await streamContext.createNewResumableStream(
-        streamId,
-        () => resumableTextStream,
-      );
-      await setActiveStreamId(chatSlug, streamId);
-    } catch (error) {
-      logError("Failed to create resumable chat stream", {
-        chatSlug,
-        streamId,
-        error: formatError(error),
-      });
+    const baseResponse = createUIMessageStreamResponse({ stream });
+    if (!baseResponse.body) {
+      return baseResponse;
     }
-  })();
 
-	  void apiLogger.requestSucceeded(200, {
-	    chatId: chatSlug,
-    selectedModel:
-      body.selectedModel ?? body.selectedReasoningModel ?? "apollo-core",
-	    messageCount: originalMessages.length,
-	  });
+    const [clientBody, resumableBody] = baseResponse.body.tee();
+    const resumableTextStream = resumableBody.pipeThrough(
+      new TextDecoderStream()
+    );
+
+    void (async () => {
+      try {
+        const streamContext = createResumableStreamContext({
+          waitUntil: after,
+          publisher: await getRedisClient(),
+          subscriber: await getRedisSubscriber(),
+        });
+
+        await streamContext.createNewResumableStream(
+          streamId,
+          () => resumableTextStream
+        );
+        await setActiveStreamId(chatSlug, streamId);
+      } catch (error) {
+        logError("Failed to create resumable chat stream", {
+          chatSlug,
+          streamId,
+          error: formatError(error),
+        });
+      }
+    })();
+
+    void apiLogger.requestSucceeded(200, {
+      chatId: chatSlug,
+      selectedModel:
+        body.selectedModel ?? body.selectedReasoningModel ?? "apollo-apex",
+      messageCount: originalMessages.length,
+    });
 
     if (idempotencyRedisKey && idempotencyLockAcquired) {
       request.signal.addEventListener(
@@ -805,8 +979,8 @@ export async function POST(request: Request) {
       );
     }
 
-	    return new Response(clientBody, {
-	      status: baseResponse.status,
+    return new Response(clientBody, {
+      status: baseResponse.status,
       statusText: baseResponse.statusText,
       headers: baseResponse.headers,
     });
@@ -816,7 +990,10 @@ export async function POST(request: Request) {
       await clearIdempotencyKey(idempotencyRedisKey);
     }
     void apiLogger.requestFailed(500, error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }
 
@@ -845,18 +1022,25 @@ export async function DELETE(request: Request) {
     }
 
     const activeOrganizationId =
-      (session as { session?: { activeOrganizationId?: string | null } }).session
-        ?.activeOrganizationId ?? null;
+      (session as { session?: { activeOrganizationId?: string | null } })
+        .session?.activeOrganizationId ?? null;
     const workspace = await resolveWorkspaceForUser(
       session.user.id,
       activeOrganizationId
     );
     if (!workspace) {
       void apiLogger.requestFailed(404, "Workspace not found");
-      return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Workspace not found" },
+        { status: 404 }
+      );
     }
 
-    const deleted = await deleteChatForUser(session.user.id, id, workspace.workspaceId);
+    const deleted = await deleteChatForUser(
+      session.user.id,
+      id,
+      workspace.workspaceId
+    );
     if (!deleted) {
       void apiLogger.requestFailed(404, "Chat not found", { chatId: id });
       return NextResponse.json({ error: "Chat not found" }, { status: 404 });
@@ -873,6 +1057,9 @@ export async function DELETE(request: Request) {
   } catch (error) {
     logError("Unhandled chat DELETE error", { error: formatError(error) });
     void apiLogger.requestFailed(500, error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
   }
 }

@@ -11,9 +11,7 @@ export const Overview = () => {
       transition={{ duration: 0.18, ease: "easeOut" }}
     >
       <div className="mx-auto max-w-xl rounded-xl border border-border/70 bg-card px-5 py-4 text-center">
-        <p className="font-medium text-foreground text-sm">
-          Ask about your workspace
-        </p>
+        <p className="font-medium text-foreground text-sm">Hey There!</p>
         <p className="mt-1 text-muted-foreground text-sm">
           Search across uploaded material, attach files, or type{" "}
           <span className="font-medium text-foreground">@</span> to cite a

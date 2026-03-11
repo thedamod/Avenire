@@ -6,8 +6,6 @@ import {
   organization as organizationTable,
   passkey as passkeyTable,
   session,
-  team,
-  teamMember,
   user,
   verification,
 } from "@avenire/database/auth-schema";
@@ -49,8 +47,6 @@ const generatedBetterAuthSchema = {
   organization: organizationTable,
   member,
   invitation,
-  team,
-  teamMember,
   passkey: passkeyTable,
 };
 
@@ -155,11 +151,7 @@ export const auth = betterAuth({
     username({
       usernameValidator: () => true
     }),
-    organization({
-      teams: {
-        enabled: true,
-      },
-    }),
+    organization(),
     passkey({
       rpName: "Avenire",
       origin: appUrl

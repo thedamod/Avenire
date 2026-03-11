@@ -41,7 +41,6 @@ import {
   Pin,
   PinOff,
   PlusCircle,
-  Search,
   Settings,
   Sparkles,
   Trash2,
@@ -52,7 +51,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   type ComponentProps,
   type ComponentType,
-  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -61,7 +59,9 @@ import {
 } from "react";
 import { NavUser } from "@/components/dashboard/nav-user";
 import { TrashDialog } from "@/components/dashboard/trash-dialog";
+import { FlashcardsSidebarPanel } from "@/components/flashcards/sidebar-panel";
 import { SettingsDialog } from "@/components/settings/settings-dialog";
+import { type TreeDataItem, TreeView } from "@/components/ui/tree-view";
 import type { ChatSummary } from "@/lib/chat-data";
 import {
   CHAT_CREATED_EVENT,
@@ -70,13 +70,13 @@ import {
   type ChatNameUpdatedDetail,
 } from "@/lib/chat-events";
 import { useDashboardOverlayStore } from "@/stores/dashboardOverlayStore";
+import { useHaptics } from "@/hooks/use-haptics";
 import {
   type DashboardView,
   useDashboardViewStore,
 } from "@/stores/dashboardViewStore";
 import { useFilesPinsStore } from "@/stores/filesPinsStore";
 import { useFilesUiStore } from "@/stores/filesUiStore";
-import { TreeView, type TreeDataItem } from "@/components/ui/tree-view";
 
 interface DashboardSidebarUser {
   avatar?: string;
@@ -98,21 +98,13 @@ function TreeIconImage({
 
 function TreeFolderClosedIcon({ className }: { className?: string }) {
   return (
-    <TreeIconImage
-      alt=""
-      className={className}
-      src="/icons/_folder.svg"
-    />
+    <TreeIconImage alt="" className={className} src="/icons/_folder.svg" />
   );
 }
 
 function TreeFolderOpenIcon({ className }: { className?: string }) {
   return (
-    <TreeIconImage
-      alt=""
-      className={className}
-      src="/icons/_folder_open.svg"
-    />
+    <TreeIconImage alt="" className={className} src="/icons/_folder_open.svg" />
   );
 }
 
@@ -174,6 +166,9 @@ const codeExt = new Set([
 ]);
 const archiveExt = new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz"]);
 const sheetExt = new Set(["csv", "xls", "xlsx"]);
+const DASHBOARD_FLASHCARDS_ROUTE_REGEX = /^\/dashboard\/flashcards\/([^/?#]+)/;
+const DASHBOARD_FILES_FOLDER_ROUTE_REGEX =
+  /^\/dashboard\/files\/[^/]+\/folder\/([^/?#]+)/;
 
 function ChatListSection({
   title,
@@ -456,6 +451,7 @@ export function DashboardSidebar({
   activeChatSlug: string;
 }) {
   const router = useRouter();
+  const triggerHaptic = useHaptics();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const view = useDashboardViewStore((state) => state.view);
@@ -470,6 +466,8 @@ export function DashboardSidebar({
     (state) => state.sync.workspaceUuid
   );
   const [chats, setChats] = useState<ChatSummary[]>(initialChats);
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
+  const [filesNameSearchQuery, setFilesNameSearchQuery] = useState("");
   const [editingChatSlug, setEditingChatSlug] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [workspaceUuid, setWorkspaceUuid] = useState<string | null>(null);
@@ -518,17 +516,31 @@ export function DashboardSidebar({
     null
   );
   const sseRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeView: Exclude<DashboardView, null> = view ?? "chat";
+  const isChatsRoute =
+    pathname === "/dashboard/chats" || pathname.startsWith("/dashboard/chats/");
+  let routeView: Exclude<DashboardView, null> | null = null;
+  if (pathname.startsWith("/dashboard/flashcards")) {
+    routeView = "flashcards";
+  } else if (pathname.startsWith("/dashboard/files")) {
+    routeView = "files";
+  } else if (isChatsRoute) {
+    routeView = "chat";
+  }
+  const activeView: Exclude<DashboardView, null> = routeView ?? view ?? "chat";
+  const currentFlashcardSetId = useMemo(() => {
+    const match = pathname.match(DASHBOARD_FLASHCARDS_ROUTE_REGEX);
+    return match?.[1] ?? undefined;
+  }, [pathname]);
   const currentFolderId = useMemo(() => {
-    const match = pathname.match(
-      /^\/dashboard\/files\/[^/]+\/folder\/([^/?#]+)/
-    );
+    const match = pathname.match(DASHBOARD_FILES_FOLDER_ROUTE_REGEX);
     return match?.[1] ?? undefined;
   }, [pathname]);
   const currentFileId = searchParams.get("file") ?? undefined;
-  const pinnedByWorkspace = useFilesPinsStore((state) => state.pinnedByWorkspace);
+  const pinnedByWorkspace = useFilesPinsStore(
+    (state) => state.pinnedByWorkspace
+  );
   const pinnedItems = useMemo(
-    () => (workspaceUuid ? pinnedByWorkspace[workspaceUuid] ?? [] : []),
+    () => (workspaceUuid ? (pinnedByWorkspace[workspaceUuid] ?? []) : []),
     [pinnedByWorkspace, workspaceUuid]
   );
   const pinnedFolders = useMemo(
@@ -544,8 +556,7 @@ export function DashboardSidebar({
     () =>
       pinnedItems.filter(
         (item) =>
-          item.kind === "file" &&
-          fileTree.some((file) => file.id === item.id)
+          item.kind === "file" && fileTree.some((file) => file.id === item.id)
       ),
     [fileTree, pinnedItems]
   );
@@ -563,6 +574,13 @@ export function DashboardSidebar({
   }, [initialChats]);
 
   useEffect(() => {
+    if (pathname.startsWith("/dashboard/flashcards")) {
+      if (view !== "flashcards") {
+        setView("flashcards");
+      }
+      return;
+    }
+
     if (pathname.startsWith("/dashboard/files")) {
       if (view !== "files") {
         setView("files");
@@ -570,7 +588,7 @@ export function DashboardSidebar({
       return;
     }
 
-    if (pathname.startsWith("/dashboard/chats/")) {
+    if (isChatsRoute) {
       if (view !== "chat") {
         setView("chat");
       }
@@ -580,7 +598,7 @@ export function DashboardSidebar({
     if (!view) {
       setView("chat");
     }
-  }, [pathname, setView, view]);
+  }, [isChatsRoute, pathname, setView, view]);
 
   useEffect(() => {
     const fileRouteMatch = pathname.match(/^\/dashboard\/files\/([^/]+)/);
@@ -599,7 +617,8 @@ export function DashboardSidebar({
     }
 
     const activeChatWorkspaceId = activeChatSlug
-      ? chats.find((chat) => chat.slug === activeChatSlug)?.workspaceId ?? null
+      ? (chats.find((chat) => chat.slug === activeChatSlug)?.workspaceId ??
+        null)
       : null;
     if (activeChatWorkspaceId) {
       setWorkspaceUuid(activeChatWorkspaceId);
@@ -671,8 +690,7 @@ export function DashboardSidebar({
   }, [workspaceUuid]);
 
   const sortedChats = useMemo(
-    () =>
-      [...chats].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)),
+    () => [...chats].sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)),
     [chats]
   );
 
@@ -685,15 +703,86 @@ export function DashboardSidebar({
     () => sortedChats.filter((chat) => !chat.pinned),
     [sortedChats]
   );
+  const filteredChatNeedle = chatSearchQuery.trim().toLowerCase();
+  const filteredPinnedChats = useMemo(
+    () =>
+      pinnedChats.filter((chat) =>
+        filteredChatNeedle
+          ? chat.title.toLowerCase().includes(filteredChatNeedle)
+          : true
+      ),
+    [filteredChatNeedle, pinnedChats]
+  );
+  const filteredOtherChats = useMemo(
+    () =>
+      otherChats.filter((chat) =>
+        filteredChatNeedle
+          ? chat.title.toLowerCase().includes(filteredChatNeedle)
+          : true
+      ),
+    [filteredChatNeedle, otherChats]
+  );
 
-  const refreshChats = async () => {
-    const data = await parseResponse<{ chats: ChatSummary[] }>(
-      await fetch("/api/chat/history")
-    );
-    if (data?.chats) {
-      setChats(data.chats);
+  const filteredFileTreeState = useMemo(() => {
+    const needle = filesNameSearchQuery.trim().toLowerCase();
+    if (!needle) {
+      return {
+        files: fileTree,
+        folders: folderTree,
+      };
     }
-  };
+
+    const folderById = new Map(folderTree.map((folder) => [folder.id, folder]));
+    const allowedFolderIds = new Set<string>();
+    const allowedFileIds = new Set<string>();
+
+    for (const folder of folderTree) {
+      if (!folder.name.toLowerCase().includes(needle)) {
+        continue;
+      }
+      allowedFolderIds.add(folder.id);
+      let cursor = folder.parentId;
+      while (cursor) {
+        allowedFolderIds.add(cursor);
+        cursor = folderById.get(cursor)?.parentId ?? null;
+      }
+    }
+
+    for (const file of fileTree) {
+      if (!file.name.toLowerCase().includes(needle)) {
+        continue;
+      }
+      allowedFileIds.add(file.id);
+      let cursor: string | null = file.folderId;
+      while (cursor) {
+        allowedFolderIds.add(cursor);
+        cursor = folderById.get(cursor)?.parentId ?? null;
+      }
+    }
+
+    return {
+      files: fileTree.filter((file) => allowedFileIds.has(file.id)),
+      folders: folderTree.filter((folder) => allowedFolderIds.has(folder.id)),
+    };
+  }, [fileTree, filesNameSearchQuery, folderTree]);
+  const filteredPinnedFolders = useMemo(() => {
+    const needle = filesNameSearchQuery.trim().toLowerCase();
+    if (!needle) {
+      return pinnedFolders;
+    }
+    return pinnedFolders.filter((item) =>
+      item.name.toLowerCase().includes(needle)
+    );
+  }, [filesNameSearchQuery, pinnedFolders]);
+  const filteredPinnedFiles = useMemo(() => {
+    const needle = filesNameSearchQuery.trim().toLowerCase();
+    if (!needle) {
+      return pinnedFiles;
+    }
+    return pinnedFiles.filter((item) =>
+      item.name.toLowerCase().includes(needle)
+    );
+  }, [filesNameSearchQuery, pinnedFiles]);
 
   const navigateToFilesRoot = async () => {
     try {
@@ -866,8 +955,6 @@ export function DashboardSidebar({
       return;
     }
     setExpandedTreePaths(new Set());
-    setHasSavedExpandedTreeState(false);
-    setHydratedTreeStorageKey(null);
   }, [expandedTreeStorageKey]);
 
   useEffect(() => {
@@ -946,9 +1033,6 @@ export function DashboardSidebar({
         `[data-tree-id="${targetPath}"]`
       );
       if (!target) {
-        if (Date.now() - startedAt < MAX_WAIT_MS) {
-          retryTimer = setTimeout(tryHighlightTarget, RETRY_DELAY_MS);
-        }
         return;
       }
       lastTreeRevealTargetRef.current = targetPath;
@@ -958,7 +1042,13 @@ export function DashboardSidebar({
     return () => {
       clearTimeout(timer);
     };
-  }, [activeView, currentFileId, currentFolderId, fileTree.length, folderTree.length]);
+  }, [
+    activeView,
+    currentFileId,
+    currentFolderId,
+    fileTree.length,
+    folderTree.length,
+  ]);
 
   useEffect(() => {
     if (activeView !== "files" || !workspaceUuid) {
@@ -1100,7 +1190,7 @@ export function DashboardSidebar({
 
   const createChat = async () => {
     setView("chat");
-    router.push("/dashboard/chats/new" as Route);
+    router.push("/dashboard/chats" as Route);
   };
 
   const updateChat = async (
@@ -1335,14 +1425,17 @@ export function DashboardSidebar({
         return;
       }
 
-      const response = await fetch(`/api/workspaces/${workspaceUuid}/items/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          operation: "delete",
-          items,
-        }),
-      });
+      const response = await fetch(
+        `/api/workspaces/${workspaceUuid}/items/bulk`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            operation: "delete",
+            items,
+          }),
+        }
+      );
 
       if (!response.ok) {
         return;
@@ -1385,7 +1478,9 @@ export function DashboardSidebar({
       childrenByFolderId.set(parentId, existing);
     };
 
-    for (const folder of [...folderTree].sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const folder of [...filteredFileTreeState.folders].sort((a, b) =>
+      a.name.localeCompare(b.name)
+    )) {
       const folderItem: TreeDataItem = {
         id: folder.id,
         name: folder.name,
@@ -1395,15 +1490,19 @@ export function DashboardSidebar({
         openIcon: TreeFolderOpenIcon,
         selectedIcon: TreeFolderOpenIcon,
         onClick: () => {
-          router.push(`/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route);
+          router.push(
+            `/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route
+          );
         },
         actions: (
           <>
-            {!folder.readOnly ? (
+            {folder.readOnly ? null : (
               <Button
                 onClick={(event) => {
                   event.stopPropagation();
-                  router.push(`/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route);
+                  router.push(
+                    `/dashboard/files/${workspaceUuid}/folder/${folder.id}` as Route
+                  );
                   emitFilesIntent("uploadFile");
                 }}
                 size="icon-xs"
@@ -1413,8 +1512,8 @@ export function DashboardSidebar({
                 <FilePlus2 className="size-3.5" />
                 <span className="sr-only">Upload file</span>
               </Button>
-            ) : null}
-            {!folder.readOnly ? (
+            )}
+            {folder.readOnly ? null : (
               <Button
                 onClick={(event) => {
                   event.stopPropagation();
@@ -1427,14 +1526,16 @@ export function DashboardSidebar({
                 <Trash2 className="size-3.5" />
                 <span className="sr-only">Delete folder</span>
               </Button>
-            ) : null}
+            )}
           </>
         ),
       };
       addChild(folder.parentId, folderItem);
     }
 
-    for (const file of [...fileTree].sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const file of [...filteredFileTreeState.files].sort((a, b) =>
+      a.name.localeCompare(b.name)
+    )) {
       const FileIcon = () => getTreeFileIcon(file.name);
       addChild(file.folderId, {
         id: file.id,
@@ -1446,7 +1547,7 @@ export function DashboardSidebar({
             `/dashboard/files/${workspaceUuid}/folder/${file.folderId}?file=${file.id}` as Route
           );
         },
-        actions: !file.readOnly ? (
+        actions: file.readOnly ? null : (
           <Button
             onClick={(event) => {
               event.stopPropagation();
@@ -1459,7 +1560,7 @@ export function DashboardSidebar({
             <Trash2 className="size-3.5" />
             <span className="sr-only">Delete file</span>
           </Button>
-        ) : null,
+        ),
       });
     }
 
@@ -1473,8 +1574,8 @@ export function DashboardSidebar({
   }, [
     deleteTreeItems,
     emitFilesIntent,
-    fileTree,
-    folderTree,
+    filteredFileTreeState.files,
+    filteredFileTreeState.folders,
     router,
     workspaceUuid,
   ]);
@@ -1483,13 +1584,13 @@ export function DashboardSidebar({
     "Mod+1",
     (event) => {
       event.preventDefault();
-      if (!pathname.startsWith("/dashboard/chats/")) {
+      if (!isChatsRoute) {
         const chatSlug = activeChatSlug || chats[0]?.slug;
         if (chatSlug) {
           router.push(`/dashboard/chats/${chatSlug}` as Route);
           return;
         }
-        router.push("/dashboard/chats/new" as Route);
+        router.push("/dashboard/chats" as Route);
         return;
       }
       setView("chat");
@@ -1501,6 +1602,10 @@ export function DashboardSidebar({
     "Mod+2",
     (event) => {
       event.preventDefault();
+      if (!pathname.startsWith("/dashboard/flashcards")) {
+        router.push("/dashboard/flashcards" as Route);
+        return;
+      }
       setView("flashcards");
     },
     { ignoreInputs: true }
@@ -1649,7 +1754,7 @@ export function DashboardSidebar({
     <Sidebar variant="inset" {...props}>
       <SidebarHeader className="pb-0">
         <div className="flex items-center justify-end px-2 pt-1">
-          <SidebarTrigger className="rounded-md" />
+          <SidebarTrigger className="hit-area rounded-md" />
         </div>
       </SidebarHeader>
       <SidebarContent>
@@ -1664,7 +1769,6 @@ export function DashboardSidebar({
                 { value: "flashcards", label: "Flashcards", icon: Sparkles },
                 { value: "files", label: "Files", icon: Files },
               ]}
-              persistenceKey="dashboard-workspace-tabs"
               onValueChange={(nextValue) => {
                 if (!nextValue) {
                   return;
@@ -1683,20 +1787,26 @@ export function DashboardSidebar({
                 }
 
                 if (
-                  nextView === "chat" &&
-                  !pathname.startsWith("/dashboard/chats/")
+                  nextView === "flashcards" &&
+                  !pathname.startsWith("/dashboard/flashcards")
                 ) {
+                  router.push("/dashboard/flashcards" as Route);
+                  return;
+                }
+
+                if (nextView === "chat" && !isChatsRoute) {
                   const chatSlug = activeChatSlug || chats[0]?.slug;
                   if (chatSlug) {
                     router.push(`/dashboard/chats/${chatSlug}` as Route);
                     return;
                   }
-                  void createChat();
+                  router.push("/dashboard/chats" as Route);
                   return;
                 }
 
                 setView(nextView);
               }}
+              persistenceKey="dashboard-workspace-tabs"
               value={activeView}
             />
           </SidebarGroup>
@@ -1710,25 +1820,25 @@ export function DashboardSidebar({
                         icon={PlusCircle}
                         label="New Chat"
                         onClick={() => {
+                          void triggerHaptic("selection");
                           setEditingChatSlug(null);
                           setEditingTitle("");
                           void createChat();
                         }}
                       />
-                      <SectionButton
-                        icon={Search}
-                        label="Refresh Chats"
-                        onClick={() => {
-                          void refreshChats();
-                        }}
-                      />
                     </SidebarMenu>
+                    <Input
+                      className="mt-2 h-8 text-xs"
+                      onChange={(event) => setChatSearchQuery(event.target.value)}
+                      placeholder="Search chats by title..."
+                      value={chatSearchQuery}
+                    />
                   </SidebarGroupContent>
                 </SidebarGroup>
 
                 <ChatListSection
                   activeChatSlug={activeChatSlug}
-                  chats={pinnedChats}
+                  chats={filteredPinnedChats}
                   editingChatSlug={editingChatSlug}
                   editingTitle={editingTitle}
                   onCancelRename={() => {
@@ -1763,7 +1873,7 @@ export function DashboardSidebar({
 
                 <ChatListSection
                   activeChatSlug={activeChatSlug}
-                  chats={otherChats}
+                  chats={filteredOtherChats}
                   editingChatSlug={editingChatSlug}
                   editingTitle={editingTitle}
                   onCancelRename={() => {
@@ -1810,61 +1920,65 @@ export function DashboardSidebar({
                         label="New Note"
                         onClick={() => {
                           emitFilesIntent("newNote");
-                        }}
-                      />
-                      <SectionButton
-                        icon={Search}
-                        label="Search Files"
-                        onClick={() => {
-                          emitFilesIntent("focusSearch");
+                          void triggerHaptic("selection");
                         }}
                       />
                     </SidebarMenu>
+                    <Input
+                      className="mt-2 h-8 text-xs"
+                      onChange={(event) =>
+                        setFilesNameSearchQuery(event.target.value)
+                      }
+                      placeholder="Search files by name..."
+                      value={filesNameSearchQuery}
+                    />
                   </SidebarGroupContent>
                 </SidebarGroup>
 
-	                <SidebarGroup className="min-h-0 flex-1">
-	                  {workspaceUuid && (pinnedFolders.length > 0 || pinnedFiles.length > 0) ? (
-	                    <>
-	                      <SidebarGroupLabel>Pinned</SidebarGroupLabel>
-	                      <SidebarGroupContent>
-	                        <SidebarMenu>
-	                          {pinnedFolders.map((item) => (
-	                            <SidebarMenuItem key={`pinned-folder-${item.id}`}>
-	                              <SidebarMenuButton
-	                                onClick={() => {
-	                                  router.push(
-	                                    `/dashboard/files/${item.workspaceId}/folder/${item.id}` as Route
-	                                  );
-	                                }}
-	                              >
-	                                <Pin className="size-4" />
-	                                <span className="truncate">{item.name}</span>
-	                              </SidebarMenuButton>
-	                            </SidebarMenuItem>
-	                          ))}
-	                          {pinnedFiles.map((item) => (
-	                            <SidebarMenuItem key={`pinned-file-${item.id}`}>
-	                              <SidebarMenuButton
-	                                onClick={() => {
-	                                  if (!item.folderId) {
-	                                    return;
-	                                  }
-	                                  router.push(
-	                                    `/dashboard/files/${item.workspaceId}/folder/${item.folderId}?file=${item.id}` as Route
-	                                  );
-	                                }}
-	                              >
-	                                <Pin className="size-4" />
-	                                <span className="truncate">{item.name}</span>
-	                              </SidebarMenuButton>
-	                            </SidebarMenuItem>
-	                          ))}
-	                        </SidebarMenu>
-	                      </SidebarGroupContent>
-	                    </>
-	                  ) : null}
-	                  <SidebarGroupLabel>File Tree</SidebarGroupLabel>
+                <SidebarGroup className="min-h-0 flex-1">
+                  {workspaceUuid &&
+                  (filteredPinnedFolders.length > 0 ||
+                    filteredPinnedFiles.length > 0) ? (
+                    <>
+                      <SidebarGroupLabel>Pinned</SidebarGroupLabel>
+                      <SidebarGroupContent>
+                        <SidebarMenu>
+                          {filteredPinnedFolders.map((item) => (
+                            <SidebarMenuItem key={`pinned-folder-${item.id}`}>
+                              <SidebarMenuButton
+                                onClick={() => {
+                                  router.push(
+                                    `/dashboard/files/${item.workspaceId}/folder/${item.id}` as Route
+                                  );
+                                }}
+                              >
+                                <Pin className="size-4" />
+                                <span className="truncate">{item.name}</span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          ))}
+                          {filteredPinnedFiles.map((item) => (
+                            <SidebarMenuItem key={`pinned-file-${item.id}`}>
+                              <SidebarMenuButton
+                                onClick={() => {
+                                  if (!item.folderId) {
+                                    return;
+                                  }
+                                  router.push(
+                                    `/dashboard/files/${item.workspaceId}/folder/${item.folderId}?file=${item.id}` as Route
+                                  );
+                                }}
+                              >
+                                <Pin className="size-4" />
+                                <span className="truncate">{item.name}</span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          ))}
+                        </SidebarMenu>
+                      </SidebarGroupContent>
+                    </>
+                  ) : null}
+                  <SidebarGroupLabel>File Tree</SidebarGroupLabel>
                   <SidebarGroupContent className="min-h-0">
                     {workspaceUuid && folderTree.length > 0 ? (
                       <div className="h-full overflow-y-auto pr-1">
@@ -1872,19 +1986,31 @@ export function DashboardSidebar({
                           className="rounded-xl"
                           data={sidebarTreeData}
                           initialExpandedItemIds={expandedTreePathIds}
-                          initialSelectedItemId={currentFileId ?? currentFolderId}
+                          initialSelectedItemId={
+                            currentFileId ?? currentFolderId
+                          }
                           onExpandedChange={(itemIds) => {
                             setExpandedTreePaths(new Set(itemIds));
                           }}
                           onMoveItem={(draggedItemId, targetItemId) => {
-                            const draggedFolder = folderTree.find((item) => item.id === draggedItemId);
+                            const draggedFolder = folderTree.find(
+                              (item) => item.id === draggedItemId
+                            );
                             if (draggedFolder) {
-                              void moveTreeItem({ id: draggedItemId, kind: "folder" }, targetItemId);
+                              void moveTreeItem(
+                                { id: draggedItemId, kind: "folder" },
+                                targetItemId
+                              );
                               return;
                             }
-                            const draggedFile = fileTree.find((item) => item.id === draggedItemId);
+                            const draggedFile = fileTree.find(
+                              (item) => item.id === draggedItemId
+                            );
                             if (draggedFile) {
-                              void moveTreeItem({ id: draggedItemId, kind: "file" }, targetItemId);
+                              void moveTreeItem(
+                                { id: draggedItemId, kind: "file" },
+                                targetItemId
+                              );
                             }
                           }}
                           onSelectChange={(item) => {
@@ -1913,20 +2039,10 @@ export function DashboardSidebar({
                 </SidebarGroup>
               </div>
             ) : (
-              <div className="absolute inset-0 overflow-y-auto">
-                <SidebarGroup>
-                  <SidebarGroupLabel>
-                    {activeView === "flashcards" ? "Flashcards" : "Files"}
-                  </SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <p className="px-2 py-1 text-muted-foreground text-xs">
-                      {activeView === "flashcards"
-                        ? "Flashcard tools and sets will appear here."
-                        : "File uploads and attached resources will appear here."}
-                    </p>
-                  </SidebarGroupContent>
-                </SidebarGroup>
-              </div>
+              <FlashcardsSidebarPanel
+                active={activeView === "flashcards"}
+                activeSetId={currentFlashcardSetId}
+              />
             )}
           </div>
         </TooltipProvider>
@@ -1935,8 +2051,11 @@ export function DashboardSidebar({
         <div className="mb-2 flex items-center justify-between gap-2 px-2">
           <div className="flex items-center gap-1">
             <Button
-              className="h-8 w-8"
-              onClick={() => setTrashOpen(true)}
+              className="hit-area h-8 w-8"
+              onClick={() => {
+                void triggerHaptic("selection");
+                setTrashOpen(true);
+              }}
               size="icon-sm"
               type="button"
               variant="ghost"
@@ -1945,8 +2064,11 @@ export function DashboardSidebar({
               <span className="sr-only">Open trash</span>
             </Button>
             <Button
-              className="h-8 w-8"
-              onClick={() => toggleUploadActivityOpen()}
+              className="hit-area h-8 w-8"
+              onClick={() => {
+                void triggerHaptic("selection");
+                toggleUploadActivityOpen();
+              }}
               size="icon-sm"
               type="button"
               variant="ghost"
@@ -1955,8 +2077,11 @@ export function DashboardSidebar({
               <span className="sr-only">Open upload activity</span>
             </Button>
             <Button
-              className="h-8 w-8"
-              onClick={() => setSettingsOpen(true)}
+              className="hit-area h-8 w-8"
+              onClick={() => {
+                void triggerHaptic("selection");
+                setSettingsOpen(true);
+              }}
               size="icon-sm"
               type="button"
               variant="ghost"

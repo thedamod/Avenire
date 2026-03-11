@@ -1,18 +1,10 @@
 export const CHAT_NAME_UPDATED_EVENT = "avenire:chat-name-updated";
-export const CHAT_ARTIFACT_CREATED_EVENT = "avenire:chat-artifact-created";
 export const CHAT_STREAM_FINISHED_EVENT = "avenire:chat-stream-finished";
 export const CHAT_CREATED_EVENT = "avenire:chat-created";
 
 export interface ChatNameUpdatedDetail {
   id: string;
   name: string;
-}
-
-export interface ChatArtifactCreatedDetail {
-  artifactId: string;
-  chatId: string;
-  kind: string;
-  toolName: string;
 }
 
 export interface ChatStreamFinishedDetail {

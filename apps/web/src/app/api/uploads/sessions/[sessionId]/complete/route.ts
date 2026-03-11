@@ -1,11 +1,21 @@
-import { NextResponse } from "next/server";
 import { UTApi, UTFile } from "@avenire/storage";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { userCanEditFolder } from "@/lib/file-data";
-import { clearMultipartParts, assembleMultipartParts } from "@/lib/upload-multipart-store";
 import { createApiLogger } from "@/lib/observability";
-import { saveUploadSession, getUploadSession } from "@/lib/upload-session-store";
-import { normalizeSha256, registerWorkspaceUploadedFile } from "@/lib/upload-registration";
+import {
+  assembleMultipartParts,
+  clearMultipartParts,
+} from "@/lib/upload-multipart-store";
+import {
+  normalizeSha256,
+  registerWorkspaceUploadedFile,
+} from "@/lib/upload-registration";
+import {
+  getUploadSession,
+  saveUploadSession,
+} from "@/lib/upload-session-store";
+import { scheduleAsyncVideoDeliveryOptimization } from "@/lib/video-delivery";
 import { getSessionUser } from "@/lib/workspace";
 
 const completeSchema = z
@@ -29,7 +39,8 @@ const completeSchema = z
         typeof value.sizeBytes === "number") ||
       Boolean(value.multipart),
     {
-      message: "Provide direct upload metadata or multipart completion payload.",
+      message:
+        "Provide direct upload metadata or multipart completion payload.",
     }
   );
 
@@ -51,12 +62,19 @@ async function uploadMultipartAsSingleObject(input: {
   }
 
   const assembled = await assembleMultipartParts(input.sessionId);
-  if (Array.isArray(input.expectedPartNumbers) && input.expectedPartNumbers.length > 0) {
-    const normalizedExpected = [...new Set(input.expectedPartNumbers.map((value) => Math.max(1, Math.trunc(value))))].sort(
-      (a, b) => a - b
-    );
+  if (
+    Array.isArray(input.expectedPartNumbers) &&
+    input.expectedPartNumbers.length > 0
+  ) {
+    const normalizedExpected = [
+      ...new Set(
+        input.expectedPartNumbers.map((value) => Math.max(1, Math.trunc(value)))
+      ),
+    ].sort((a, b) => a - b);
     const normalizedActual = [...assembled.partNumbers].sort((a, b) => a - b);
-    if (JSON.stringify(normalizedExpected) !== JSON.stringify(normalizedActual)) {
+    if (
+      JSON.stringify(normalizedExpected) !== JSON.stringify(normalizedActual)
+    ) {
       throw Object.assign(new Error("Multipart part list mismatch"), {
         code: "MULTIPART_PART_MISMATCH",
       });
@@ -70,8 +88,14 @@ async function uploadMultipartAsSingleObject(input: {
   );
   const result = Array.isArray(uploadResult) ? uploadResult[0] : uploadResult;
   const uploaded = result?.data;
-  if (!uploaded || typeof uploaded.key !== "string" || typeof uploaded.ufsUrl !== "string") {
-    throw new Error("Multipart upload assembly succeeded but UploadThing upload failed.");
+  if (
+    !uploaded ||
+    typeof uploaded.key !== "string" ||
+    typeof uploaded.ufsUrl !== "string"
+  ) {
+    throw new Error(
+      "Multipart upload assembly succeeded but UploadThing upload failed."
+    );
   }
 
   return {
@@ -128,7 +152,9 @@ export async function POST(
     return NextResponse.json({ error: "Read-only folder" }, { status: 403 });
   }
 
-  const parsed = completeSchema.safeParse(await request.json().catch(() => ({})));
+  const parsed = completeSchema.safeParse(
+    await request.json().catch(() => ({}))
+  );
   if (!parsed.success) {
     void apiLogger.requestFailed(400, "Invalid payload");
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
@@ -188,8 +214,8 @@ export async function POST(
           error: isPartMismatch
             ? "Multipart parts mismatch"
             : isUnavailable
-            ? "Multipart completion unavailable"
-            : "Multipart completion failed",
+              ? "Multipart completion unavailable"
+              : "Multipart completion failed",
         },
         { status: isPartMismatch ? 422 : isUnavailable ? 503 : 500 }
       );
@@ -197,7 +223,10 @@ export async function POST(
   }
 
   if (!storageKey || !storageUrl || typeof sizeBytes !== "number") {
-    void apiLogger.requestFailed(400, "Missing upload metadata after completion");
+    void apiLogger.requestFailed(
+      400,
+      "Missing upload metadata after completion"
+    );
     return NextResponse.json(
       { error: "Missing upload metadata after completion" },
       { status: 400 }
@@ -205,7 +234,11 @@ export async function POST(
   }
 
   const expectedChecksum = normalizeSha256(session.checksumSha256);
-  if (expectedChecksum && checksumSha256 && expectedChecksum !== checksumSha256) {
+  if (
+    expectedChecksum &&
+    checksumSha256 &&
+    expectedChecksum !== checksumSha256
+  ) {
     void apiLogger.requestFailed(422, "Checksum mismatch");
     return NextResponse.json({ error: "Checksum mismatch" }, { status: 422 });
   }
@@ -215,7 +248,11 @@ export async function POST(
     return NextResponse.json({ error: "Size mismatch" }, { status: 422 });
   }
 
-  if (session.mimeType && parsed.data.mimeType && session.mimeType !== parsed.data.mimeType) {
+  if (
+    session.mimeType &&
+    parsed.data.mimeType &&
+    session.mimeType !== parsed.data.mimeType
+  ) {
     void apiLogger.requestFailed(422, "MIME type mismatch");
     return NextResponse.json({ error: "MIME type mismatch" }, { status: 422 });
   }
@@ -262,6 +299,17 @@ export async function POST(
       },
     });
 
+    if (
+      result.status === "created" &&
+      result.file.mimeType?.startsWith("video/")
+    ) {
+      scheduleAsyncVideoDeliveryOptimization({
+        file: result.file,
+        userId: user.id,
+        workspaceUuid: session.workspaceUuid,
+      });
+    }
+
     await clearMultipartParts(sessionId);
 
     void apiLogger.requestSucceeded(200, {
@@ -286,12 +334,33 @@ export async function POST(
       ...verifiedSession,
       status: "failed",
     });
+    const cleanupStorageKey =
+      verifiedSession.upload?.storageKey ??
+      session.upload?.storageKey ??
+      storageKey ??
+      null;
+    if (cleanupStorageKey && process.env.UPLOADTHING_TOKEN) {
+      try {
+        const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
+        await utapi.deleteFiles([cleanupStorageKey]);
+      } catch (cleanupError) {
+        void apiLogger.warn("upload.cleanup.failed", {
+          workspaceUuid: session.workspaceUuid,
+          sessionId: session.id,
+          storageKey: cleanupStorageKey,
+          error:
+            cleanupError instanceof Error
+              ? { name: cleanupError.name, message: cleanupError.message }
+              : { message: "Unknown cleanup error" },
+        });
+      }
+    }
     const isRateLimit =
       (error as { code?: string } | null | undefined)?.code ===
       "UPLOAD_RATE_LIMIT";
     const retryAfter =
-      (error as { retryAfter?: string | null } | null | undefined)?.retryAfter ??
-      null;
+      (error as { retryAfter?: string | null } | null | undefined)
+        ?.retryAfter ?? null;
 
     void apiLogger.requestFailed(isRateLimit ? 429 : 500, error, {
       workspaceUuid: session.workspaceUuid,
@@ -300,7 +369,9 @@ export async function POST(
     });
     return NextResponse.json(
       {
-        error: isRateLimit ? "Upload usage limit reached" : "Upload finalize failed",
+        error: isRateLimit
+          ? "Upload usage limit reached"
+          : "Upload finalize failed",
         retryAfter,
         session: failedSession,
       },

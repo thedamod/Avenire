@@ -1,8 +1,8 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import {
-  consumeSudoChallenge,
   createSudoChallenge as createSudoChallengeRecord,
-  getLatestActiveSudoChallenge,
+  invalidateSudoChallenge,
+  verifyAndConsumeLatestSudoChallenge,
 } from "@avenire/database";
 
 export const SUDO_COOKIE_NAME = "avenire_sudo";
@@ -37,8 +37,9 @@ function safeCompare(a: string, b: string) {
 }
 
 export function generateSudoCode() {
-  const value = Math.floor(100_000 + Math.random() * 900_000);
-  return String(value);
+  const digits = 6;
+  const value = randomInt(0, 10 ** digits);
+  return String(value).padStart(digits, "0");
 }
 
 export function hashSudoCode(code: string) {
@@ -62,10 +63,6 @@ export async function createSudoChallenge(userId: string) {
     code,
     expiresAt,
   };
-}
-
-export async function invalidateSudoChallenge(challengeId: string) {
-  await invalidateSudoChallengeRecord(challengeId);
 }
 
 export async function verifySudoCode(input: { userId: string; code: string }) {
@@ -174,3 +171,5 @@ export function getSudoCookieExpiresAt(input: { userId: string; cookieValue?: st
 
   return new Date(payload.exp);
 }
+
+export { invalidateSudoChallenge };

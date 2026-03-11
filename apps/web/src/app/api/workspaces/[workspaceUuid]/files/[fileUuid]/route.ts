@@ -1,4 +1,5 @@
 import {
+  deleteIngestionDataForFile,
   getFileAssetById,
   isSharedFilesVirtualFolderId,
   softDeleteFileAsset,
@@ -93,6 +94,8 @@ export async function DELETE(
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
+  await deleteIngestionDataForFile(workspaceUuid, fileUuid);
+
   const ok = await softDeleteFileAsset(workspaceUuid, fileUuid);
   if (!ok) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
@@ -100,7 +103,7 @@ export async function DELETE(
 
   await publishFilesInvalidationEvent({
     workspaceUuid,
-    folderId: existingFile.folderId || undefined,
+    folderId: existing.folderId || undefined,
     reason: "file.deleted",
   });
   await publishFilesInvalidationEvent({

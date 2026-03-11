@@ -1,7 +1,13 @@
 "use client";
 
-import { FileText } from "lucide-react";
+import { useMediaPlaybackSource, type MediaPlaybackSource } from "@avenire/ui/media";
+import { FileCode2, FileText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  primeMediaPlayback,
+  releaseMediaPlaybackPrime,
+  resolveCachedPlaybackSource,
+} from "@/lib/file-preview-cache";
 import { cn } from "@/lib/utils";
 
 type FileCardType = "archive" | "audio" | "code" | "document" | "image" | "other" | "video";
@@ -48,10 +54,14 @@ function formatTimeAgo(date: Date): string {
 }
 
 function getFileIcon(fileType: FileCardType): React.ReactNode {
+  if (fileType === "code") {
+    return <FileCode2 aria-hidden="true" className="h-4 w-4" />;
+  }
+
   const iconByType: Record<FileCardType, string> = {
     archive: "/icons/zip.svg",
     audio: "/icons/audio.svg",
-    code: "/icons/typescript.svg",
+    code: "/icons/_file.svg",
     document: "/icons/text.svg",
     image: "/icons/image.svg",
     other: "/icons/_file.svg",
@@ -77,26 +87,35 @@ export function FileCard({
   previewContent,
   previewUrl,
 }: FileCardProps) {
-  const timeAgo = useMemo(() => formatTimeAgo(lastUpdated), [lastUpdated]);
+  const [timeAgo, setTimeAgo] = useState(() => formatTimeAgo(lastUpdated));
+  useEffect(() => {
+    setTimeAgo(formatTimeAgo(lastUpdated));
+    const interval = setInterval(() => {
+      setTimeAgo(formatTimeAgo(lastUpdated));
+    }, 60_000);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [lastUpdated]);
   const hasPreview = Boolean(previewContent || previewUrl);
 
   return (
     <div className={cn("inline-flex w-full max-w-full flex-col items-center gap-2 overflow-hidden", className)}>
       <div
         className={cn(
-          "group relative flex w-full min-w-0 items-center justify-center overflow-hidden rounded-lg border border-border/45 bg-muted/70 p-1.5",
+          "group relative flex w-full min-w-0 items-center justify-center overflow-hidden rounded-xl border border-border/45 bg-muted/70 p-1.5",
           hasPreview ? "h-28" : "h-28 aspect-[4/3]"
         )}
       >
         {previewContent ? (
-          <div className="h-full w-auto max-w-full overflow-hidden rounded-md border border-border/50 bg-card/60 p-1 [&_canvas]:h-full [&_canvas]:w-auto [&_canvas]:rounded-sm [&_img]:h-full [&_img]:w-auto [&_img]:rounded-sm [&_img]:object-contain [&_video]:h-full [&_video]:w-auto [&_video]:rounded-sm [&_video]:object-contain">
+          <div className="h-full w-auto max-w-full overflow-hidden rounded-lg border border-border/50 bg-card/60 p-1 [&_canvas]:h-full [&_canvas]:w-auto [&_canvas]:rounded-md [&_img]:h-full [&_img]:w-auto [&_img]:rounded-md [&_img]:object-contain [&_video]:h-full [&_video]:w-auto [&_video]:rounded-md [&_video]:object-contain">
             {previewContent}
           </div>
         ) : previewUrl ? (
-          <div className="h-full w-auto max-w-full overflow-hidden rounded-md border border-border/50 bg-card/60 p-1">
+          <div className="h-full w-auto max-w-full overflow-hidden rounded-lg border border-border/50 bg-card/60 p-1">
             <img
               alt={name}
-              className="h-full w-auto max-w-full rounded-sm object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+              className="h-full w-auto max-w-full rounded-md object-contain transition-transform duration-300 group-hover:scale-[1.02]"
               src={previewUrl}
             />
           </div>
@@ -106,7 +125,7 @@ export function FileCard({
           </div>
         )}
         {hasPreview ? (
-          <div className="absolute inset-0 bg-black opacity-0 transition-opacity duration-300 group-hover:opacity-10" />
+          <div className="pointer-events-none absolute inset-0 bg-black opacity-0 transition-opacity duration-300 group-hover:opacity-10" />
         ) : null}
       </div>
       <div className="flex w-full min-w-0 max-w-full items-center justify-between gap-2">
@@ -129,20 +148,57 @@ export function FileCard({
    Renders the first frame of a video file.
 ───────────────────────────────────────────── */
 export function VideoThumbnail({
-  src,
-  mimeType,
+  playbackSource,
+  posterUrl,
   className,
   warm = false,
   openedCached = false,
+  playOnHover = false,
+  sizeBytes,
 }: {
-  src: string;
-  mimeType?: string | null;
+  playbackSource: MediaPlaybackSource;
+  posterUrl?: string | null;
   className?: string;
   warm?: boolean;
   openedCached?: boolean;
+  playOnHover?: boolean;
+  sizeBytes?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [resolvedPlaybackSource, setResolvedPlaybackSource] = useState(() =>
+    resolveCachedPlaybackSource(playbackSource)
+  );
   const [failed, setFailed] = useState(false);
+
+  useMediaPlaybackSource({
+    mediaRef: videoRef,
+    onError: () => setFailed(true),
+    playbackSource: resolvedPlaybackSource,
+  });
+
+  useEffect(() => {
+    setFailed(false);
+    setResolvedPlaybackSource(resolveCachedPlaybackSource(playbackSource));
+  }, [playbackSource]);
+
+  useEffect(() => {
+    if (!(warm || openedCached || playOnHover)) {
+      return;
+    }
+
+    void primeMediaPlayback(playbackSource, {
+      mediaType: "video",
+      posterUrl,
+      sizeBytes,
+      surface: "thumbnail",
+    }).then(() => {
+      setResolvedPlaybackSource(resolveCachedPlaybackSource(playbackSource));
+    });
+
+    return () => {
+      releaseMediaPlaybackPrime(playbackSource);
+    };
+  }, [openedCached, playOnHover, playbackSource, posterUrl, sizeBytes, warm]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -157,6 +213,35 @@ export function VideoThumbnail({
     return () => video.removeEventListener("loadedmetadata", onMeta);
   }, [openedCached, warm]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+
+    if (!playOnHover) {
+      video.pause();
+      video.currentTime = 0;
+      return;
+    }
+
+    const startPlayback = async () => {
+      try {
+        video.loop = true;
+        await video.play();
+      } catch {
+        // Ignore autoplay failures for previews.
+      }
+    };
+
+    void startPlayback();
+
+    return () => {
+      video.pause();
+      video.currentTime = 0;
+    };
+  }, [playOnHover, resolvedPlaybackSource]);
+
   if (failed) {
     return (
       <div className={cn("flex h-full w-auto items-center justify-center bg-muted/70", className)}>
@@ -170,12 +255,11 @@ export function VideoThumbnail({
       className={cn("h-full w-auto object-contain", className)}
       muted
       onError={() => setFailed(true)}
+      poster={posterUrl ?? undefined}
       playsInline
-      preload={warm || openedCached ? "metadata" : "none"}
+      preload={warm || openedCached || playOnHover ? "auto" : "none"}
       ref={videoRef}
-    >
-      <source src={src} type={mimeType ?? undefined} />
-    </video>
+    />
   );
 }
 

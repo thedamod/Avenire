@@ -32,6 +32,8 @@ import { cn } from "@/lib/utils";
 
 import "katex/dist/katex.min.css";
 
+const WORKSPACE_FILE_OPEN_EVENT = "workspace.file.open";
+
 type MarkdownProps = {
   content: string;
   id: string;
@@ -326,8 +328,13 @@ const MemoizedMarkdown = memo(
                 {children}
               </TableRow>
             ),
-            th: ({ children }: any) => (
-              <TableHead className="text-left">{children}</TableHead>
+            th: ({ children, className, ...props }: any) => (
+              <TableHead
+                className={cn("text-left", className)}
+                {...(props as React.HTMLAttributes<HTMLTableCellElement>)}
+              >
+                {children}
+              </TableHead>
             ),
             tbody: ({ children, className, ...props }: any) => (
               <TableBody
@@ -347,23 +354,62 @@ const MemoizedMarkdown = memo(
             ),
             hr: ({ className }: any) => <Separator className={className} />,
             strong: ({ children, className, ...props }: any) => (
-              <span
+              <strong
                 className={cn("font-semibold", className)}
-                {...(props as React.HTMLAttributes<HTMLSpanElement>)}
+                {...(props as React.HTMLAttributes<HTMLElement>)}
               >
                 {children}
-              </span>
+              </strong>
             ),
-            a: ({ children, className, ...props }: any) => (
-              <a
-                className={cn("font-medium text-primary underline", className)}
-                rel="noreferrer"
-                target="_blank"
-                {...(props as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
-              >
-                {children}
-              </a>
-            ),
+            a: ({ children, className, ...props }: any) => {
+              const href =
+                typeof props.href === "string" ? props.href.trim() : "";
+              const isWorkspaceFileLink = href.startsWith("workspace-file://");
+
+              if (isWorkspaceFileLink) {
+                const fileId = href.replace("workspace-file://", "").trim();
+                return (
+                  <a
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-mono text-[11px] font-medium text-foreground no-underline hover:bg-muted/80",
+                      className
+                    )}
+                    {...(props as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
+                    rel="noreferrer"
+                    target="_self"
+                    href="#"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      if (!fileId) {
+                        return;
+                      }
+                      window.dispatchEvent(
+                        new CustomEvent(WORKSPACE_FILE_OPEN_EVENT, {
+                          detail: { fileId },
+                        })
+                      );
+                    }}
+                  >
+                    <span className="inline-block h-1.5 w-1.5 rounded-[3px] bg-primary" />
+                    {children}
+                  </a>
+                );
+              }
+
+              return (
+                <a
+                  className={cn(
+                    "font-medium text-primary underline underline-offset-2",
+                    className
+                  )}
+                  rel="noreferrer"
+                  target="_blank"
+                  {...(props as React.AnchorHTMLAttributes<HTMLAnchorElement>)}
+                >
+                  {children}
+                </a>
+              );
+            },
             h1: ({ children, className, ...props }: any) => (
               <h1
                 className={cn(sizeClasses.h1, className)}

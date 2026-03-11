@@ -2,7 +2,7 @@ import { createResourceShareLink } from "@/lib/file-data";
 import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { getChatBySlugForUser } from "@/lib/chat-data";
+import { getChatBySlugForUser, isChatOwnerForUser } from "@/lib/chat-data";
 import { createApiLogger } from "@/lib/observability";
 import { resolveAppBaseUrl } from "@/lib/app-base-url";
 

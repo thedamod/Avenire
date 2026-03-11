@@ -60,7 +60,7 @@ export default async function DashboardWorkspaceFolderPage({
     redirect("/login");
   }
 
-  const { workspaceUuid } = await params;
+  const { workspaceUuid, folderUuid } = await params;
   const canAccess = await userCanAccessWorkspace(session.user.id, workspaceUuid);
 
   if (!canAccess) {
@@ -79,7 +79,7 @@ export default async function DashboardWorkspaceFolderPage({
         avatar: session.user.image ?? getFacehashUrl(session.user.name ?? session.user.email),
       }}
     >
-      <FileExplorer />
+      <FileExplorer folderUuid={folderUuid} workspaceUuid={workspaceUuid} />
     </DashboardLayout>
   );
 }

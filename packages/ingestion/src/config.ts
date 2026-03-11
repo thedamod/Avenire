@@ -148,6 +148,14 @@ export const config = {
     process.env.VIDEO_KEYFRAME_MAX_FRAMES ?? "16",
     10,
   ),
+  videoTranscriptionSegmentSeconds: Number.parseInt(
+    process.env.VIDEO_TRANSCRIPTION_SEGMENT_SECONDS ?? "600",
+    10,
+  ),
+  videoTranscriptionMaxSegments: Number.parseInt(
+    process.env.VIDEO_TRANSCRIPTION_MAX_SEGMENTS ?? "36",
+    10,
+  ),
   batchPollIntervalMs: Number.parseInt(
     process.env.MISTRAL_BATCH_POLL_MS ?? "2500",
     10,

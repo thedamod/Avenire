@@ -11,7 +11,14 @@ export function useScrollToBottom<T extends HTMLElement>(): [
   const scroll = () => {
     const container = containerRef.current;
     const end = endRef.current;
-    if (container && end) {
+    if (container) {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: "smooth",
+      });
+      return;
+    }
+    if (end) {
       end.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   };

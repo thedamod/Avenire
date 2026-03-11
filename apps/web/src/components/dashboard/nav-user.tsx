@@ -43,7 +43,10 @@ import {
   useSidebar,
 } from "@avenire/ui/components/sidebar";
 import { getFacehashUrl } from "@/lib/avatar";
+import { usePrivacyMode } from "@/hooks/use-privacy-mode";
+import { useHaptics } from "@/hooks/use-haptics";
 import { useRouter } from "next/navigation";
+import { SensitiveText } from "@/components/shared/sensitive-text";
 
 type WorkspaceSummary = {
   workspaceId: string;
@@ -59,6 +62,16 @@ type WorkspaceInvitation = {
   inviterName: string | null;
   inviterEmail: string;
 };
+
+function getInitials(value: string) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "U";
+}
 
 export function NavUser({
   user,
@@ -85,7 +98,9 @@ export function NavUser({
 }) {
   const { isMobile } = useSidebar();
   const router = useRouter();
+  const triggerHaptic = useHaptics();
   const fallbackAvatar = getFacehashUrl(user.name || user.email);
+  const privacyMode = usePrivacyMode();
   const initials = getInitials(user.name || user.email || "User");
   const [avatarSrc, setAvatarSrc] = useState(user.avatar || fallbackAvatar);
   const [createOpen, setCreateOpen] = useState(false);
@@ -112,7 +127,7 @@ export function NavUser({
                 render={
                   <SidebarMenuButton
                     size="lg"
-                    className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                    className="hit-area data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                   />
                 }
               >
@@ -125,8 +140,16 @@ export function NavUser({
                   <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">{user.name}</span>
-                  <span className="truncate text-xs">{user.email}</span>
+                  <SensitiveText
+                    className="truncate font-medium"
+                    privacyMode={privacyMode}
+                    value={user.name}
+                  />
+                  <SensitiveText
+                    className="truncate text-xs"
+                    privacyMode={privacyMode}
+                    value={user.email}
+                  />
                 </div>
                 <ChevronsUpDown className="ml-auto size-4" />
               </DropdownMenuTrigger>
@@ -151,8 +174,10 @@ export function NavUser({
                       {workspaces.map((workspace) => (
                         <DropdownMenuItem
                           key={workspace.workspaceId}
-                          onClick={() => onSwitchWorkspace?.(workspace)}
-                          onSelect={() => onSwitchWorkspace?.(workspace)}
+                          onSelect={() => {
+                            void triggerHaptic("selection");
+                            onSwitchWorkspace?.(workspace);
+                          }}
                         >
                           <Building2 className="size-4" />
                           <span className="truncate">{workspace.name}</span>
@@ -189,7 +214,11 @@ export function NavUser({
                           <div className="rounded-md border border-border/60 p-2" key={invite.id}>
                             <p className="truncate font-medium text-xs">{invite.organizationName}</p>
                             <p className="truncate text-[11px] text-muted-foreground">
-                              {invite.inviterName ?? invite.inviterEmail}
+                              <SensitiveText
+                                className="truncate"
+                                privacyMode={privacyMode}
+                                value={invite.inviterName ?? invite.inviterEmail}
+                              />
                             </p>
                             <div className="mt-2 flex gap-2">
                               <Button
@@ -224,6 +253,7 @@ export function NavUser({
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onSelect={() => {
+                    void triggerHaptic("selection");
                     void (async () => {
                       try {
                         await authClient.signOut();

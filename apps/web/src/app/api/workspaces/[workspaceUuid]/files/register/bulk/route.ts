@@ -5,6 +5,7 @@ import {
   userCanEditFolder,
 } from "@/lib/file-data";
 import { registerWorkspaceUploadedFile } from "@/lib/upload-registration";
+import { scheduleAsyncVideoDeliveryOptimization } from "@/lib/video-delivery";
 import { getSessionUser } from "@/lib/workspace";
 
 const fileSchema = z.object({
@@ -51,7 +52,9 @@ export async function POST(
 
   const { workspaceUuid } = await context.params;
 
-  const parsed = requestSchema.safeParse(await request.json().catch(() => ({})));
+  const parsed = requestSchema.safeParse(
+    await request.json().catch(() => ({}))
+  );
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   }
@@ -113,6 +116,17 @@ export async function POST(
         file: { id: result.file.id },
         ingestionJob: result.ingestionJob,
       });
+
+      if (
+        result.status === "created" &&
+        result.file.mimeType?.startsWith("video/")
+      ) {
+        scheduleAsyncVideoDeliveryOptimization({
+          file: result.file,
+          userId: user.id,
+          workspaceUuid,
+        });
+      }
     } catch (error) {
       const isRateLimit =
         (error as { code?: string } | null | undefined)?.code ===

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const protectedRoutes = ["/dashboard", "/settings", "/chat"];
+const protectedRoutes = ["/dashboard", "/settings", "/chat", "/chats"];
 const publicRoutes = ["/login", "/register"];
 
 function isProtectedRoute(pathname: string) {
@@ -43,5 +43,12 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/settings/:path*", "/chat/:path*", "/login", "/register"]
+  matcher: [
+    "/dashboard/:path*",
+    "/settings/:path*",
+    "/chat/:path*",
+    "/chats/:path*",
+    "/login",
+    "/register",
+  ],
 };

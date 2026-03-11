@@ -4,6 +4,7 @@ import {
 } from "@avenire/ui/components/sidebar";
 import type { ReactNode } from "react";
 import { DashboardSidebar } from "@/components/dashboard/app-sidebar";
+import { UploadActivityPanel } from "@/components/files/upload-activity-panel";
 import type { ChatSummary } from "@/lib/chat-data";
 
 interface DashboardLayoutProps {
@@ -32,6 +33,7 @@ export function DashboardLayout({
       />
       <SidebarInset className="relative min-h-0 overflow-hidden bg-background md:peer-data-[variant=inset]:mb-0">
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        <UploadActivityPanel />
       </SidebarInset>
     </SidebarProvider>
   );

@@ -15,7 +15,7 @@ const summarySchema = z.object({
   matches: z
     .array(
       z.object({
-        fileId: z.uuid("v4"),
+        fileId: z.uuid({ version: "v4" }),
         sourceType: z
           .enum(["pdf", "image", "video", "audio", "markdown", "link"])
           .optional(),
@@ -25,8 +25,8 @@ const summarySchema = z.object({
     )
     .max(24)
     .optional(),
-  fileIds: z.array(z.uuid("v4")).max(10).optional(),
-  workspaceUuid: z.uuid("v4"),
+  fileIds: z.array(z.uuid({ version: "v4" })).max(10).optional(),
+  workspaceUuid: z.uuid({ version: "v4" }),
   query: z.string().min(1),
   stream: z.boolean().optional(),
 });
@@ -167,7 +167,7 @@ export async function POST(request: Request) {
       .filter(([, group]) => {
         const sourceType = group.sourceType ?? "";
         return (
-          DOCUMENT_SOURCE_TYPES.has(sourceType) && group.snippets.length > 0
+          DOCUMENT_SOURCE_TYPES.has(sourceType) || group.snippets.length > 0
         );
       })
       .slice(0, 8)
@@ -277,9 +277,10 @@ export async function POST(request: Request) {
         : "Retrieved document chunks: none",
     ].join("\n");
 
+    const modelAlias: ApolloModelName = "apollo-sprint";
     if (parsed.data.stream) {
       const result = streamText({
-        model: apollo.languageModel("apollo-sprint"),
+        model: apollo.languageModel(modelAlias),
         messages: [
           {
             role: "user",
@@ -298,7 +299,7 @@ export async function POST(request: Request) {
 
       void apiLogger.requestSucceeded(200, {
         workspaceUuid: parsed.data.workspaceUuid,
-        modelName: "apollo-tiny",
+        modelName: modelAlias,
         provider: "apollo",
         attachedFileCount: attachedFiles.length,
         textualEvidenceCount: textualEvidence.length,
@@ -315,7 +316,7 @@ export async function POST(request: Request) {
 
     const generationStartedAt = performance.now();
     const { text } = await generateText({
-      model: apollo.languageModel("apollo-sprint"),
+      model: apollo.languageModel(modelAlias),
       messages: [
         {
           role: "user",
@@ -337,7 +338,7 @@ export async function POST(request: Request) {
     void apiLogger.requestSucceeded(200, {
       workspaceUuid: parsed.data.workspaceUuid,
       generationLatencyMs,
-      modelName: "apollo-tiny",
+      modelName: modelAlias,
       provider: "apollo",
       attachedFileCount: attachedFiles.length,
       textualEvidenceCount: textualEvidence.length,

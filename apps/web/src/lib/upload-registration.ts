@@ -1,3 +1,4 @@
+import { scheduleIngestionJob } from "@avenire/ingestion/queue";
 import { UTApi } from "@avenire/storage";
 import { consumeUploadUnits } from "@/lib/billing";
 import {
@@ -7,36 +8,100 @@ import {
   softDeleteFileAsset,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
-import { enqueueIngestionJob, hasSuccessfulIngestionForFile } from "@/lib/ingestion-data";
+import { hasSuccessfulIngestionForFile } from "@/lib/ingestion-data";
 import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
+const SHA256_HEX_REGEX = /^[a-f0-9]{64}$/;
+
 export interface UploadRegistrationInput {
-  workspaceUuid: string;
-  userId: string;
+  contentHashSha256?: string | null;
+  dedupeMode?: "allow" | "skip";
   folderId: string;
+  hashComputedBy?: "client" | "server" | null;
+  metadata?: Record<string, unknown>;
+  mimeType?: string | null;
+  name: string;
+  sizeBytes: number;
   storageKey: string;
   storageUrl: string;
-  name: string;
-  mimeType?: string | null;
-  sizeBytes: number;
-  metadata?: Record<string, unknown>;
-  contentHashSha256?: string | null;
-  hashComputedBy?: "client" | "server" | null;
-  dedupeMode?: "allow" | "skip";
+  userId: string;
+  workspaceUuid: string;
 }
 
 export interface UploadRegistrationResult {
   file: Awaited<ReturnType<typeof registerFileAsset>>;
-  ingestionJob: Awaited<ReturnType<typeof enqueueIngestionJob>> | null;
+  ingestionJob: Awaited<ReturnType<typeof scheduleIngestionJob>> | null;
   status: "created" | "deduplicated";
 }
 
 export function normalizeSha256(value: string | null | undefined) {
   const normalized = (value ?? "").trim().toLowerCase();
-  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+  return SHA256_HEX_REGEX.test(normalized) ? normalized : null;
 }
 
-function normalizeUploadThingStorageUrl(storageUrl: string, storageKey: string) {
+function inferMimeTypeFromName(name: string): string | null {
+  const normalizedName = name.trim().toLowerCase();
+  if (!normalizedName) {
+    return null;
+  }
+
+  if (normalizedName.endsWith(".pdf")) {
+    return "application/pdf";
+  }
+  if (normalizedName.endsWith(".md")) {
+    return "text/markdown";
+  }
+  if (normalizedName.endsWith(".txt")) {
+    return "text/plain";
+  }
+  if (normalizedName.endsWith(".url")) {
+    return "application/url";
+  }
+
+  if (
+    [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".heic"].some(
+      (extension) => normalizedName.endsWith(extension)
+    )
+  ) {
+    return "image/*";
+  }
+
+  if (
+    [".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv"].some((extension) =>
+      normalizedName.endsWith(extension)
+    )
+  ) {
+    return "video/*";
+  }
+
+  if (
+    [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"].some((extension) =>
+      normalizedName.endsWith(extension)
+    )
+  ) {
+    return "audio/*";
+  }
+
+  return null;
+}
+
+function resolveMimeType(input: { mimeType?: string | null; name: string }) {
+  const normalizedMime = input.mimeType?.trim().toLowerCase() ?? "";
+  if (
+    normalizedMime &&
+    normalizedMime !== "application/octet-stream" &&
+    normalizedMime !== "unknown"
+  ) {
+    return normalizedMime;
+  }
+
+  return inferMimeTypeFromName(input.name) ?? input.mimeType ?? null;
+}
+
+function normalizeUploadThingStorageUrl(
+  storageUrl: string,
+  storageKey: string
+) {
   try {
     const parsed = new URL(storageUrl);
     const host = parsed.hostname.toLowerCase();
@@ -49,7 +114,9 @@ function normalizeUploadThingStorageUrl(storageUrl: string, storageKey: string) 
   }
 }
 
-export async function deleteUploadThingFile(storageKey: string | null | undefined) {
+export async function deleteUploadThingFile(
+  storageKey: string | null | undefined
+) {
   if (!(storageKey && process.env.UPLOADTHING_TOKEN)) {
     return;
   }
@@ -67,6 +134,10 @@ export async function registerWorkspaceUploadedFile(
 ): Promise<UploadRegistrationResult> {
   const dedupeMode = input.dedupeMode ?? "allow";
   const normalizedHash = normalizeSha256(input.contentHashSha256);
+  const resolvedMimeType = resolveMimeType({
+    mimeType: input.mimeType,
+    name: input.name,
+  });
 
   if (dedupeMode !== "skip") {
     const existingByHash = normalizedHash
@@ -83,10 +154,17 @@ export async function registerWorkspaceUploadedFile(
       ).catch(() => false);
       const ingestionJob = hasSucceeded
         ? null
-        : await enqueueIngestionJob({
+        : await scheduleIngestionJob({
             workspaceId: input.workspaceUuid,
             fileId: existing.id,
-          }).catch(() => null);
+          }).catch((error) => {
+            console.error("upload.ingestion_enqueue_failed", {
+              workspaceUuid: input.workspaceUuid,
+              fileId: existing.id,
+              error,
+            });
+            return null;
+          });
 
       const publishTasks: Promise<unknown>[] = [];
 
@@ -136,11 +214,11 @@ export async function registerWorkspaceUploadedFile(
       input.storageKey
     ),
     name: input.name,
-    mimeType: input.mimeType,
+    mimeType: resolvedMimeType,
     sizeBytes: input.sizeBytes,
     metadata: input.metadata,
     contentHashSha256: normalizedHash,
-    hashComputedBy: normalizedHash ? input.hashComputedBy ?? "client" : null,
+    hashComputedBy: normalizedHash ? (input.hashComputedBy ?? "client") : null,
     hashVerificationStatus: normalizedHash ? "pending" : null,
   });
 
@@ -154,10 +232,17 @@ export async function registerWorkspaceUploadedFile(
     });
   }
 
-  const ingestionJob = await enqueueIngestionJob({
+  const ingestionJob = await scheduleIngestionJob({
     workspaceId: input.workspaceUuid,
     fileId: file.id,
-  }).catch(() => null);
+  }).catch((error) => {
+    console.error("upload.ingestion_enqueue_failed", {
+      workspaceUuid: input.workspaceUuid,
+      fileId: file.id,
+      error,
+    });
+    return null;
+  });
 
   const postRegisterTasks: Promise<unknown>[] = [
     publishFilesInvalidationEvent({

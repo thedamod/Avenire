@@ -7,7 +7,7 @@ const RETENTION_DAYS = 30;
 function isAuthorized(request: Request) {
   const token = process.env.MAINTENANCE_CRON_TOKEN;
   if (!token) {
-    return true;
+    return false;
   }
 
   const authHeader = request.headers.get("authorization") ?? "";

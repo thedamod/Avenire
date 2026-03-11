@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./queue": "./src/queue.ts",
     "./types": "./src/ingestion/types.ts"
   },
   "scripts": {
@@ -21,6 +22,7 @@
     "@tavily/core": "^0.7.2",
     "abso-ai": "^0.0.9",
     "ai": "^6.0.105",
+    "bullmq": "^5.70.4",
     "drizzle-orm": "^0.45.1",
     "pdfjs-dist": "^5.4.624",
     "zod": "^4.3.6"

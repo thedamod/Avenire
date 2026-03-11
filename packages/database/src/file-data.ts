@@ -1,11 +1,28 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  sql,
+} from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { db } from "./client";
-import { invitation, member, organization, user as authUser } from "./auth-schema";
+import {
+  invitation,
+  member,
+  organization,
+  user as authUser,
+} from "./auth-schema";
 import {
   chatThread,
   fileAsset,
   fileFolder,
+  noteContent,
   resourceShareGrant,
   resourceShareLink,
   workspace,
@@ -30,6 +47,7 @@ export interface ExplorerFolderRecord {
 export interface ExplorerFileRecord {
   contentHashSha256?: string | null;
   isIngested?: boolean;
+  isNote?: boolean;
   id: string;
   workspaceId: string;
   folderId: string;
@@ -46,8 +64,77 @@ export interface ExplorerFileRecord {
   isShared?: boolean;
   readOnly?: boolean;
   sourceWorkspaceId?: string;
+  videoDelivery?: VideoDeliveryRecord | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type VideoDeliveryStatus = "failed" | "pending" | "ready";
+export type VideoDeliveryStrategy = "hybrid" | "mux" | "progressive";
+
+export interface VideoDeliveryAnalysisRecord {
+  bitrateKbps?: number | null;
+  durationSeconds?: number | null;
+  height?: number | null;
+  width?: number | null;
+}
+
+export interface VideoDeliveryProgressiveRecord {
+  mimeType?: string | null;
+  sizeBytes?: number | null;
+  storageKey?: string | null;
+  url: string;
+}
+
+export interface VideoDeliveryPosterRecord {
+  mimeType?: string | null;
+  storageKey?: string | null;
+  url: string;
+}
+
+export interface VideoDeliveryHlsVariantRecord {
+  bitrateKbps?: number | null;
+  height?: number | null;
+  playlistStorageKey?: string | null;
+  playlistUrl: string;
+  width?: number | null;
+}
+
+export interface VideoDeliveryHlsRecord {
+  manifestStorageKey?: string | null;
+  manifestUrl: string;
+  segmentDurationSeconds?: number | null;
+  segmentStorageKeys?: string[] | null;
+  variants?: VideoDeliveryHlsVariantRecord[] | null;
+}
+
+export interface VideoDeliveryMuxPlaybackRecord {
+  id: string;
+  policy: "drm" | "public" | "signed";
+}
+
+export interface VideoDeliveryMuxRecord {
+  aspectRatio?: string | null;
+  assetId: string;
+  createdAt?: string | null;
+  maxStoredResolution?: string | null;
+  playbackId?: string | null;
+  playbackIds?: VideoDeliveryMuxPlaybackRecord[] | null;
+  resolutionTier?: string | null;
+  status: string;
+}
+
+export interface VideoDeliveryRecord {
+  analysis?: VideoDeliveryAnalysisRecord | null;
+  error?: string | null;
+  hls?: VideoDeliveryHlsRecord | null;
+  mux?: VideoDeliveryMuxRecord | null;
+  poster?: VideoDeliveryPosterRecord | null;
+  progressive?: VideoDeliveryProgressiveRecord | null;
+  status: VideoDeliveryStatus;
+  strategy: VideoDeliveryStrategy;
+  updatedAt: string;
+  version: number;
 }
 
 export interface TrashItemRecord {
@@ -162,14 +249,251 @@ function mapFolder(row: typeof fileFolder.$inferSelect): ExplorerFolderRecord {
   };
 }
 
+function asObjectRecord(value: unknown): Record<string, unknown> | null {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asNullableFiniteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asNullableString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function asStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const items = value.filter(
+    (entry): entry is string =>
+      typeof entry === "string" && entry.trim().length > 0
+  );
+  return items.length > 0 ? items : null;
+}
+
+function mapVideoDeliveryAnalysis(
+  value: unknown
+): VideoDeliveryAnalysisRecord | null {
+  const record = asObjectRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    bitrateKbps: asNullableFiniteNumber(record.bitrateKbps),
+    durationSeconds: asNullableFiniteNumber(record.durationSeconds),
+    height: asNullableFiniteNumber(record.height),
+    width: asNullableFiniteNumber(record.width),
+  };
+}
+
+function mapVideoDeliveryProgressive(
+  value: unknown
+): VideoDeliveryProgressiveRecord | null {
+  const record = asObjectRecord(value);
+  const url = asNullableString(record?.url);
+  if (!record || !url) {
+    return null;
+  }
+
+  return {
+    mimeType: asNullableString(record.mimeType),
+    sizeBytes: asNullableFiniteNumber(record.sizeBytes),
+    storageKey: asNullableString(record.storageKey),
+    url,
+  };
+}
+
+function mapVideoDeliveryPoster(
+  value: unknown
+): VideoDeliveryPosterRecord | null {
+  const record = asObjectRecord(value);
+  const url = asNullableString(record?.url);
+  if (!record || !url) {
+    return null;
+  }
+
+  return {
+    mimeType: asNullableString(record.mimeType),
+    storageKey: asNullableString(record.storageKey),
+    url,
+  };
+}
+
+function mapVideoDeliveryHlsVariant(
+  value: unknown
+): VideoDeliveryHlsVariantRecord | null {
+  const record = asObjectRecord(value);
+  const playlistUrl = asNullableString(record?.playlistUrl);
+  if (!record || !playlistUrl) {
+    return null;
+  }
+
+  return {
+    bitrateKbps: asNullableFiniteNumber(record.bitrateKbps),
+    height: asNullableFiniteNumber(record.height),
+    playlistStorageKey: asNullableString(record.playlistStorageKey),
+    playlistUrl,
+    width: asNullableFiniteNumber(record.width),
+  };
+}
+
+function mapVideoDeliveryHls(value: unknown): VideoDeliveryHlsRecord | null {
+  const record = asObjectRecord(value);
+  const manifestUrl = asNullableString(record?.manifestUrl);
+  if (!record || !manifestUrl) {
+    return null;
+  }
+
+  const variants = Array.isArray(record.variants)
+    ? record.variants
+        .map((entry) => mapVideoDeliveryHlsVariant(entry))
+        .filter((entry): entry is VideoDeliveryHlsVariantRecord =>
+          Boolean(entry)
+        )
+    : null;
+
+  return {
+    manifestStorageKey: asNullableString(record.manifestStorageKey),
+    manifestUrl,
+    segmentDurationSeconds: asNullableFiniteNumber(
+      record.segmentDurationSeconds
+    ),
+    segmentStorageKeys: asStringArray(record.segmentStorageKeys),
+    variants: variants && variants.length > 0 ? variants : null,
+  };
+}
+
+function mapVideoDeliveryMuxPlayback(
+  value: unknown
+): VideoDeliveryMuxPlaybackRecord | null {
+  const record = asObjectRecord(value);
+  const id = asNullableString(record?.id);
+  const policy = asNullableString(record?.policy);
+  if (
+    !id ||
+    !(policy === "public" || policy === "signed" || policy === "drm")
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    policy,
+  };
+}
+
+function mapVideoDeliveryMux(value: unknown): VideoDeliveryMuxRecord | null {
+  const record = asObjectRecord(value);
+  const assetId = asNullableString(record?.assetId);
+  const status = asNullableString(record?.status);
+  if (!record || !assetId || !status) {
+    return null;
+  }
+
+  const playbackIds = Array.isArray(record.playbackIds)
+    ? record.playbackIds
+        .map((entry) => mapVideoDeliveryMuxPlayback(entry))
+        .filter((entry): entry is VideoDeliveryMuxPlaybackRecord =>
+          Boolean(entry)
+        )
+    : null;
+
+  return {
+    aspectRatio: asNullableString(record.aspectRatio),
+    assetId,
+    createdAt: asNullableString(record.createdAt),
+    maxStoredResolution: asNullableString(record.maxStoredResolution),
+    playbackId: asNullableString(record.playbackId),
+    playbackIds: playbackIds && playbackIds.length > 0 ? playbackIds : null,
+    resolutionTier: asNullableString(record.resolutionTier),
+    status,
+  };
+}
+
+export function mapVideoDeliveryRecord(
+  value: unknown
+): VideoDeliveryRecord | null {
+  const record = asObjectRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const status = asNullableString(record.status);
+  const strategy = asNullableString(record.strategy);
+  const updatedAt = asNullableString(record.updatedAt);
+  const version = asNullableFiniteNumber(record.version);
+
+  if (
+    !(status === "pending" || status === "ready" || status === "failed") ||
+    !(
+      strategy === "progressive" ||
+      strategy === "hybrid" ||
+      strategy === "mux"
+    ) ||
+    !updatedAt ||
+    version === null
+  ) {
+    return null;
+  }
+
+  return {
+    analysis: mapVideoDeliveryAnalysis(record.analysis),
+    error: asNullableString(record.error),
+    hls: mapVideoDeliveryHls(record.hls),
+    mux: mapVideoDeliveryMux(record.mux),
+    poster: mapVideoDeliveryPoster(record.poster),
+    progressive: mapVideoDeliveryProgressive(record.progressive),
+    status,
+    strategy,
+    updatedAt,
+    version,
+  };
+}
+
+export function listVideoDeliveryStorageKeys(
+  videoDelivery: VideoDeliveryRecord | null | undefined
+) {
+  if (!videoDelivery) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      [
+        videoDelivery.progressive?.storageKey ?? null,
+        videoDelivery.poster?.storageKey ?? null,
+        videoDelivery.hls?.manifestStorageKey ?? null,
+        ...(videoDelivery.hls?.segmentStorageKeys ?? []),
+        ...(videoDelivery.hls?.variants?.map(
+          (variant) => variant.playlistStorageKey ?? null
+        ) ?? []),
+      ].filter(
+        (value): value is string =>
+          typeof value === "string" && value.trim().length > 0
+      )
+    )
+  );
+}
+
 function mapFile(row: typeof fileAsset.$inferSelect): ExplorerFileRecord {
   const storageKey = row.optimizedStorageKey ?? row.storageKey;
   const storageUrl = row.optimizedStorageUrl ?? row.storageUrl;
   const mimeType = row.optimizedMimeType ?? row.mimeType ?? null;
   const sizeBytes = row.optimizedSizeBytes ?? row.sizeBytes;
+  const metadata = asObjectRecord(row.metadata);
+  const isNote =
+    typeof metadata?.type === "string" &&
+    metadata.type.toLowerCase() === "note";
 
   return {
     contentHashSha256: row.contentHashSha256 ?? null,
+    isNote,
     id: row.id,
     workspaceId: row.workspaceId,
     folderId: row.folderId,
@@ -180,12 +504,117 @@ function mapFile(row: typeof fileAsset.$inferSelect): ExplorerFileRecord {
     sizeBytes,
     uploadedBy: row.uploadedBy,
     updatedBy: row.updatedBy ?? null,
+    videoDelivery: mapVideoDeliveryRecord(metadata?.videoDelivery),
     hashComputedBy: row.hashComputedBy ?? null,
     hashVerificationStatus: row.hashVerificationStatus ?? null,
     hashVerifiedAt: row.hashVerifiedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+export async function getWorkspaceIdForFile(fileId: string) {
+  const [row] = await db
+    .select({ workspaceId: fileAsset.workspaceId })
+    .from(fileAsset)
+    .where(and(eq(fileAsset.id, fileId), isNull(fileAsset.deletedAt)))
+    .limit(1);
+
+  return row?.workspaceId ?? null;
+}
+
+export async function getNoteContent(fileId: string) {
+  const [row] = await db
+    .select({
+      content: noteContent.content,
+      needsReindex: noteContent.needsReindex,
+      updatedAt: noteContent.updatedAt,
+    })
+    .from(noteContent)
+    .where(eq(noteContent.fileId, fileId))
+    .limit(1);
+
+  return row ?? null;
+}
+
+export async function updateNoteContent(input: {
+  fileId: string;
+  userId: string;
+  content: string;
+}) {
+  const now = new Date();
+  const trimmed = input.content ?? "";
+  const shouldReindex = trimmed.trim().length > 0;
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(noteContent)
+      .values({
+        fileId: input.fileId,
+        content: trimmed,
+        needsReindex: shouldReindex,
+        updatedBy: input.userId,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: noteContent.fileId,
+        set: {
+          content: trimmed,
+          needsReindex: shouldReindex,
+          updatedBy: input.userId,
+          updatedAt: now,
+        },
+      })
+      .returning({
+        fileId: noteContent.fileId,
+        updatedAt: noteContent.updatedAt,
+      });
+
+    await tx
+      .update(fileAsset)
+      .set({ updatedAt: now, updatedBy: input.userId })
+      .where(and(eq(fileAsset.id, input.fileId), isNull(fileAsset.deletedAt)));
+
+    return row ?? null;
+  });
+}
+
+export async function listNotesNeedingReindex(input: { limit: number }) {
+  const limit = Math.max(1, Math.min(200, Math.trunc(input.limit)));
+  const rows = await db
+    .select({
+      fileId: fileAsset.id,
+      workspaceId: fileAsset.workspaceId,
+      updatedAt: noteContent.updatedAt,
+    })
+    .from(noteContent)
+    .innerJoin(fileAsset, eq(fileAsset.id, noteContent.fileId))
+    .where(
+      and(
+        eq(noteContent.needsReindex, true),
+        isNull(fileAsset.deletedAt)
+      )
+    )
+    .orderBy(asc(noteContent.updatedAt))
+    .limit(limit);
+
+  return rows.map((row) => ({
+    fileId: row.fileId,
+    workspaceId: row.workspaceId,
+    updatedAt: row.updatedAt.toISOString(),
+  }));
+}
+
+export async function markNoteReindexed(fileId: string) {
+  const [row] = await db
+    .update(noteContent)
+    .set({
+      needsReindex: false,
+      lastIndexedAt: new Date(),
+    })
+    .where(eq(noteContent.fileId, fileId))
+    .returning({ fileId: noteContent.fileId });
+
+  return row?.fileId ?? null;
 }
 
 async function listSharedFileRecordsForUser(userId: string) {
@@ -294,7 +723,9 @@ export async function listWorkspaceMembers(workspaceId: string) {
   }));
 }
 
-export async function listPendingInvitationsForEmail(email: string): Promise<WorkspaceInvitationRecord[]> {
+export async function listPendingInvitationsForEmail(
+  email: string
+): Promise<WorkspaceInvitationRecord[]> {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) {
     return [];
@@ -319,8 +750,8 @@ export async function listPendingInvitationsForEmail(email: string): Promise<Wor
       and(
         eq(invitation.email, normalizedEmail),
         eq(invitation.status, "pending"),
-        sql`${invitation.expiresAt} > now()`,
-      ),
+        sql`${invitation.expiresAt} > now()`
+      )
     )
     .orderBy(desc(invitation.createdAt));
 
@@ -347,7 +778,12 @@ export async function respondToInvitationForUser(input: {
   const [invite] = await db
     .select()
     .from(invitation)
-    .where(and(eq(invitation.id, input.invitationId), eq(invitation.email, normalizedEmail)))
+    .where(
+      and(
+        eq(invitation.id, input.invitationId),
+        eq(invitation.email, normalizedEmail)
+      )
+    )
     .limit(1);
 
   if (!invite) {
@@ -359,19 +795,34 @@ export async function respondToInvitationForUser(input: {
   }
 
   if (input.action === "decline") {
-    await db.update(invitation).set({ status: "declined" }).where(eq(invitation.id, invite.id));
-    return { ok: true as const, action: "declined" as const, organizationId: invite.organizationId };
+    await db
+      .update(invitation)
+      .set({ status: "declined" })
+      .where(eq(invitation.id, invite.id));
+    return {
+      ok: true as const,
+      action: "declined" as const,
+      organizationId: invite.organizationId,
+    };
   }
 
   if (invite.expiresAt.getTime() <= Date.now()) {
-    await db.update(invitation).set({ status: "expired" }).where(eq(invitation.id, invite.id));
+    await db
+      .update(invitation)
+      .set({ status: "expired" })
+      .where(eq(invitation.id, invite.id));
     return { ok: false as const, error: "Invitation expired" };
   }
 
   const [existingMembership] = await db
     .select({ id: member.id })
     .from(member)
-    .where(and(eq(member.organizationId, invite.organizationId), eq(member.userId, input.userId)))
+    .where(
+      and(
+        eq(member.organizationId, invite.organizationId),
+        eq(member.userId, input.userId)
+      )
+    )
     .limit(1);
 
   if (!existingMembership) {
@@ -384,7 +835,10 @@ export async function respondToInvitationForUser(input: {
     });
   }
 
-  await db.update(invitation).set({ status: "accepted" }).where(eq(invitation.id, invite.id));
+  await db
+    .update(invitation)
+    .set({ status: "accepted" })
+    .where(eq(invitation.id, invite.id));
   const ws = await ensureWorkspaceForOrganization(invite.organizationId);
 
   return {
@@ -494,7 +948,7 @@ export async function createWorkspaceInvitationByEmail(input: {
     .where(
       and(
         eq(member.organizationId, organizationId),
-        eq(authUser.email, normalizedEmail),
+        eq(authUser.email, normalizedEmail)
       )
     )
     .limit(1);
@@ -515,7 +969,7 @@ export async function createWorkspaceInvitationByEmail(input: {
       and(
         eq(invitation.organizationId, organizationId),
         eq(invitation.email, normalizedEmail),
-        eq(invitation.status, "pending"),
+        eq(invitation.status, "pending")
       )
     )
     .orderBy(desc(invitation.createdAt))
@@ -693,9 +1147,14 @@ export async function ensureWorkspaceForOrganization(organizationId: string) {
   });
 }
 
-export async function ensureWorkspaceRootFolder(workspaceId: string, userId: string) {
+export async function ensureWorkspaceRootFolder(
+  workspaceId: string,
+  userId: string
+) {
   return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`);
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${workspaceId}))`
+    );
 
     const [existing] = await tx
       .select()
@@ -704,8 +1163,8 @@ export async function ensureWorkspaceRootFolder(workspaceId: string, userId: str
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -738,8 +1197,8 @@ export async function ensureWorkspaceRootFolder(workspaceId: string, userId: str
         and(
           eq(fileFolder.workspaceId, workspaceId),
           isNull(fileFolder.parentId),
-          isNull(fileFolder.deletedAt),
-        ),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .orderBy(asc(fileFolder.createdAt))
       .limit(1);
@@ -1335,6 +1794,14 @@ export async function createFolder(
   if (trimmedName.length === 0) {
     return null;
   }
+  const parentValidation = await validateFolderParentId({
+    workspaceId,
+    parentId,
+  });
+  if (parentValidation.status !== "valid") {
+    return null;
+  }
+  const normalizedParentId = parentValidation.parentId;
 
   const [existing] = await db
     .select()
@@ -1342,10 +1809,12 @@ export async function createFolder(
     .where(
       and(
         eq(fileFolder.workspaceId, workspaceId),
-        eq(fileFolder.parentId, parentId),
+        normalizedParentId === null
+          ? isNull(fileFolder.parentId)
+          : eq(fileFolder.parentId, normalizedParentId),
         isNull(fileFolder.deletedAt),
-        sql`LOWER(${fileFolder.name}) = ${trimmedName.toLowerCase()}`,
-      ),
+        sql`LOWER(${fileFolder.name}) = ${trimmedName.toLowerCase()}`
+      )
     )
     .limit(1);
   if (existing) {
@@ -1357,7 +1826,7 @@ export async function createFolder(
     .insert(fileFolder)
     .values({
       workspaceId,
-      parentId: parentValidation.parentId,
+      parentId: normalizedParentId,
       name: trimmedName,
       createdBy: userId,
       createdAt: now,
@@ -1377,7 +1846,7 @@ export async function updateFolder(
     iconColor?: string | null;
     name?: string;
     parentId?: string | null;
-  },
+  }
 ) {
   const normalizedIconColor =
     typeof updates.iconColor === "string"
@@ -1385,13 +1854,29 @@ export async function updateFolder(
       : updates.iconColor === null
         ? null
         : undefined;
+  let nextParentId: string | null | undefined;
+  if (typeof updates.parentId !== "undefined") {
+    const parentValidation = await validateFolderParentId({
+      workspaceId,
+      parentId: updates.parentId,
+      currentFolderId: folderId,
+    });
+    if (parentValidation.status !== "valid") {
+      return null;
+    }
+    nextParentId = parentValidation.parentId;
+  }
 
   const [folder] = await db
     .update(fileFolder)
     .set({
-      ...(typeof updates.bannerUrl === "string" ? { bannerUrl: updates.bannerUrl.trim() || null } : {}),
+      ...(typeof updates.bannerUrl === "string"
+        ? { bannerUrl: updates.bannerUrl.trim() || null }
+        : {}),
       ...(updates.bannerUrl === null ? { bannerUrl: null } : {}),
-      ...(typeof normalizedIconColor === "string" ? { iconColor: normalizedIconColor } : {}),
+      ...(typeof normalizedIconColor === "string"
+        ? { iconColor: normalizedIconColor }
+        : {}),
       ...(normalizedIconColor === null ? { iconColor: null } : {}),
       ...(typeof updates.name === "string"
         ? { name: updates.name.trim().slice(0, 160) || "Untitled Folder" }
@@ -1399,7 +1884,7 @@ export async function updateFolder(
       ...(typeof nextParentId !== "undefined"
         ? { parentId: nextParentId }
         : {}),
-      updatedBy: userId,
+      updatedBy: actorUserId,
       updatedAt: new Date(),
     })
     .where(
@@ -1430,7 +1915,7 @@ export async function softDeleteFolder(workspaceId: string, folderId: string) {
 
   await db
     .update(fileAsset)
-    .set({ deletedAt: now, updatedBy: userId, updatedAt: now })
+    .set({ deletedAt: now, updatedAt: now })
     .where(
       and(
         eq(fileAsset.workspaceId, workspaceId),
@@ -1441,7 +1926,7 @@ export async function softDeleteFolder(workspaceId: string, folderId: string) {
 
   const folders = await db
     .update(fileFolder)
-    .set({ deletedAt: now, updatedBy: userId, updatedAt: now })
+    .set({ deletedAt: now, updatedAt: now })
     .where(
       and(
         eq(fileFolder.workspaceId, workspaceId),
@@ -1597,20 +2082,51 @@ export async function updateFileAssetStorageMetadata(
   fileId: string,
   userId: string,
   updates: {
-    optimizedStorageKey: string;
-    optimizedStorageUrl: string;
+    optimizedStorageKey?: string;
+    optimizedStorageUrl?: string;
     optimizedName?: string;
     optimizedMimeType?: string | null;
     optimizedSizeBytes?: number;
+    videoDelivery?: VideoDeliveryRecord | null;
   }
 ) {
+  const [existing] = await db
+    .select({ metadata: fileAsset.metadata })
+    .from(fileAsset)
+    .where(
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNull(fileAsset.deletedAt)
+      )
+    )
+    .limit(1);
+
+  if (!existing) {
+    return null;
+  }
+
+  const nextMetadata = {
+    ...(asObjectRecord(existing.metadata) ?? {}),
+    ...(typeof updates.videoDelivery !== "undefined"
+      ? { videoDelivery: updates.videoDelivery }
+      : {}),
+  };
+
   const [record] = await db
     .update(fileAsset)
     .set({
-      optimizedStorageKey: updates.optimizedStorageKey,
-      optimizedStorageUrl: normalizeTrustedStorageUrl(
-        updates.optimizedStorageUrl
-      ),
+      metadata: nextMetadata,
+      ...(typeof updates.optimizedStorageKey === "string"
+        ? { optimizedStorageKey: updates.optimizedStorageKey }
+        : {}),
+      ...(typeof updates.optimizedStorageUrl === "string"
+        ? {
+            optimizedStorageUrl: normalizeTrustedStorageUrl(
+              updates.optimizedStorageUrl
+            ),
+          }
+        : {}),
       ...(typeof updates.optimizedName === "string"
         ? {
             optimizedName:
@@ -1636,6 +2152,85 @@ export async function updateFileAssetStorageMetadata(
     .returning();
 
   return record ? mapFile(record) : null;
+}
+
+export async function replaceFileAssetContent(
+  workspaceId: string,
+  fileId: string,
+  userId: string,
+  updates: {
+    contentHashSha256?: string | null;
+    hashComputedBy?: "client" | "server" | null;
+    hashVerificationStatus?: "failed" | "pending" | "verified" | null;
+    metadata?: Record<string, unknown>;
+    mimeType?: string | null;
+    sizeBytes: number;
+    storageKey: string;
+    storageUrl: string;
+  }
+) {
+  const [existing] = await db
+    .select({
+      metadata: fileAsset.metadata,
+      storageKey: fileAsset.storageKey,
+      storageUrl: fileAsset.storageUrl,
+    })
+    .from(fileAsset)
+    .where(
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNull(fileAsset.deletedAt)
+      )
+    )
+    .limit(1);
+
+  if (!existing) {
+    return null;
+  }
+
+  const nextMetadata = {
+    ...(asObjectRecord(existing.metadata) ?? {}),
+    ...(updates.metadata ?? {}),
+  };
+
+  const [record] = await db
+    .update(fileAsset)
+    .set({
+      contentHashSha256: updates.contentHashSha256 ?? null,
+      hashComputedBy: updates.hashComputedBy ?? null,
+      hashVerificationStatus: updates.hashVerificationStatus ?? null,
+      metadata: nextMetadata,
+      mimeType: updates.mimeType ?? null,
+      optimizedMimeType: null,
+      optimizedName: null,
+      optimizedSizeBytes: null,
+      optimizedStorageKey: null,
+      optimizedStorageUrl: null,
+      sizeBytes: updates.sizeBytes,
+      storageKey: updates.storageKey,
+      storageUrl: normalizeTrustedStorageUrl(updates.storageUrl),
+      updatedAt: new Date(),
+      updatedBy: userId,
+    })
+    .where(
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNull(fileAsset.deletedAt)
+      )
+    )
+    .returning();
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    file: mapFile(record),
+    previousStorageKey: existing.storageKey,
+    previousStorageUrl: existing.storageUrl,
+  };
 }
 
 export async function getFileAssetById(workspaceId: string, fileId: string) {
@@ -1689,8 +2284,8 @@ export async function getFileAssetByContentHash(
       and(
         eq(fileAsset.workspaceId, workspaceId),
         eq(fileAsset.contentHashSha256, normalizedHash),
-        isNull(fileAsset.deletedAt),
-      ),
+        isNull(fileAsset.deletedAt)
+      )
     )
     .orderBy(desc(fileAsset.updatedAt))
     .limit(1);
@@ -1699,11 +2294,11 @@ export async function getFileAssetByContentHash(
 }
 
 export async function softDeleteFileAsset(workspaceId: string, fileId: string) {
+  const now = new Date();
   const [record] = await db
     .update(fileAsset)
     .set({
       deletedAt: now,
-      ...(userId ? { updatedBy: userId } : {}),
       updatedAt: now,
     })
     .where(
@@ -1718,17 +2313,29 @@ export async function softDeleteFileAsset(workspaceId: string, fileId: string) {
   return record ? mapFile(record) : null;
 }
 
-export async function listTrashedItems(workspaceId: string): Promise<TrashItemRecord[]> {
+export async function listTrashedItems(
+  workspaceId: string
+): Promise<TrashItemRecord[]> {
   const [folders, files] = await Promise.all([
     db
       .select()
       .from(fileFolder)
-      .where(and(eq(fileFolder.workspaceId, workspaceId), isNotNull(fileFolder.deletedAt)))
+      .where(
+        and(
+          eq(fileFolder.workspaceId, workspaceId),
+          isNotNull(fileFolder.deletedAt)
+        )
+      )
       .orderBy(desc(fileFolder.deletedAt)),
     db
       .select()
       .from(fileAsset)
-      .where(and(eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)))
+      .where(
+        and(
+          eq(fileAsset.workspaceId, workspaceId),
+          isNotNull(fileAsset.deletedAt)
+        )
+      )
       .orderBy(desc(fileAsset.deletedAt)),
   ]);
 
@@ -1761,16 +2368,22 @@ export async function listTrashedItems(workspaceId: string): Promise<TrashItemRe
     }));
 
   return [...folderItems, ...fileItems].sort(
-    (a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime(),
+    (a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime()
   );
 }
 
-async function getWorkspaceRootFolderId(workspaceId: string): Promise<string | null> {
+async function getWorkspaceRootFolderId(
+  workspaceId: string
+): Promise<string | null> {
   const [root] = await db
     .select({ id: fileFolder.id })
     .from(fileFolder)
     .where(
-      and(eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.parentId), isNull(fileFolder.deletedAt)),
+      and(
+        eq(fileFolder.workspaceId, workspaceId),
+        isNull(fileFolder.parentId),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .limit(1);
   return root?.id ?? null;
@@ -1784,7 +2397,11 @@ export async function restoreFileAsset(workspaceId: string, fileId: string) {
     })
     .from(fileAsset)
     .where(
-      and(eq(fileAsset.id, fileId), eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)),
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNotNull(fileAsset.deletedAt)
+      )
     )
     .limit(1);
 
@@ -1796,11 +2413,16 @@ export async function restoreFileAsset(workspaceId: string, fileId: string) {
     .select({ id: fileFolder.id })
     .from(fileFolder)
     .where(
-      and(eq(fileFolder.id, row.folderId), eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.deletedAt)),
+      and(
+        eq(fileFolder.id, row.folderId),
+        eq(fileFolder.workspaceId, workspaceId),
+        isNull(fileFolder.deletedAt)
+      )
     )
     .limit(1);
 
-  const fallbackFolderId = folder?.id ?? (await getWorkspaceRootFolderId(workspaceId));
+  const fallbackFolderId =
+    folder?.id ?? (await getWorkspaceRootFolderId(workspaceId));
   if (!fallbackFolderId) {
     return false;
   }
@@ -1808,13 +2430,22 @@ export async function restoreFileAsset(workspaceId: string, fileId: string) {
   const [restored] = await db
     .update(fileAsset)
     .set({ deletedAt: null, folderId: fallbackFolderId, updatedAt: new Date() })
-    .where(and(eq(fileAsset.id, fileId), eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)))
+    .where(
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNotNull(fileAsset.deletedAt)
+      )
+    )
     .returning({ id: fileAsset.id });
 
   return Boolean(restored);
 }
 
-async function collectDescendantFolderIdsIncludingDeleted(workspaceId: string, rootFolderId: string) {
+async function collectDescendantFolderIdsIncludingDeleted(
+  workspaceId: string,
+  rootFolderId: string
+) {
   const descendants: string[] = [];
   let frontier = [rootFolderId];
 
@@ -1822,7 +2453,12 @@ async function collectDescendantFolderIdsIncludingDeleted(workspaceId: string, r
     const children = await db
       .select({ id: fileFolder.id })
       .from(fileFolder)
-      .where(and(eq(fileFolder.workspaceId, workspaceId), inArray(fileFolder.parentId, frontier)));
+      .where(
+        and(
+          eq(fileFolder.workspaceId, workspaceId),
+          inArray(fileFolder.parentId, frontier)
+        )
+      );
 
     const next = children.map((child) => child.id);
     descendants.push(...next);
@@ -1840,7 +2476,11 @@ export async function restoreFolder(workspaceId: string, folderId: string) {
     })
     .from(fileFolder)
     .where(
-      and(eq(fileFolder.id, folderId), eq(fileFolder.workspaceId, workspaceId), isNotNull(fileFolder.deletedAt)),
+      and(
+        eq(fileFolder.id, folderId),
+        eq(fileFolder.workspaceId, workspaceId),
+        isNotNull(fileFolder.deletedAt)
+      )
     )
     .limit(1);
 
@@ -1848,7 +2488,10 @@ export async function restoreFolder(workspaceId: string, folderId: string) {
     return false;
   }
 
-  const descendants = await collectDescendantFolderIdsIncludingDeleted(workspaceId, folderId);
+  const descendants = await collectDescendantFolderIdsIncludingDeleted(
+    workspaceId,
+    folderId
+  );
   const folderIds = [folderId, ...descendants];
   const now = new Date();
 
@@ -1860,7 +2503,11 @@ export async function restoreFolder(workspaceId: string, folderId: string) {
       })
       .from(fileFolder)
       .where(
-        and(eq(fileFolder.id, row.parentId), eq(fileFolder.workspaceId, workspaceId), isNull(fileFolder.deletedAt)),
+        and(
+          eq(fileFolder.id, row.parentId),
+          eq(fileFolder.workspaceId, workspaceId),
+          isNull(fileFolder.deletedAt)
+        )
       )
       .limit(1);
     if (!parent) {
@@ -1871,83 +2518,211 @@ export async function restoreFolder(workspaceId: string, folderId: string) {
   await db
     .update(fileFolder)
     .set({ deletedAt: null, updatedAt: now })
-    .where(and(eq(fileFolder.workspaceId, workspaceId), inArray(fileFolder.id, folderIds)));
+    .where(
+      and(
+        eq(fileFolder.workspaceId, workspaceId),
+        inArray(fileFolder.id, folderIds)
+      )
+    );
 
   await db
     .update(fileFolder)
     .set({ parentId: nextParentId, updatedAt: now })
-    .where(and(eq(fileFolder.workspaceId, workspaceId), eq(fileFolder.id, folderId)));
+    .where(
+      and(eq(fileFolder.workspaceId, workspaceId), eq(fileFolder.id, folderId))
+    );
 
   await db
     .update(fileAsset)
     .set({ deletedAt: null, updatedAt: now })
-    .where(and(eq(fileAsset.workspaceId, workspaceId), inArray(fileAsset.folderId, folderIds)));
+    .where(
+      and(
+        eq(fileAsset.workspaceId, workspaceId),
+        inArray(fileAsset.folderId, folderIds)
+      )
+    );
 
   return true;
 }
 
-export async function permanentlyDeleteFileAsset(workspaceId: string, fileId: string) {
+export async function permanentlyDeleteFileAsset(
+  workspaceId: string,
+  fileId: string
+) {
   const [record] = await db
     .delete(fileAsset)
     .where(
-      and(eq(fileAsset.id, fileId), eq(fileAsset.workspaceId, workspaceId), isNotNull(fileAsset.deletedAt)),
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNotNull(fileAsset.deletedAt)
+      )
     )
-    .returning({ id: fileAsset.id, storageKey: fileAsset.storageKey });
+    .returning({
+      id: fileAsset.id,
+      metadata: fileAsset.metadata,
+      optimizedStorageKey: fileAsset.optimizedStorageKey,
+      storageKey: fileAsset.storageKey,
+    });
 
-  return record ?? null;
+  if (!record) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    storageKeys: Array.from(
+      new Set(
+        [
+          record.storageKey,
+          record.optimizedStorageKey ?? null,
+          ...listVideoDeliveryStorageKeys(
+            mapVideoDeliveryRecord(
+              asObjectRecord(record.metadata)?.videoDelivery
+            )
+          ),
+        ].filter(
+          (value): value is string =>
+            typeof value === "string" && value.trim().length > 0
+        )
+      )
+    ),
+  };
 }
 
-export async function permanentlyDeleteFolder(workspaceId: string, folderId: string) {
+export async function permanentlyDeleteFolder(
+  workspaceId: string,
+  folderId: string
+) {
   const [folder] = await db
     .select({ id: fileFolder.id })
     .from(fileFolder)
-    .where(and(eq(fileFolder.id, folderId), eq(fileFolder.workspaceId, workspaceId), isNotNull(fileFolder.deletedAt)))
+    .where(
+      and(
+        eq(fileFolder.id, folderId),
+        eq(fileFolder.workspaceId, workspaceId),
+        isNotNull(fileFolder.deletedAt)
+      )
+    )
     .limit(1);
   if (!folder) {
     return [];
   }
 
-  const descendants = await collectDescendantFolderIdsIncludingDeleted(workspaceId, folderId);
+  const descendants = await collectDescendantFolderIdsIncludingDeleted(
+    workspaceId,
+    folderId
+  );
   const folderIds = [folderId, ...descendants];
 
   const files = await db
-    .select({ storageKey: fileAsset.storageKey })
+    .select({
+      metadata: fileAsset.metadata,
+      optimizedStorageKey: fileAsset.optimizedStorageKey,
+      storageKey: fileAsset.storageKey,
+    })
     .from(fileAsset)
-    .where(and(eq(fileAsset.workspaceId, workspaceId), inArray(fileAsset.folderId, folderIds)));
+    .where(
+      and(
+        eq(fileAsset.workspaceId, workspaceId),
+        inArray(fileAsset.folderId, folderIds)
+      )
+    );
 
-  await db.delete(fileAsset).where(and(eq(fileAsset.workspaceId, workspaceId), inArray(fileAsset.folderId, folderIds)));
-  await db.delete(fileFolder).where(and(eq(fileFolder.workspaceId, workspaceId), inArray(fileFolder.id, folderIds)));
+  await db
+    .delete(fileAsset)
+    .where(
+      and(
+        eq(fileAsset.workspaceId, workspaceId),
+        inArray(fileAsset.folderId, folderIds)
+      )
+    );
+  await db
+    .delete(fileFolder)
+    .where(
+      and(
+        eq(fileFolder.workspaceId, workspaceId),
+        inArray(fileFolder.id, folderIds)
+      )
+    );
 
-  return files.map((row) => row.storageKey);
+  return Array.from(
+    new Set(
+      files.flatMap((row) =>
+        [
+          row.storageKey,
+          row.optimizedStorageKey ?? null,
+          ...listVideoDeliveryStorageKeys(
+            mapVideoDeliveryRecord(asObjectRecord(row.metadata)?.videoDelivery)
+          ),
+        ].filter(
+          (value): value is string =>
+            typeof value === "string" && value.trim().length > 0
+        )
+      )
+    )
+  );
 }
 
 export async function purgeTrashOlderThan(cutoff: Date) {
   const staleFiles = await db
     .select({
       id: fileAsset.id,
-      workspaceId: fileAsset.workspaceId,
+      metadata: fileAsset.metadata,
+      optimizedStorageKey: fileAsset.optimizedStorageKey,
       storageKey: fileAsset.storageKey,
     })
     .from(fileAsset)
-    .where(and(isNotNull(fileAsset.deletedAt), lte(fileAsset.deletedAt, cutoff)));
+    .where(
+      and(isNotNull(fileAsset.deletedAt), lte(fileAsset.deletedAt, cutoff))
+    );
 
   if (staleFiles.length > 0) {
-    await db.delete(fileAsset).where(inArray(fileAsset.id, staleFiles.map((row) => row.id)));
+    await db.delete(fileAsset).where(
+      inArray(
+        fileAsset.id,
+        staleFiles.map((row) => row.id)
+      )
+    );
   }
 
   const staleFolders = await db
     .select({ id: fileFolder.id })
     .from(fileFolder)
-    .where(and(isNotNull(fileFolder.deletedAt), lte(fileFolder.deletedAt, cutoff)));
+    .where(
+      and(isNotNull(fileFolder.deletedAt), lte(fileFolder.deletedAt, cutoff))
+    );
 
   if (staleFolders.length > 0) {
-    await db.delete(fileFolder).where(inArray(fileFolder.id, staleFolders.map((row) => row.id)));
+    await db.delete(fileFolder).where(
+      inArray(
+        fileFolder.id,
+        staleFolders.map((row) => row.id)
+      )
+    );
   }
 
   return {
     fileCount: staleFiles.length,
     folderCount: staleFolders.length,
-    storageKeys: staleFiles.map((row) => row.storageKey),
+    storageKeys: Array.from(
+      new Set(
+        staleFiles.flatMap((row) =>
+          [
+            row.storageKey,
+            row.optimizedStorageKey ?? null,
+            ...listVideoDeliveryStorageKeys(
+              mapVideoDeliveryRecord(
+                asObjectRecord(row.metadata)?.videoDelivery
+              )
+            ),
+          ].filter(
+            (value): value is string =>
+              typeof value === "string" && value.trim().length > 0
+          )
+        )
+      )
+    ),
   };
 }
 
@@ -1989,7 +2764,11 @@ export async function grantResourceToUserByEmail(input: {
       createdAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [resourceShareGrant.resourceType, resourceShareGrant.resourceId, resourceShareGrant.granteeUserId],
+      target: [
+        resourceShareGrant.resourceType,
+        resourceShareGrant.resourceId,
+        resourceShareGrant.granteeUserId,
+      ],
       set: {
         permission:
           input.resourceType === "chat"
@@ -2081,7 +2860,7 @@ export async function grantAllChatsFromUserToUser(input: {
     .where(
       and(
         eq(chatThread.userId, input.ownerUserId),
-        eq(chatThread.workspaceId, input.workspaceId),
+        eq(chatThread.workspaceId, input.workspaceId)
       )
     );
 
@@ -2098,8 +2877,8 @@ export async function grantAllChatsFromUserToUser(input: {
         granteeUserId: input.granteeUserId,
         createdBy: input.createdBy,
         permission: "viewer",
-      }),
-    ),
+      })
+    )
   );
 
   return chats.length;
@@ -2237,11 +3016,13 @@ async function hasEditorGrantForFolder(input: {
     .where(
       and(
         eq(fileFolder.workspaceId, input.workspaceId),
-        isNull(fileFolder.deletedAt),
+        isNull(fileFolder.deletedAt)
       )
     );
 
-  const parentById = new Map(folders.map((folder) => [folder.id, folder.parentId]));
+  const parentById = new Map(
+    folders.map((folder) => [folder.id, folder.parentId])
+  );
   const folderLineage = new Set<string>();
   let cursor: string | null = input.folderId;
   while (cursor) {
@@ -2261,7 +3042,7 @@ async function hasEditorGrantForFolder(input: {
         eq(resourceShareGrant.workspaceId, input.workspaceId),
         eq(resourceShareGrant.resourceType, "folder"),
         eq(resourceShareGrant.granteeUserId, input.userId),
-        eq(resourceShareGrant.permission, "editor"),
+        eq(resourceShareGrant.permission, "editor")
       )
     );
 
@@ -2286,7 +3067,7 @@ export async function userCanEditFile(input: {
         eq(resourceShareGrant.resourceType, "file"),
         eq(resourceShareGrant.resourceId, input.fileId),
         eq(resourceShareGrant.granteeUserId, input.userId),
-        eq(resourceShareGrant.permission, "editor"),
+        eq(resourceShareGrant.permission, "editor")
       )
     )
     .limit(1);
@@ -2302,7 +3083,7 @@ export async function userCanEditFile(input: {
       and(
         eq(fileAsset.workspaceId, input.workspaceId),
         eq(fileAsset.id, input.fileId),
-        isNull(fileAsset.deletedAt),
+        isNull(fileAsset.deletedAt)
       )
     )
     .limit(1);
@@ -2351,7 +3132,7 @@ export async function userCanViewFolder(input: {
         eq(resourceShareGrant.workspaceId, input.workspaceId),
         eq(resourceShareGrant.resourceType, "folder"),
         eq(resourceShareGrant.resourceId, input.folderId),
-        eq(resourceShareGrant.granteeUserId, input.userId),
+        eq(resourceShareGrant.granteeUserId, input.userId)
       )
     )
     .limit(1);

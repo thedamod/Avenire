@@ -113,9 +113,12 @@ export async function POST(
   }
 
   const zipBytes = zipSync(archiveEntries, { level: 0 });
+  const archiveFileName = `${archiveName}.zip`;
+  const escapedArchiveFileName = archiveFileName.replace(/"/g, '\\"');
+  const encodedArchiveFileName = encodeURIComponent(archiveFileName);
   return new NextResponse(Buffer.from(zipBytes), {
     headers: {
-      "Content-Disposition": `attachment; filename="${archiveName}.zip"`,
+      "Content-Disposition": `attachment; filename="${escapedArchiveFileName}"; filename*=UTF-8''${encodedArchiveFileName}`,
       "Content-Type": "application/zip",
     },
   });

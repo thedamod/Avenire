@@ -73,6 +73,11 @@ export async function POST(
     return NextResponse.json({ error: "Invalid email" }, { status: 400 });
   }
   if (invite.status === "already-member") {
+    void apiLogger.requestSucceeded(200, {
+      workspaceUuid,
+      emailSent: false,
+      status: "already-member",
+    });
     return NextResponse.json({ status: "already-member" }, { status: 200 });
   }
 
@@ -114,7 +119,7 @@ export async function POST(
     workspaceUuid,
     emailSent,
   });
-  void apiLogger.requestSucceeded(201, { workspaceUuid, emailSent });
+  void apiLogger.requestSucceeded(200, { workspaceUuid, emailSent });
 
   return NextResponse.json(
     {

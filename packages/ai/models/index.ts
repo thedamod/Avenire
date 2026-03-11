@@ -3,8 +3,8 @@ import { createCohere } from "@ai-sdk/cohere";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createGroq } from "@ai-sdk/groq";
 import { createMistral } from "@ai-sdk/mistral";
-import { createOllama } from "ai-sdk-ollama";
 import { customProvider } from "ai";
+import { createOllama } from "ai-sdk-ollama";
 
 const APOLLO_MODEL_SPRINT = "apollo-sprint";
 const APOLLO_MODEL_CORE = "apollo-core";
@@ -44,21 +44,18 @@ const cohere = createCohere({
   apiKey: process.env.COHERE_API_KEY,
 });
 
-const ollamaBaseURL =
-  process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434";
-const ollamaApiKey = process.env.OLLAMA_API_KEY?.trim() || undefined;
-
 const ollama = createOllama({
-  baseURL: ollamaBaseURL,
-  apiKey: ollamaApiKey,
+  baseURL: "https://ollama.com/api",
+  headers:{
+    "Authorization": `Bearer ${process.env.OLLAMA_API_KEY}`
+  }
 });
 
 export const apollo = customProvider({
   languageModels: {
-    // "apollo-sprint": ollama("qwen3.5:0.8b"),
-    "apollo-sprint": gemini("gemini-2.5-flash"),
-    "apollo-core": mistral("mistral-large-latest"),
-    "apollo-apex": gemini("gemini-3-flash-preview"),
+    "apollo-sprint": ollama("qwen3.5"),
+    "apollo-apex": baseten("moonshotai/Kimi-K2.5"),
+    "apollo-core": gemini("gemini-3-flash-preview"),
     "apollo-agent": baseten("zai-org/GLM-5"),
     "apollo-tiny": mistral("pixtral-large-latest"),
   },
@@ -67,7 +64,9 @@ export const apollo = customProvider({
     "apollo-reranking": cohere.reranking("rerank-v3.5"),
   },
   transcriptionModels: {
-    "apollo-transcript": groq.transcription("whi"),
+    "apollo-transcript": groq.transcription(
+      APOLLO_INGESTION_GROQ_TRANSCRIPTION_MODEL
+    ),
   },
   fallbackProvider: mistral,
 });

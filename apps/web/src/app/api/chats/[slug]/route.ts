@@ -6,6 +6,7 @@ import {
   deleteChatForUser,
   getChatBySlugForUser,
   getMessagesByChatSlugForUser,
+  isChatOwnerForUser,
   updateChatForUser
 } from "@/lib/chat-data";
 

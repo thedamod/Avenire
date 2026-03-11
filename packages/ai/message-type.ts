@@ -1,6 +1,38 @@
-import type { InferUITools, UIMessage as DefaultUIMessage } from "ai";
+import type { UIMessage as DefaultUIMessage } from "ai";
+import type { ChatUITools } from "./tools";
 
-type ChatUIData = {
+type DataPartsMap<T extends Record<string, unknown>> = T;
+
+export type AgentActivityAction = {
+  kind: "edit" | "list" | "read" | "search";
+  pending: boolean;
+  value?: string;
+  path?: string;
+  preview?: {
+    content?: string;
+    matches?: string[];
+    path?: string;
+    query?: string;
+  };
+};
+
+export type AgentActivityData = {
+  actions: AgentActivityAction[];
+  id: string;
+  status: "done" | "running";
+};
+
+type ChatUIData = DataPartsMap<{
+  agent_activity: AgentActivityData;
+  chatCreated: {
+    fromId: string;
+    id: string;
+    title: string;
+  };
+  chatName: {
+    id: string;
+    name: string;
+  };
   plan: {
     id: string;
     task: {
@@ -8,24 +40,6 @@ type ChatUIData = {
       status: boolean;
     };
   };
-  chatName: {
-    id: string;
-    name: string;
-  };
-  chatCreated: {
-    fromId: string;
-    id: string;
-    title: string;
-  };
-  artifactCreated: {
-    artifactId: string;
-    chatId: string;
-    kind: string;
-    toolName: string;
-  };
-};
+}>;
 
-export type UIMessage = DefaultUIMessage<
-  unknown,
-  ChatUIData
->;
+export type UIMessage = DefaultUIMessage<unknown, ChatUIData, ChatUITools>;

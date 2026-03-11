@@ -5,6 +5,15 @@ const DEFAULT_MAX_LEN = 5_000;
 
 let publisher: RedisClientType | null = null;
 
+export interface WorkspaceStreamEvent {
+  id: string;
+  workspaceUuid: string;
+  type: string;
+  payload: Record<string, unknown>;
+  ts: number;
+  requestId: string;
+}
+
 function getStreamKey(workspaceUuid: string) {
   return `workspace:events:${workspaceUuid}`;
 }
@@ -39,7 +48,7 @@ export async function publishWorkspaceStreamEvent(input: {
   payload?: Record<string, unknown>;
   requestId?: string | null;
   ts?: number;
-}) {
+}): Promise<WorkspaceStreamEvent | null> {
   if (!redisUrl) {
     return null;
   }
@@ -51,7 +60,8 @@ export async function publishWorkspaceStreamEvent(input: {
   );
 
   try {
-    return await client.sendCommand<string>([
+    const ts = input.ts ?? Date.now();
+    const streamId = await client.sendCommand<string>([
       "XADD",
       getStreamKey(input.workspaceUuid),
       "MAXLEN",
@@ -63,10 +73,18 @@ export async function publishWorkspaceStreamEvent(input: {
       "payload",
       JSON.stringify(input.payload ?? {}),
       "ts",
-      String(input.ts ?? Date.now()),
+      String(ts),
       "requestId",
       input.requestId ?? "",
     ]);
+    return {
+      id: streamId,
+      workspaceUuid: input.workspaceUuid,
+      type: input.type,
+      payload: input.payload ?? {},
+      ts,
+      requestId: input.requestId ?? "",
+    };
   } catch (error) {
     console.error("Failed to publish backend workspace stream event", {
       workspaceUuid: input.workspaceUuid,

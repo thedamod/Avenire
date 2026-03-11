@@ -12,7 +12,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 export type UploadStage = "preparing" | "uploading" | "ingesting";
@@ -32,6 +32,7 @@ interface FileUploadActivityProps {
   isOpen?: boolean;
   onClearCompleted?: () => void;
   onOpenChange?: (open: boolean) => void;
+  onRemoveFile?: (file: FileUploadItem) => void;
 }
 
 function getFileIcon(fileName: string) {
@@ -117,7 +118,7 @@ function FileItem({
   onRemove,
 }: {
   file: FileUploadItem;
-  onRemove?: (id: string) => void;
+  onRemove?: (file: FileUploadItem) => void;
 }) {
   const stageText = {
     preparing: "Preparing file",
@@ -145,7 +146,7 @@ function FileItem({
           {onRemove && (
             <Button
               className="h-7 w-7 flex-shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-              onClick={() => onRemove(file.id)}
+              onClick={() => onRemove(file)}
               size="icon-sm"
               type="button"
               variant="ghost"
@@ -173,14 +174,15 @@ function FileItem({
 
 function ActivityContent({
   files = [],
+  completedCount,
   onClearCompleted,
   onRemoveFile,
 }: {
   files: FileUploadItem[];
+  completedCount: number;
   onClearCompleted?: () => void;
-  onRemoveFile?: (id: string) => void;
+  onRemoveFile?: (file: FileUploadItem) => void;
 }) {
-  const completedCount = files.filter((f) => f.completed).length;
   const totalCount = files.length;
   const overallProgress =
     totalCount > 0
@@ -254,9 +256,9 @@ export function FileUploadActivity({
     setLocalFiles(files);
   }, [files]);
 
-  const handleRemoveFile = (id: string) => {
-    setLocalFiles((prev) => prev.filter((f) => f.id !== id));
-    onRemoveFile?.(id);
+  const handleRemoveFile = (file: FileUploadItem) => {
+    setLocalFiles((prev) => prev.filter((f) => f.id !== file.id));
+    onRemoveFile?.(file);
   };
 
   const handleClearCompleted = () => {
@@ -265,6 +267,7 @@ export function FileUploadActivity({
   };
 
   const displayFiles = localFiles;
+  const completedCount = displayFiles.filter((f) => f.completed).length;
 
   if (!isOpen) {
     return null;

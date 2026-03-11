@@ -1,11 +1,13 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
-import type { UIMessage } from "@avenire/ai/message-types";
+import type { AgentActivityData, UIMessage } from "@avenire/ai/message-types";
 import type { CSSProperties } from "react";
 import { memo, type RefObject } from "react";
 import { PreviewMessage, ThinkingMessage } from "@/components/chat/message";
 import { Overview } from "@/components/chat/overview";
 
 interface MessagesProps {
+  addToolApprovalResponse: UseChatHelpers<UIMessage>["addToolApprovalResponse"];
+  agentActivity: AgentActivityData | null;
   chatId: string;
   error: UseChatHelpers<UIMessage>["error"];
   isReadonly: boolean;
@@ -15,9 +17,12 @@ interface MessagesProps {
   reload: UseChatHelpers<UIMessage>["regenerate"];
   setMessages: UseChatHelpers<UIMessage>["setMessages"];
   status: UseChatHelpers<UIMessage>["status"];
+  workspaceUuid: string;
 }
 
 function PureMessages({
+  addToolApprovalResponse,
+  agentActivity,
   chatId,
   status,
   messages,
@@ -25,6 +30,7 @@ function PureMessages({
   reload,
   setMessages,
   isReadonly,
+  workspaceUuid,
   messagesContainerRef,
   messagesEndRef,
 }: MessagesProps) {
@@ -43,19 +49,29 @@ function PureMessages({
       >
         {messages.length === 0 && <Overview />}
 
-        {messages.map((message, index) => (
-          <PreviewMessage
-            chatId={chatId}
-            error={error}
-            isLoading={status === "streaming" && messages.length - 1 === index}
-            isReadonly={isReadonly}
-            key={message.id}
-            message={message}
-            reload={reload}
-            setMessages={setMessages}
-            status={status}
-          />
-        ))}
+        {messages.map((message, index) => {
+          const isLoading =
+            status === "streaming" && messages.length - 1 === index;
+          const showAgentActivity =
+            isLoading && message.role === "assistant" ? agentActivity : null;
+
+          return (
+            <PreviewMessage
+              addToolApprovalResponse={addToolApprovalResponse}
+              agentActivity={showAgentActivity}
+              chatId={chatId}
+              error={error}
+              isLoading={isLoading}
+              isReadonly={isReadonly}
+              isStreaming={isLoading}
+              key={message.id}
+              message={message}
+              reload={reload}
+              setMessages={setMessages}
+              workspaceUuid={workspaceUuid}
+            />
+          );
+        })}
 
         {status === "submitted" &&
           messages.length > 0 &&
@@ -71,10 +87,47 @@ export const Messages = memo(PureMessages, (prevProps, nextProps) => {
   if (nextProps.status === "streaming") {
     return false;
   }
-  if (prevProps.status !== nextProps.status) {
+  if (
+    prevProps.status !== nextProps.status &&
+    (prevProps.status === "submitted" || nextProps.status === "submitted")
+  ) {
     return false;
   }
-  if (prevProps.messages.length !== nextProps.messages.length) {
+  const prevMessages = prevProps.messages;
+  const nextMessages = nextProps.messages;
+  if (prevMessages.length !== nextMessages.length) {
+    return false;
+  }
+  for (let index = 0; index < nextMessages.length; index += 1) {
+    const prevMessage = prevMessages[index];
+    const nextMessage = nextMessages[index];
+    const prevParts = prevMessage.parts ?? [];
+    const nextParts = nextMessage.parts ?? [];
+    const prevLast = prevParts.at(-1);
+    const nextLast = nextParts.at(-1);
+
+    const prevSignature = [
+      prevMessage.id,
+      prevMessage.role,
+      prevParts.length,
+      prevLast?.type ?? "",
+      prevLast && "text" in prevLast ? (prevLast.text ?? "") : "",
+      prevLast && "state" in prevLast ? (prevLast.state ?? "") : "",
+    ].join("|");
+    const nextSignature = [
+      nextMessage.id,
+      nextMessage.role,
+      nextParts.length,
+      nextLast?.type ?? "",
+      nextLast && "text" in nextLast ? (nextLast.text ?? "") : "",
+      nextLast && "state" in nextLast ? (nextLast.state ?? "") : "",
+    ].join("|");
+
+    if (prevSignature !== nextSignature) {
+      return false;
+    }
+  }
+  if (prevProps.workspaceUuid !== nextProps.workspaceUuid) {
     return false;
   }
   return true;

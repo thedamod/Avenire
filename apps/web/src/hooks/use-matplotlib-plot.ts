@@ -2,11 +2,73 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type State = {
-  loading: boolean;
+interface State {
   error: string | null;
   imgUrl: string | null;
-};
+  loading: boolean;
+}
+
+const CACHE_KEY_PREFIX = "matplotlib-plot:";
+const HASH_MODULUS = 2_147_483_647;
+
+function hashPlotCode(code: string) {
+  let hash = 0;
+  for (let index = 0; index < code.length; index += 1) {
+    hash = (hash * 31 + code.charCodeAt(index)) % HASH_MODULUS;
+  }
+  return hash.toString(36);
+}
+
+function readCachedPlot(cacheKey: string | null) {
+  if (!cacheKey) {
+    return null;
+  }
+
+  try {
+    return window.localStorage.getItem(cacheKey);
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedPlot(cacheKey: string | null, dataUrl: string) {
+  if (!cacheKey) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(cacheKey, dataUrl);
+  } catch {
+    // Ignore storage failures and keep the rendered image in memory.
+  }
+}
+
+function isMessageForRequest(
+  data: Record<string, unknown>,
+  requestId: string
+): boolean {
+  return !(
+    "requestId" in data &&
+    typeof data.requestId === "string" &&
+    data.requestId !== requestId
+  );
+}
+
+function isInitializedMessage(data: Record<string, unknown>) {
+  return "type" in data && data.type === "INITIALIZED";
+}
+
+function getSuccessfulDataUrl(data: Record<string, unknown>) {
+  if (
+    data.success === true &&
+    "dataUrl" in data &&
+    typeof data.dataUrl === "string"
+  ) {
+    return data.dataUrl;
+  }
+
+  return null;
+}
 
 export function useMatplotlibPlot(code: string) {
   const workerRef = useRef<Worker | null>(null);
@@ -16,11 +78,24 @@ export function useMatplotlibPlot(code: string) {
     imgUrl: null,
   });
 
-  const requestId = useMemo(() => `${Date.now()}-${Math.random().toString(36).slice(2)}`, [code]);
+  const requestId = useMemo(
+    () => `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    [code]
+  );
+  const cacheKey = useMemo(
+    () => (code.trim() ? `${CACHE_KEY_PREFIX}${hashPlotCode(code)}` : null),
+    [code]
+  );
 
   useEffect(() => {
     if (!code?.trim()) {
       setState({ loading: false, error: null, imgUrl: null });
+      return;
+    }
+
+    const cachedPlot = readCachedPlot(cacheKey);
+    if (cachedPlot) {
+      setState({ loading: false, error: null, imgUrl: cachedPlot });
       return;
     }
 
@@ -36,24 +111,18 @@ export function useMatplotlibPlot(code: string) {
     const onMessage = (event: MessageEvent) => {
       const data = event.data as Record<string, unknown>;
 
-      if (
-        "requestId" in data &&
-        typeof data.requestId === "string" &&
-        data.requestId !== requestId
-      ) {
+      if (!isMessageForRequest(data, requestId)) {
         return;
       }
 
-      if ("type" in data && data.type === "INITIALIZED") {
+      if (isInitializedMessage(data)) {
         return;
       }
 
-      if (
-        data.success === true &&
-        "dataUrl" in data &&
-        typeof data.dataUrl === "string"
-      ) {
-        setState({ loading: false, error: null, imgUrl: data.dataUrl });
+      const dataUrl = getSuccessfulDataUrl(data);
+      if (dataUrl) {
+        writeCachedPlot(cacheKey, dataUrl);
+        setState({ loading: false, error: null, imgUrl: dataUrl });
         return;
       }
 
@@ -71,7 +140,7 @@ export function useMatplotlibPlot(code: string) {
     return () => {
       worker.removeEventListener("message", onMessage);
     };
-  }, [code, requestId]);
+  }, [cacheKey, code, requestId]);
 
   useEffect(() => {
     return () => {

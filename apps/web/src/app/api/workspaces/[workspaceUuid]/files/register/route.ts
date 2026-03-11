@@ -1,17 +1,12 @@
 import { NextResponse } from "next/server";
 import {
   isSharedFilesVirtualFolderId,
+  updateNoteContent,
   userCanEditFolder,
-  updateFileAsset,
 } from "@/lib/file-data";
-import { UTApi } from "@avenire/storage";
-import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { createApiLogger } from "@/lib/observability";
-import {
-  deleteUploadThingFile,
-  registerWorkspaceUploadedFile,
-} from "@/lib/upload-registration";
-import { optimizeAndReuploadVideo } from "@/lib/video-optimization";
+import { registerWorkspaceUploadedFile } from "@/lib/upload-registration";
+import { scheduleAsyncVideoDeliveryOptimization } from "@/lib/video-delivery";
 import { getSessionUser } from "@/lib/workspace";
 
 function classifyStoredFileType(mimeType: string | null) {
@@ -65,6 +60,7 @@ export async function POST(
     mimeType?: string | null;
     sizeBytes?: number;
     metadata?: Record<string, unknown>;
+    noteContent?: string | null;
     contentHashSha256?: string | null;
     hashComputedBy?: "client" | "server" | null;
   };
@@ -100,7 +96,14 @@ export async function POST(
     return NextResponse.json({ error: "Read-only folder" }, { status: 403 });
   }
 
-  let registrationResult: Awaited<ReturnType<typeof registerWorkspaceUploadedFile>>;
+  const nextMetadata = {
+    ...(body.metadata ?? {}),
+    ...(typeof body.noteContent === "string" ? { type: "note" } : {}),
+  };
+
+  let registrationResult: Awaited<
+    ReturnType<typeof registerWorkspaceUploadedFile>
+  >;
   try {
     registrationResult = await registerWorkspaceUploadedFile({
       workspaceUuid,
@@ -111,7 +114,7 @@ export async function POST(
       name: body.name,
       mimeType: body.mimeType,
       sizeBytes: body.sizeBytes,
-      metadata: body.metadata,
+      metadata: nextMetadata,
       contentHashSha256: body.contentHashSha256,
       hashComputedBy: body.hashComputedBy,
     });
@@ -120,8 +123,8 @@ export async function POST(
       (error as { code?: string } | null | undefined)?.code ===
       "UPLOAD_RATE_LIMIT";
     const retryAfter =
-      (error as { retryAfter?: string | null } | null | undefined)?.retryAfter ??
-      null;
+      (error as { retryAfter?: string | null } | null | undefined)
+        ?.retryAfter ?? null;
     if (isRateLimit) {
       void apiLogger.rateLimited("upload", retryAfter, { workspaceUuid });
       return NextResponse.json(
@@ -133,69 +136,32 @@ export async function POST(
       );
     }
     void apiLogger.requestFailed(500, error, { workspaceUuid });
-    return NextResponse.json({ error: "Failed to register file" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to register file" },
+      { status: 500 }
+    );
   }
 
   const storedFile = registrationResult.file;
   const ingestionJob = registrationResult.ingestionJob;
 
-  const enableAsyncMediaOptimization =
-    (process.env.ENABLE_ASYNC_MEDIA_OPTIMIZATION ?? "false").toLowerCase() !==
-    "false";
+  if (typeof body.noteContent === "string") {
+    await updateNoteContent({
+      fileId: storedFile.id,
+      userId: user.id,
+      content: body.noteContent,
+    });
+  }
+
   if (
     registrationResult.status === "created" &&
-    enableAsyncMediaOptimization &&
     storedFile.mimeType?.startsWith("video/")
   ) {
-    void optimizeAndReuploadVideo({
-      sourceUrl: storedFile.storageUrl,
-      sourceName: storedFile.name,
-    })
-      .then(async (optimized) => {
-        if (!optimized) {
-          return;
-        }
-
-        const previousStorageKey = storedFile.storageKey;
-        const updated = await updateFileAsset(
-          workspaceUuid,
-          storedFile.id,
-          user.id,
-          {
-            storageKey: optimized.storageKey,
-            storageUrl: optimized.storageUrl,
-            name: optimized.name,
-            mimeType: optimized.mimeType,
-            sizeBytes: optimized.sizeBytes,
-          }
-        );
-
-        if (!updated) {
-          await deleteUploadThingFile(optimized.storageKey);
-          return;
-        }
-
-        if (optimized.storageKey !== previousStorageKey) {
-          await deleteUploadThingFile(previousStorageKey);
-        }
-
-        await publishFilesInvalidationEvent({
-          workspaceUuid,
-          folderId: body.folderId,
-          reason: "file.updated",
-        });
-        await publishFilesInvalidationEvent({
-          workspaceUuid,
-          reason: "tree.changed",
-        });
-      })
-      .catch((error) => {
-        console.warn("Async video optimization skipped", {
-          workspaceUuid,
-          fileId: storedFile.id,
-          error,
-        });
-      });
+    scheduleAsyncVideoDeliveryOptimization({
+      file: storedFile,
+      userId: user.id,
+      workspaceUuid,
+    });
   }
 
   void apiLogger.meter("meter.upload.filesystem.registered", {

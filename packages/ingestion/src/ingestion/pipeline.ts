@@ -1,5 +1,6 @@
 import { config } from "../config";
 import { PostgresVectorStore } from "../retrieval/postgres-vector-store";
+import { assertSafeUrl } from "../utils/safety";
 import { ingestAudio } from "./audio";
 import { ingestImage } from "./image";
 import { ingestLink } from "./link";
@@ -8,7 +9,6 @@ import { ingestPdfs } from "./ocr";
 import { persistCanonicalResource } from "./persist";
 import type { CanonicalResource, IngestResponse } from "./types";
 import { ingestVideo } from "./video";
-import { assertSafeUrl } from "../utils/safety";
 
 const logCorpusGrowth = async (
   before: Awaited<ReturnType<PostgresVectorStore["corpusStats"]>>,
@@ -108,6 +108,88 @@ const sleep = async (ms: number) =>
 
 const shouldRetryStatus = (status: number) =>
   status === 408 || status === 425 || status === 429 || status >= 500;
+
+const inferMimeTypeFromName = (fileName: string): string | null => {
+  const normalizedName = fileName.trim().toLowerCase();
+  if (!normalizedName.includes(".")) {
+    return null;
+  }
+
+  if (normalizedName.endsWith(".pdf")) {
+    return "application/pdf";
+  }
+  if (normalizedName.endsWith(".md")) {
+    return "text/markdown";
+  }
+  if (normalizedName.endsWith(".txt")) {
+    return "text/plain";
+  }
+  if (normalizedName.endsWith(".url")) {
+    return "application/url";
+  }
+
+  const imageExtensions = [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".bmp",
+    ".heic",
+    ".heif",
+    ".tif",
+    ".tiff",
+    ".avif",
+  ];
+  if (imageExtensions.some((extension) => normalizedName.endsWith(extension))) {
+    return "image/*";
+  }
+
+  const videoExtensions = [
+    ".mp4",
+    ".mov",
+    ".m4v",
+    ".webm",
+    ".avi",
+    ".mkv",
+    ".mpeg",
+    ".mpg",
+  ];
+  if (videoExtensions.some((extension) => normalizedName.endsWith(extension))) {
+    return "video/*";
+  }
+
+  const audioExtensions = [
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".aac",
+    ".ogg",
+    ".flac",
+  ];
+  if (audioExtensions.some((extension) => normalizedName.endsWith(extension))) {
+    return "audio/*";
+  }
+
+  return null;
+};
+
+const resolveEffectiveMimeType = (input: {
+  fileName: string;
+  mimeType?: string | null;
+}) => {
+  const normalizedMime = input.mimeType?.trim().toLowerCase() ?? "";
+  if (
+    normalizedMime &&
+    normalizedMime !== "application/octet-stream" &&
+    normalizedMime !== "unknown"
+  ) {
+    return normalizedMime;
+  }
+
+  return inferMimeTypeFromName(input.fileName) ?? normalizedMime;
+};
 
 const normalizeUploadThingStorageUrl = (
   storageUrl: string,
@@ -218,10 +300,14 @@ export const ingestStoredFile = async (input: {
   fileName: string;
   mimeType?: string | null;
   metadata?: Record<string, unknown>;
+  content?: string | null;
 }) => {
   const vectorStore = new PostgresVectorStore(input.workspaceId);
   const beforeStats = await vectorStore.corpusStats();
-  const mime = input.mimeType?.toLowerCase() ?? "";
+  const mime = resolveEffectiveMimeType({
+    fileName: input.fileName,
+    mimeType: input.mimeType,
+  });
   const resolvedStorageUrl = resolveIngestionStorageUrl(
     input.storageUrl,
     input.storageKey
@@ -229,7 +315,15 @@ export const ingestStoredFile = async (input: {
   const extractionStartedAt = Date.now();
 
   let resources: CanonicalResource[] = [];
-  if (
+  if (typeof input.content === "string") {
+    resources = [
+      ingestMarkdown({
+        markdown: input.content.slice(0, config.maxMarkdownChars),
+        source: `note:${input.fileId}`,
+        title: input.fileName,
+      }),
+    ];
+  } else if (
     mime === "application/pdf" ||
     input.fileName.toLowerCase().endsWith(".pdf")
   ) {
@@ -288,7 +382,7 @@ export const ingestStoredFile = async (input: {
     durationMs: Date.now() - extractionStartedAt,
     workspaceId: input.workspaceId,
     fileId: input.fileId,
-    mimeType: input.mimeType,
+    mimeType: mime || input.mimeType,
   });
 
   const persistStartedAt = Date.now();
@@ -302,7 +396,7 @@ export const ingestStoredFile = async (input: {
     durationMs: Date.now() - persistStartedAt,
     workspaceId: input.workspaceId,
     fileId: input.fileId,
-    mimeType: input.mimeType,
+    mimeType: mime || input.mimeType,
   });
 
   await logCorpusGrowth(beforeStats, vectorStore);

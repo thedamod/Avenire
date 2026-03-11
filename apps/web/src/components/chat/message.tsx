@@ -1,7 +1,7 @@
 "use client";
 
 import type { UseChatHelpers } from "@ai-sdk/react";
-import type { UIMessage } from "@avenire/ai/message-types";
+import type { AgentActivityData, UIMessage } from "@avenire/ai/message-types";
 import {
   Card,
   CardContent,
@@ -21,6 +21,14 @@ import {
   ReasoningContent,
   ReasoningTrigger,
 } from "@/components/chat/reasoning";
+import {
+  isRollingToolPart,
+  RollingAgentActivity,
+  RollingToolActivity,
+  type ActivityAction,
+} from "@/components/chat/rolling-tool-activity";
+import { ThinkingIndicator } from "@/components/chat/thinking-indicator";
+import { ChatToolPart } from "@/components/chat/tool-part";
 import { cn } from "@/lib/utils";
 
 type MessageErrorType =
@@ -51,29 +59,27 @@ const categorizeError = (error: Error): MessageErrorType => {
   return "UNKNOWN_ERROR";
 };
 
-interface MessagePart {
-  content?: string;
-  filename?: string;
-  mediaType?: string;
-  reasoning?: string;
-  reasoningText?: string;
-  text?: string;
-  type: string;
-  url?: string;
-}
+type MessagePart = UIMessage["parts"][number];
+type ToolPart = Extract<MessagePart, { type: `tool-${string}` }>;
+type AgentActivityPart = Extract<MessagePart, { type: "data-agent_activity" }>;
+type RenderBlock = { index: number; part: MessagePart; type: "part" };
 
 const isReasoningPart = (part: MessagePart) =>
   part.type === "reasoning" ||
   part.type.startsWith("reasoning-") ||
-  (typeof part.reasoning === "string" && part.reasoning.length > 0) ||
-  (typeof part.reasoningText === "string" && part.reasoningText.length > 0);
+  ("reasoning" in part &&
+    typeof part.reasoning === "string" &&
+    part.reasoning.length > 0) ||
+  ("reasoningText" in part &&
+    typeof part.reasoningText === "string" &&
+    part.reasoningText.length > 0);
 
 const getReasoningText = (part: MessagePart) => {
   const candidates = [
-    part.text,
-    part.reasoning,
-    part.reasoningText,
-    part.content,
+    "text" in part ? part.text : undefined,
+    "reasoning" in part ? part.reasoning : undefined,
+    "reasoningText" in part ? part.reasoningText : undefined,
+    "content" in part ? part.content : undefined,
   ];
 
   for (const candidate of candidates) {
@@ -85,13 +91,98 @@ const getReasoningText = (part: MessagePart) => {
   return "";
 };
 
-function AnimatedMarkdown({
-  content,
-  id,
-}: {
-  content: string;
-  id: string;
-}) {
+const isToolPart = (part: MessagePart): part is ToolPart =>
+  part.type.startsWith("tool-");
+
+const groupRenderableBlocks = (parts: MessagePart[]): RenderBlock[] =>
+  parts.map((part, index) => ({ index, part, type: "part" }));
+
+const splitMessageParts = (parts: MessagePart[]) => {
+  const rollingToolParts: ToolPart[] = [];
+  const agentActivityParts: AgentActivityPart[] = [];
+  const remainingParts: MessagePart[] = [];
+
+  for (const part of parts) {
+    if (isToolPart(part) && isRollingToolPart(part)) {
+      rollingToolParts.push(part);
+      continue;
+    }
+    if (part.type === "data-agent_activity") {
+      agentActivityParts.push(part);
+      continue;
+    }
+    remainingParts.push(part);
+  }
+
+  return { agentActivityParts, remainingParts, rollingToolParts };
+};
+
+const toAgentActivityActions = (
+  activity: AgentActivityData | undefined
+): ActivityAction[] => {
+  if (!activity) {
+    return [];
+  }
+
+  return activity.actions
+    .map<ActivityAction | null>((action) => {
+      switch (action.kind) {
+        case "edit":
+          if (!action.path) {
+            return null;
+          }
+          return {
+            kind: "edit",
+            path: action.path,
+            pending: action.pending,
+          };
+        case "list":
+          if (!action.value) {
+            return null;
+          }
+          return {
+            kind: "list",
+            pending: action.pending,
+            value: action.value,
+          };
+        case "read":
+          if (!action.value) {
+            return null;
+          }
+          return {
+            kind: "read",
+            pending: action.pending,
+            value: action.value,
+            preview: action.preview?.content
+              ? {
+                  content: action.preview.content,
+                  path: action.preview.path ?? action.value,
+                }
+              : undefined,
+          };
+        case "search":
+          if (!action.value) {
+            return null;
+          }
+          return {
+            kind: "search",
+            pending: action.pending,
+            value: action.value,
+            preview: action.preview?.query
+              ? {
+                  query: action.preview.query,
+                  matches: action.preview.matches ?? [],
+                }
+              : undefined,
+          };
+        default:
+          return null;
+      }
+    })
+    .filter((item): item is ActivityAction => item !== null);
+};
+
+function AnimatedMarkdown({ content, id }: { content: string; id: string }) {
   return <Markdown content={content} id={id} />;
 }
 
@@ -108,26 +199,38 @@ const toAttachment = (part: MessagePart): Partial<Attachment> | null => {
 };
 
 const PurePreviewMessage = ({
+  addToolApprovalResponse,
+  agentActivity,
   chatId,
   message,
   error,
   isLoading,
-  status,
+  isStreaming,
   setMessages: _setMessages,
   reload,
   isReadonly,
+  workspaceUuid,
 }: {
+  addToolApprovalResponse: UseChatHelpers<UIMessage>["addToolApprovalResponse"];
+  agentActivity: AgentActivityData | null;
   chatId: string;
   message: UIMessage;
   error: UseChatHelpers<UIMessage>["error"];
   isLoading: boolean;
-  status: UseChatHelpers<UIMessage>["status"];
+  isStreaming: boolean;
   setMessages: UseChatHelpers<UIMessage>["setMessages"];
   reload: UseChatHelpers<UIMessage>["regenerate"];
   isReadonly: boolean;
+  workspaceUuid: string;
 }) => {
-  const parts = (message.parts ?? []) as MessagePart[];
+  const parts = message.parts ?? [];
   const fileParts = parts.filter((part) => part.type === "file");
+  const { agentActivityParts, remainingParts, rollingToolParts } =
+    splitMessageParts(parts);
+  const latestAgentActivity =
+    agentActivity ?? (agentActivityParts.at(-1)?.data as AgentActivityData);
+  const agentActions = toAgentActivityActions(latestAgentActivity);
+  const renderBlocks = groupRenderableBlocks(remainingParts);
 
   return (
     <AnimatePresence>
@@ -176,6 +279,19 @@ const PurePreviewMessage = ({
               message.role === "user" && "items-end"
             )}
           >
+            {agentActions.length > 0 && (
+              <RollingAgentActivity
+                actions={agentActions}
+                isStreaming={latestAgentActivity?.status === "running"}
+              />
+            )}
+            {rollingToolParts.length > 0 && (
+              <RollingToolActivity
+                isStreaming={isStreaming}
+                key={`message-${message.id}-tool-activity`}
+                parts={rollingToolParts}
+              />
+            )}
             {fileParts.length > 0 && (
               <div
                 className="flex flex-row justify-end gap-2"
@@ -190,20 +306,22 @@ const PurePreviewMessage = ({
                     <PreviewAttachment
                       attachment={attachment}
                       key={`${message.id}-file-${index}`}
+                      workspaceUuid={workspaceUuid}
                     />
                   );
                 })}
               </div>
             )}
 
-            {parts.map((part, index) => {
-              const key = `message-${message.id}-part-${index}`;
+            {renderBlocks.map((block) => {
+              const key = `message-${message.id}-part-${block.index}`;
+              const { part } = block;
 
               if (isReasoningPart(part)) {
                 return (
                   <Reasoning
                     className="w-full"
-                    isStreaming={status === "streaming" && isLoading}
+                    isStreaming={isStreaming}
                     key={key}
                   >
                     <ReasoningTrigger />
@@ -226,15 +344,32 @@ const PurePreviewMessage = ({
                       data-testid="message-content"
                     >
                       {message.role === "user" ? (
-                        <p className="text-[15px] leading-6">{part.text ?? ""}</p>
+                        <p className="text-[15px] leading-6">
+                          {part.text ?? ""}
+                        </p>
                       ) : (
-                        <AnimatedMarkdown
-                          content={part.text ?? ""}
-                          id={key}
-                        />
+                        <AnimatedMarkdown content={part.text ?? ""} id={key} />
                       )}
                     </div>
                   </div>
+                );
+              }
+
+              if (isToolPart(part)) {
+                if (
+                  (part.type === "tool-avenire_agent" ||
+                    part.type === "tool-file_manager_agent") &&
+                  agentActions.length > 0
+                ) {
+                  return null;
+                }
+                return (
+                  <ChatToolPart
+                    addToolApprovalResponse={addToolApprovalResponse}
+                    isReadonly={isReadonly}
+                    key={key}
+                    part={part}
+                  />
                 );
               }
               return null;
@@ -260,24 +395,52 @@ const PurePreviewMessage = ({
   );
 };
 
-export const PreviewMessage = memo(
-  PurePreviewMessage,
-  (prev, next) =>
-    prev.message === next.message &&
+export const PreviewMessage = memo(PurePreviewMessage, (prev, next) => {
+  if (prev.isStreaming || next.isStreaming) {
+    return false;
+  }
+  if (prev.agentActivity || next.agentActivity) {
+    return false;
+  }
+
+  const prevParts = prev.message.parts ?? [];
+  const nextParts = next.message.parts ?? [];
+  const prevLast = prevParts.at(-1);
+  const nextLast = nextParts.at(-1);
+  const prevSignature = [
+    prev.message.id,
+    prev.message.role,
+    prevParts.length,
+    prevLast?.type ?? "",
+    prevLast && "text" in prevLast ? (prevLast.text ?? "") : "",
+    prevLast && "state" in prevLast ? (prevLast.state ?? "") : "",
+  ].join("|");
+  const nextSignature = [
+    next.message.id,
+    next.message.role,
+    nextParts.length,
+    nextLast?.type ?? "",
+    nextLast && "text" in nextLast ? (nextLast.text ?? "") : "",
+    nextLast && "state" in nextLast ? (nextLast.state ?? "") : "",
+  ].join("|");
+
+  return (
+    prevSignature === nextSignature &&
     prev.error?.message === next.error?.message &&
     prev.isLoading === next.isLoading &&
-    prev.status === next.status
-);
+    prev.workspaceUuid === next.workspaceUuid
+  );
+});
 
 export const ThinkingMessage = memo(function ThinkingMessage() {
   return (
     <motion.div
       animate={{ opacity: 1 }}
-      className="mx-auto w-full max-w-3xl px-4 text-muted-foreground text-sm"
+      className="mx-auto w-full max-w-3xl px-4"
       initial={{ opacity: 0 }}
       transition={{ duration: 0.2 }}
     >
-      Thinking...
+      <ThinkingIndicator className="px-0 py-0 text-muted-foreground" />
     </motion.div>
   );
 });

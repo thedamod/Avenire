@@ -159,7 +159,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const deletedFolder = await softDeleteFolder(workspaceUuid, folderUuid, user.id);
+  const deletedFolder = await softDeleteFolder(workspaceUuid, folderUuid);
   if (!deletedFolder) {
     return NextResponse.json({ error: "Folder not found" }, { status: 404 });
   }

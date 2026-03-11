@@ -1,17 +1,15 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import type { UIMessage } from "@avenire/ai/message-types";
+import type { AgentActivityData, UIMessage } from "@avenire/ai/message-types";
 import { Button } from "@avenire/ui/components/button";
 import {
-  convertFileListToFileUIParts,
   DefaultChatTransport,
+  lastAssistantMessageIsCompleteWithApprovalResponses,
   type FileUIPart,
 } from "ai";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion, useInView } from "motion/react";
-import type { Route } from "next";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
@@ -81,13 +79,12 @@ export function Chat({
   isReadonly,
   workspaceUuid,
 }: ChatProps) {
-  const router = useRouter();
   const [chatId, setChatId] = useState(id);
-  const [pendingNavigationChatId, setPendingNavigationChatId] = useState<
-    string | null
-  >(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [input, setInput] = useState("");
+  const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(
+    null
+  );
   const MAX_FILES = 3;
   const [messagesContainerRef, messagesEndRef, scroll] =
     useScrollToBottom<HTMLDivElement>();
@@ -105,7 +102,9 @@ export function Chat({
 
   useEffect(() => {
     setChatId(id);
-    setPendingNavigationChatId(null);
+    setAttachments([]);
+    setInput("");
+    setAgentActivity(null);
   }, [id]);
 
   const {
@@ -116,9 +115,10 @@ export function Chat({
     stop,
     regenerate: reload,
     resumeStream,
+    addToolApprovalResponse,
     error,
   } = useChat<UIMessage>({
-    id,
+    id: chatId,
     transport: new DefaultChatTransport({
       api: "/api/chat",
       body: {
@@ -130,6 +130,7 @@ export function Chat({
     experimental_throttle: 100,
     messages: initialMessages,
     onError: handleError,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     onData: (dataPart) => {
       if (dataPart.type === "data-chatCreated") {
         const detail = dataPart.data as ChatCreatedDetail;
@@ -137,11 +138,16 @@ export function Chat({
           return;
         }
         setChatId(detail.id);
-        setPendingNavigationChatId(detail.id);
+        if (
+          typeof window !== "undefined" &&
+          window.location.pathname === "/dashboard/chats"
+        ) {
+          window.history.pushState({}, "", `/dashboard/chats/${detail.id}`);
+        }
         window.dispatchEvent(
           new CustomEvent<ChatCreatedDetail>(CHAT_CREATED_EVENT, {
             detail,
-          }),
+          })
         );
         return;
       }
@@ -154,8 +160,13 @@ export function Chat({
         window.dispatchEvent(
           new CustomEvent<ChatNameUpdatedDetail>(CHAT_NAME_UPDATED_EVENT, {
             detail,
-          }),
+          })
         );
+        return;
+      }
+
+      if (dataPart.type === "data-agent_activity") {
+        setAgentActivity(dataPart.data as AgentActivityData);
       }
     },
   });
@@ -174,20 +185,51 @@ export function Chat({
     window.dispatchEvent(
       new CustomEvent(CHAT_STREAM_FINISHED_EVENT, {
         detail: { chatId },
-      }),
+      })
     );
+  }, [chatId, status]);
 
-    if (pendingNavigationChatId) {
-      router.replace(`/dashboard/chats/${pendingNavigationChatId}` as Route);
-      router.refresh();
-      setPendingNavigationChatId(null);
+  useEffect(() => {
+    if (status === "submitted") {
+      setAgentActivity(null);
     }
-  }, [chatId, pendingNavigationChatId, router, status]);
+  }, [status]);
 
-  const handleSubmit = async (files: Attachment[]) => {
-    const localFiles = files
-      .map((attachment) => attachment.file)
-      .filter((file): file is File => Boolean(file));
+  useEffect(() => {
+    if (messages.length === 0) {
+      return;
+    }
+    if (status === "submitted" || status === "streaming") {
+      scroll();
+      return;
+    }
+    if (status === "ready" && messages.at(-1)?.role === "assistant") {
+      scroll();
+    }
+  }, [messages, scroll, status]);
+
+  const handleSubmit = async (inputValue: string, files: Attachment[]) => {
+    const localFileParts: FileUIPart[] = files
+      .filter((attachment) => attachment.source === "local")
+      .flatMap((attachment) => {
+        if (!attachment.url || attachment.url.trim().length === 0) {
+          return [];
+        }
+
+        const url = attachment.url.trim();
+        if (!(url.startsWith("http://") || url.startsWith("https://"))) {
+          return [];
+        }
+
+        return [
+          {
+            type: "file",
+            mediaType: normalizeMediaType(attachment.contentType),
+            filename: attachment.name,
+            url,
+          } satisfies FileUIPart,
+        ];
+      });
 
     const workspaceFileParts: FileUIPart[] = files
       .filter((attachment) => attachment.source === "workspace")
@@ -205,30 +247,14 @@ export function Chat({
         ];
       });
 
-    if (localFiles.length > 0 || workspaceFileParts.length > 0) {
-      let localFileParts: FileUIPart[] = [];
-      if (localFiles.length > 0) {
-        const dataTransfer = new DataTransfer();
-        for (const file of localFiles) {
-          dataTransfer.items.add(file);
-        }
-        localFileParts = (await convertFileListToFileUIParts(dataTransfer.files)).map(
-          (part) => ({
-            ...part,
-            mediaType: normalizeMediaType(part.mediaType),
-          }),
-        );
-      }
-
+    if (localFileParts.length > 0 || workspaceFileParts.length > 0) {
       await append({
-        text: input,
+        text: inputValue,
         files: [...localFileParts, ...workspaceFileParts],
       });
     } else {
-      await append({ text: input });
+      await append({ text: inputValue });
     }
-
-    setInput("");
   };
 
   const addDroppedFiles = useCallback((incomingFiles: File[]) => {
@@ -263,6 +289,8 @@ export function Chat({
       <div className="relative flex min-h-0 w-full min-w-0 flex-1 flex-col transition-all duration-300">
         {!isEmptyState && (
           <Messages
+            addToolApprovalResponse={addToolApprovalResponse}
+            agentActivity={agentActivity}
             chatId={chatId}
             error={error}
             isReadonly={isReadonly}
@@ -272,6 +300,7 @@ export function Chat({
             reload={reload}
             setMessages={setMessages}
             status={status}
+            workspaceUuid={workspaceUuid}
           />
         )}
 

@@ -1,7 +1,18 @@
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import { db } from "./client";
 import {
   fileAsset,
+  noteContent,
   fileTranscriptCue,
   ingestionChunk,
   ingestionEmbedding,
@@ -115,55 +126,59 @@ export async function enqueueIngestionJob(input: {
   });
 }
 
-export async function claimNextIngestionJob() {
+export async function beginIngestionJob(input: {
+  workspaceId: string;
+  jobId: string;
+}) {
+  const now = new Date();
+
   return db.transaction(async (tx) => {
-    const claim = await tx.execute(sql<{ id: string }>`
-      UPDATE ingestion_job
-      SET
-        status = 'running',
-        attempts = ingestion_job.attempts + 1,
-        started_at = NOW(),
-        updated_at = NOW(),
-        error = NULL
-      WHERE id = (
-        SELECT id
-        FROM ingestion_job
-        WHERE status = 'queued'
-        ORDER BY created_at ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
+    const [updated] = await tx
+      .update(ingestionJob)
+      .set({
+        status: "running",
+        attempts: sql`${ingestionJob.attempts} + 1`,
+        startedAt: now,
+        updatedAt: now,
+        error: null,
+      })
+      .where(
+        and(
+          eq(ingestionJob.workspaceId, input.workspaceId),
+          eq(ingestionJob.id, input.jobId),
+          eq(ingestionJob.status, "queued")
+        )
       )
-      RETURNING id
-    `);
+      .returning();
 
-    const claimedId = claim.rows[0]?.id ? String(claim.rows[0].id) : null;
-    if (!claimedId) {
-      return null;
-    }
-
-    const [row] = await tx
-      .select()
-      .from(ingestionJob)
-      .where(eq(ingestionJob.id, claimedId))
-      .limit(1);
-
-    if (!row) {
+    if (!updated) {
       return null;
     }
 
     await tx.insert(ingestionJobEvent).values({
-      workspaceId: row.workspaceId,
-      jobId: row.id,
+      workspaceId: updated.workspaceId,
+      jobId: updated.id,
       eventType: "job.running",
       payload: {
         status: "running",
-        attempts: row.attempts,
+        attempts: updated.attempts,
       },
-      createdAt: new Date(),
+      createdAt: now,
     });
 
-    return mapJobRow(row);
+    return mapJobRow(updated);
   });
+}
+
+export async function listQueuedIngestionJobs(limit = 200) {
+  const rows = await db
+    .select()
+    .from(ingestionJob)
+    .where(eq(ingestionJob.status, "queued"))
+    .orderBy(asc(ingestionJob.createdAt))
+    .limit(Math.max(1, Math.min(1_000, limit)));
+
+  return rows.map(mapJobRow);
 }
 
 export async function getIngestionJobByIdForWorkspace(
@@ -181,6 +196,28 @@ export async function getIngestionJobByIdForWorkspace(
   return row ? mapJobRow(row) : null;
 }
 
+export async function listRecentIngestionJobsForWorkspace(input: {
+  workspaceId: string;
+  limit?: number;
+}) {
+  const limit = Math.min(200, Math.max(1, input.limit ?? 50));
+  const rows = await db
+    .select({
+      job: ingestionJob,
+      fileName: fileAsset.name,
+    })
+    .from(ingestionJob)
+    .leftJoin(fileAsset, eq(fileAsset.id, ingestionJob.fileId))
+    .where(eq(ingestionJob.workspaceId, input.workspaceId))
+    .orderBy(desc(ingestionJob.updatedAt))
+    .limit(limit);
+
+  return rows.map((row) => ({
+    ...mapJobRow(row.job),
+    fileName: row.fileName ?? null,
+  }));
+}
+
 export async function hasSuccessfulIngestionForFile(
   workspaceId: string,
   fileId: string
@@ -192,8 +229,8 @@ export async function hasSuccessfulIngestionForFile(
       and(
         eq(ingestionJob.workspaceId, workspaceId),
         eq(ingestionJob.fileId, fileId),
-        eq(ingestionJob.status, "succeeded"),
-      ),
+        eq(ingestionJob.status, "succeeded")
+      )
     )
     .orderBy(desc(ingestionJob.updatedAt))
     .limit(1);
@@ -410,6 +447,7 @@ export async function getFileForIngestion(workspaceId: string, fileId: string) {
   const [row] = await db
     .select()
     .from(fileAsset)
+    .leftJoin(noteContent, eq(noteContent.fileId, fileAsset.id))
     .where(
       and(
         eq(fileAsset.workspaceId, workspaceId),
@@ -423,14 +461,21 @@ export async function getFileForIngestion(workspaceId: string, fileId: string) {
     return null;
   }
 
+  const metadata = (row.file_asset.metadata ?? {}) as Record<string, unknown>;
+  const isNote =
+    typeof metadata.type === "string" &&
+    metadata.type.toLowerCase() === "note";
+
   return {
-    id: row.id,
-    workspaceId: row.workspaceId,
-    storageKey: row.storageKey,
-    storageUrl: row.storageUrl,
-    name: row.name,
-    mimeType: row.mimeType ?? null,
-    metadata: (row.metadata ?? {}) as Record<string, unknown>,
+    id: row.file_asset.id,
+    workspaceId: row.file_asset.workspaceId,
+    storageKey: row.file_asset.storageKey,
+    storageUrl: row.file_asset.storageUrl,
+    name: row.file_asset.name,
+    mimeType: row.file_asset.mimeType ?? null,
+    metadata,
+    isNote,
+    content: row.note_content?.content ?? null,
   };
 }
 
@@ -657,6 +702,113 @@ export async function listFileTranscriptCues(
     .orderBy(asc(fileTranscriptCue.startMs));
 
   return rows;
+}
+
+export async function deleteIngestionDataForFile(
+  workspaceId: string,
+  fileId: string
+) {
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(fileTranscriptCue)
+      .where(
+        and(
+          eq(fileTranscriptCue.workspaceId, workspaceId),
+          eq(fileTranscriptCue.fileId, fileId)
+        )
+      );
+
+    await tx
+      .delete(ingestionResource)
+      .where(
+        and(
+          eq(ingestionResource.workspaceId, workspaceId),
+          eq(ingestionResource.fileId, fileId)
+        )
+      );
+  });
+}
+
+export async function getIngestionSummaryForFile(
+  workspaceId: string,
+  fileId: string
+) {
+  const resources = await db
+    .select({
+      id: ingestionResource.id,
+      fileId: ingestionResource.fileId,
+      metadata: ingestionResource.metadata,
+      provider: ingestionResource.provider,
+      source: ingestionResource.source,
+      sourceType: ingestionResource.sourceType,
+      title: ingestionResource.title,
+      updatedAt: ingestionResource.updatedAt,
+    })
+    .from(ingestionResource)
+    .where(
+      and(
+        eq(ingestionResource.workspaceId, workspaceId),
+        eq(ingestionResource.fileId, fileId)
+      )
+    )
+    .orderBy(desc(ingestionResource.updatedAt));
+
+  if (resources.length === 0) {
+    return {
+      chunkCount: 0,
+      resources: [],
+      transcriptCues: [] as Array<{
+        endMs: number;
+        startMs: number;
+        text: string;
+      }>,
+    };
+  }
+
+  const resourceIds = resources.map((resource) => resource.id);
+  const chunks = await db
+    .select({
+      chunkId: ingestionChunk.id,
+      chunkIndex: ingestionChunk.chunkIndex,
+      content: ingestionChunk.content,
+      endMs: ingestionChunk.endMs,
+      kind: ingestionChunk.kind,
+      metadata: ingestionChunk.metadata,
+      page: ingestionChunk.page,
+      resourceId: ingestionChunk.resourceId,
+      startMs: ingestionChunk.startMs,
+    })
+    .from(ingestionChunk)
+    .where(inArray(ingestionChunk.resourceId, resourceIds))
+    .orderBy(asc(ingestionChunk.chunkIndex));
+  const transcriptCues = await listFileTranscriptCues(workspaceId, fileId);
+
+  return {
+    chunkCount: chunks.length,
+    resources: resources.map((resource) => ({
+      id: resource.id,
+      fileId: resource.fileId,
+      metadata: (resource.metadata ?? {}) as Record<string, unknown>,
+      provider: resource.provider ?? null,
+      source: resource.source,
+      sourceType: resource.sourceType,
+      title: resource.title ?? null,
+      updatedAt: resource.updatedAt.toISOString(),
+      chunks: chunks
+        .filter((chunk) => chunk.resourceId === resource.id)
+        .map((chunk) => ({
+          chunkId: chunk.chunkId,
+          chunkIndex: chunk.chunkIndex,
+          content: chunk.content,
+          endMs: chunk.endMs,
+          kind: chunk.kind,
+          metadata: (chunk.metadata ?? {}) as Record<string, unknown>,
+          page: chunk.page,
+          startMs: chunk.startMs,
+        })),
+    })),
+    transcriptCues,
+  };
 }
 
 export async function retrieveWorkspaceChunks(input: {

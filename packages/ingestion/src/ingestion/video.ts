@@ -4,10 +4,12 @@ import type { CanonicalChunk, CanonicalResource } from './types';
 import { ingestLink } from './link';
 import { extractFromSupportedProvider } from './provider-extractors';
 import {
-  extractAudioFromVideoFile,
   extractAudioFromVideoUrl,
+  extractAudioSegmentsFromVideoFile,
+  extractAudioSegmentsFromVideoUrl,
   extractKeyframesFromVideoFile,
   extractKeyframesFromVideoUrl,
+  getMediaDurationSeconds,
   type ExtractedVideoKeyframe,
 } from '../utils/ffmpeg';
 import { transcribeAudio, type TranscriptSegment } from './transcription';
@@ -30,12 +32,16 @@ const logVideoStageTiming = (params: {
   );
 };
 
-const cleanTranscriptText = (value: string): string => {
-  const normalized = value
+const stripControlChars = (value: string): string =>
+  value
     .replace(/\uFFFD/g, ' ')
-    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ');
+
+const sanitizeLooseText = (value: string): string =>
+  stripControlChars(value).replace(/\s+/g, ' ').trim();
+
+const cleanTranscriptText = (value: string): string => {
+  const normalized = stripControlChars(value).replace(/\s+/g, ' ').trim();
 
   if (!normalized) {
     return '';
@@ -93,7 +99,10 @@ const splitTranscriptByTime = (
       const match = line.match(/^(\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?\s+(.+)$/);
       if (!match) return null;
       const raw = match[0].split(/\s+/, 2)[0] ?? '';
-      const text = line.slice(raw.length).trim();
+      const text = cleanTranscriptText(line.slice(raw.length).trim());
+      if (!text) {
+        return null;
+      }
       const parts = raw.split(':').map(Number);
       const seconds =
         parts.length === 3
@@ -126,11 +135,14 @@ const splitTranscriptByTime = (
   let windowIndex = 0;
   while (startWord < words.length) {
     const endWord = Math.min(words.length, startWord + approxWordsPer30s);
-    windows.push({
-      startMs: windowIndex * 30000,
-      endMs: windowIndex * 30000 + 30000,
-      text: words.slice(startWord, endWord).join(' '),
-    });
+    const text = cleanTranscriptText(words.slice(startWord, endWord).join(' '));
+    if (text) {
+      windows.push({
+        startMs: windowIndex * 30000,
+        endMs: windowIndex * 30000 + 30000,
+        text,
+      });
+    }
     startWord = endWord;
     windowIndex += 1;
   }
@@ -152,6 +164,7 @@ const buildVideoResource = (params: {
     caption?: string;
   }>;
   transcriptionMode?: string;
+  transcriptionError?: string;
 }): CanonicalResource => {
   const segments = splitTranscriptByTime(params.transcript, params.transcriptSegments);
   const keyframes = params.keyframes ?? [];
@@ -161,7 +174,7 @@ const buildVideoResource = (params: {
       chunkIndex: 0,
       content: [
         `Video source: ${params.source}`,
-        params.title ? `Title: ${params.title}` : '',
+        params.title ? `Title: ${sanitizeLooseText(params.title)}` : '',
         `Transcription mode: ${params.transcriptionMode ?? 'unknown'}`,
       ]
         .filter(Boolean)
@@ -184,9 +197,16 @@ const buildVideoResource = (params: {
 
     const frameContext = nearbyFrames
       .map(frame => {
-        const labels = frame.labels?.length ? `labels: ${frame.labels.join(', ')}` : '';
-        const ocrText = frame.ocrText ? `ocr: ${frame.ocrText}` : '';
-        const caption = frame.caption ? `caption: ${frame.caption}` : '';
+        const cleanedLabels = frame.labels
+          ?.map(label => sanitizeLooseText(label))
+          .filter(Boolean);
+        const labels = cleanedLabels?.length
+          ? `labels: ${cleanedLabels.join(', ')}`
+          : '';
+        const ocrText = frame.ocrText ? `ocr: ${sanitizeLooseText(frame.ocrText)}` : '';
+        const caption = frame.caption
+          ? `caption: ${sanitizeLooseText(frame.caption)}`
+          : '';
         return [labels, ocrText, caption].filter(Boolean).join(' | ');
       })
       .filter(Boolean)
@@ -224,14 +244,17 @@ const buildVideoResource = (params: {
       .map(segment => segment.text)
       .join(' ')
       .trim();
+    const cleanedLabels = frame.labels
+      ?.map(label => sanitizeLooseText(label))
+      .filter(Boolean);
 
     const contextText = [
-      params.title ? `Video: ${params.title}` : 'Video frame',
+      params.title ? `Video: ${sanitizeLooseText(params.title)}` : 'Video frame',
       `Timestamp: ${Math.floor(frame.timestampMs / 1000)}s`,
-      frame.caption ? `Caption: ${frame.caption}` : '',
-      frame.labels?.length ? `Labels: ${frame.labels.join(', ')}` : '',
-      frame.ocrText ? `OCR: ${frame.ocrText}` : '',
-      nearbyTranscript ? `Nearby transcript: ${nearbyTranscript}` : '',
+      frame.caption ? `Caption: ${sanitizeLooseText(frame.caption)}` : '',
+      cleanedLabels?.length ? `Labels: ${cleanedLabels.join(', ')}` : '',
+      frame.ocrText ? `OCR: ${sanitizeLooseText(frame.ocrText)}` : '',
+      nearbyTranscript ? `Nearby transcript: ${sanitizeLooseText(nearbyTranscript)}` : '',
     ]
       .filter(Boolean)
       .join('\n');
@@ -278,6 +301,7 @@ const buildVideoResource = (params: {
       segmentCount: segments.length,
       keyframeCount: keyframes.length,
       transcriptionModel: params.transcriptionMode,
+      transcriptionError: params.transcriptionError,
     },
     chunks,
   };
@@ -296,6 +320,10 @@ const isLowQualityTranscript = (text: string): boolean => {
 
   if (words.length < 8) {
     return true;
+  }
+
+  if (words.length >= 120) {
+    return false;
   }
 
   const numericCount = words.filter(word => /^\d+$/.test(word)).length;
@@ -340,6 +368,75 @@ const transcribeFromResolvedUrl = async (
   return transcribeAudio(audioBytes);
 };
 
+const transcribeSegments = async (
+  segments: Array<{ bytes: Uint8Array; offsetMs: number }>,
+): Promise<{ text: string; segments: TranscriptSegment[]; error?: string }> => {
+  const allSegments: TranscriptSegment[] = [];
+  const textParts: string[] = [];
+  const errors: string[] = [];
+
+  for (const [index, segment] of segments.entries()) {
+    try {
+      const result = await transcribeAudio(segment.bytes);
+      if (result.text.trim()) {
+        textParts.push(result.text.trim());
+      }
+      for (const cue of result.segments) {
+        allSegments.push({
+          startMs: cue.startMs + segment.offsetMs,
+          endMs: cue.endMs + segment.offsetMs,
+          text: cue.text,
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      errors.push(`segment ${index + 1}: ${message}`);
+    }
+  }
+
+  return {
+    text: textParts.join(' ').trim(),
+    segments: allSegments,
+    error: errors.length > 0 ? errors.join('; ') : undefined,
+  };
+};
+
+const transcribeFromResolvedUrlWithFallback = async (
+  sourceForFfmpeg: string,
+): Promise<{ text: string; segments: TranscriptSegment[]; error?: string }> => {
+  const durationSeconds = await getMediaDurationSeconds(sourceForFfmpeg);
+  const shouldChunk =
+    typeof durationSeconds === 'number' &&
+    durationSeconds > config.videoTranscriptionSegmentSeconds * 1.25;
+
+  if (!shouldChunk) {
+    try {
+      return await transcribeFromResolvedUrl(sourceForFfmpeg);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const segmented = await extractAudioSegmentsFromVideoUrl(sourceForFfmpeg);
+      const result = await transcribeSegments(
+        segmented.map(segment => ({
+          bytes: segment.bytes,
+          offsetMs: segment.startMs,
+        })),
+      );
+      return {
+        ...result,
+        error: result.error ? `${message}; ${result.error}` : message,
+      };
+    }
+  }
+
+  const segmented = await extractAudioSegmentsFromVideoUrl(sourceForFfmpeg);
+  return transcribeSegments(
+    segmented.map(segment => ({
+      bytes: segment.bytes,
+      offsetMs: segment.startMs,
+    })),
+  );
+};
+
 const extractKeyframesFromResolvedUrl = async (
   sourceForFfmpeg: string,
 ): Promise<Array<{ timestampMs: number; imageBase64: string }>> => {
@@ -371,6 +468,7 @@ export const ingestVideo = async (input: {
   let transcript = input.transcript?.trim() ?? '';
   let transcriptSegments: TranscriptSegment[] = [];
   let keyframes = input.keyframes;
+  let transcriptionError: string | undefined;
 
   if (input.url && (!transcript || !keyframes || keyframes.length === 0)) {
     const resolveStartedAt = Date.now();
@@ -382,16 +480,18 @@ export const ingestVideo = async (input: {
     });
     const shouldTranscribe = !transcript;
     const shouldExtractKeyframes = !keyframes || keyframes.length === 0;
-    const transcriptionPromise = shouldTranscribe ? (() => {
-      const transcribeStartedAt = Date.now();
-      return transcribeFromResolvedUrl(sourceForFfmpeg).finally(() => {
-        logVideoStageTiming({
-          stage: 'transcribe-audio',
-          durationMs: Date.now() - transcribeStartedAt,
-          source,
-        });
-      });
-    })() : undefined;
+    const transcriptionPromise = shouldTranscribe
+      ? (() => {
+          const transcribeStartedAt = Date.now();
+          return transcribeFromResolvedUrlWithFallback(sourceForFfmpeg).finally(() => {
+            logVideoStageTiming({
+              stage: 'transcribe-audio',
+              durationMs: Date.now() - transcribeStartedAt,
+              source,
+            });
+          });
+        })()
+      : undefined;
     const keyframePromise = shouldExtractKeyframes ? (() => {
       const keyframesStartedAt = Date.now();
       return extractKeyframesFromResolvedUrl(sourceForFfmpeg).finally(() => {
@@ -423,6 +523,7 @@ export const ingestVideo = async (input: {
       transcript = transcription.text.trim();
       const segmentText = transcription.segments.map(segment => segment.text).join(' ').trim();
       transcriptSegments = isLowQualityTranscript(segmentText) ? [] : transcription.segments;
+      transcriptionError = transcription.error;
     } else if (shouldTranscribe) {
       if (canFallbackToLinkExtraction(input.url)) {
         const link = await ingestLink(input.url);
@@ -469,6 +570,7 @@ export const ingestVideo = async (input: {
     transcriptionMode: input.transcript
       ? 'provided'
       : `groq:${config.groqTranscriptionModel}`,
+    transcriptionError,
   });
   logVideoStageTiming({
     stage: 'build-resource',
@@ -490,11 +592,32 @@ export const ingestVideoFile = async (input: {
   title?: string;
 }): Promise<CanonicalResource> => {
   const extension = input.filename.split('.').pop() ?? 'mp4';
-  const [audioBytes, extractedKeyframes] = await Promise.all([
-    extractAudioFromVideoFile(input.bytes, extension),
+  const [audioSegments, extractedKeyframes] = await Promise.all([
+    extractAudioSegmentsFromVideoFile(input.bytes, extension),
     extractKeyframesFromVideoFile(input.bytes, extension),
   ]);
-  const transcription = await transcribeAudio(audioBytes);
+
+  let transcription: { text: string; segments: TranscriptSegment[]; error?: string } = {
+    text: '',
+    segments: [],
+  };
+  if (audioSegments.length === 1) {
+    try {
+      const single = await transcribeAudio(audioSegments[0].bytes);
+      transcription = single;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      transcription = { text: '', segments: [], error: message };
+    }
+  } else if (audioSegments.length > 1) {
+    transcription = await transcribeSegments(
+      audioSegments.map(segment => ({
+        bytes: segment.bytes,
+        offsetMs: segment.startMs,
+      })),
+    );
+  }
+
   const transcriptText = transcription.text.trim();
   const useTranscript = !isLowQualityTranscript(transcriptText);
   const segmentText = transcription.segments.map(segment => segment.text).join(' ').trim();
@@ -510,5 +633,6 @@ export const ingestVideoFile = async (input: {
       imageBase64: frame.imageBase64,
     })),
     transcriptionMode: `groq:${config.groqTranscriptionModel}`,
+    transcriptionError: transcription.error,
   });
 };

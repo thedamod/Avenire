@@ -59,7 +59,7 @@ export default async function DashboardChatPage({
       ?.activeOrganizationId ?? null;
   const workspace = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
   if (!workspace) {
-    redirect("/dashboard/chats/new");
+    redirect("/dashboard");
   }
   const chats = await listChatsForUser(session.user.id, workspace.workspaceId);
 

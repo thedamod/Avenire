@@ -1,17 +1,25 @@
-import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   appendIngestionJobEvent,
-  claimNextIngestionJob,
+  beginIngestionJob,
+  deleteIngestionDataForFile,
   getFileForIngestion,
+  listQueuedIngestionJobs,
+  markNoteReindexed,
   markIngestionJobFailed,
   markIngestionJobSucceeded,
-  retryIngestionJob,
   replaceFileTranscriptCues,
+  retryIngestionJob,
 } from "@avenire/database";
 import { assertRequiredSecrets, ingestStoredFile } from "@avenire/ingestion";
+import {
+  createIngestionQueueWorker,
+  enqueueIngestionQueueJob,
+  type IngestionQueueJobData,
+} from "@avenire/ingestion/queue";
 import { serve } from "@hono/node-server";
+import { config as loadEnv } from "dotenv";
 import { Hono } from "hono";
 import { publishWorkspaceStreamEvent } from "./workspace-event-stream";
 
@@ -21,25 +29,25 @@ loadEnv({ path: resolve(here, "../.env") });
 loadEnv({ path: resolve(here, "../../../.env"), override: false });
 
 const port = Number.parseInt(process.env.INGESTION_WORKER_PORT ?? "3010", 10);
-const pollMs = Number.parseInt(
-  process.env.INGESTION_WORKER_POLL_MS ?? "1200",
-  10,
-);
 const workerConcurrency = Math.max(
   1,
-  Number.parseInt(process.env.INGESTION_WORKER_CONCURRENCY ?? "3", 10),
+  Number.parseInt(process.env.INGESTION_WORKER_CONCURRENCY ?? "3", 10)
 );
 const maxIngestionAttempts = Math.max(
   1,
-  Number.parseInt(process.env.INGESTION_WORKER_MAX_ATTEMPTS ?? "3", 10),
+  Number.parseInt(process.env.INGESTION_WORKER_MAX_ATTEMPTS ?? "3", 10)
 );
 const retryBaseMs = Math.max(
   250,
-  Number.parseInt(process.env.INGESTION_WORKER_RETRY_BASE_MS ?? "1200", 10),
+  Number.parseInt(process.env.INGESTION_WORKER_RETRY_BASE_MS ?? "1200", 10)
 );
 const retryMaxMs = Math.max(
   retryBaseMs,
-  Number.parseInt(process.env.INGESTION_WORKER_RETRY_MAX_MS ?? "30000", 10),
+  Number.parseInt(process.env.INGESTION_WORKER_RETRY_MAX_MS ?? "30000", 10)
+);
+const recoverySweepMs = Math.max(
+  5000,
+  Number.parseInt(process.env.INGESTION_WORKER_RECOVERY_SWEEP_MS ?? "15000", 10)
 );
 
 assertRequiredSecrets();
@@ -47,10 +55,20 @@ assertRequiredSecrets();
 const app = new Hono();
 
 let activeJobs = 0;
-let schedulerRunning = false;
-let lastTickAt: string | null = null;
 let lastError: string | null = null;
 let lastJobDurationMs: number | null = null;
+let lastRecoverySweepAt: string | null = null;
+let lastRecoveredJobsCount = 0;
+
+function isNonRetryableIngestionError(stage: string, error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    stage === "load-file" && error.message === "File not found for ingestion job."
+  );
+}
 
 async function publishIngestionEvent(input: {
   workspaceId: string;
@@ -86,9 +104,15 @@ async function appendAndPublishIngestionEvent(input: {
   await publishIngestionEvent(input);
 }
 
-async function processClaimedJob(
-  job: NonNullable<Awaited<ReturnType<typeof claimNextIngestionJob>>>,
-) {
+async function processQueuedJob(queueJob: IngestionQueueJobData) {
+  const job = await beginIngestionJob({
+    workspaceId: queueJob.workspaceId,
+    jobId: queueJob.jobId,
+  });
+  if (!job) {
+    return;
+  }
+
   const startedAtMs = Date.now();
   let stage = "fetch-file";
   activeJobs += 1;
@@ -120,6 +144,10 @@ async function processClaimedJob(
       throw new Error("File not found for ingestion job.");
     }
 
+    if (file.isNote) {
+      await deleteIngestionDataForFile(job.workspaceId, file.id);
+    }
+
     stage = "ingest";
     await appendAndPublishIngestionEvent({
       workspaceId: job.workspaceId,
@@ -141,6 +169,7 @@ async function processClaimedJob(
       fileName: file.name,
       mimeType: file.mimeType,
       metadata: file.metadata,
+      content: file.isNote ? file.content ?? "" : null,
     });
 
     stage = "persist-transcript";
@@ -155,7 +184,7 @@ async function processClaimedJob(
     stage = "mark-success";
     const chunkCount = result.resources.reduce(
       (sum: number, item: { chunks: number }) => sum + item.chunks,
-      0,
+      0
     );
 
     await markIngestionJobSucceeded({
@@ -179,11 +208,17 @@ async function processClaimedJob(
       },
     });
 
+    if (file.isNote) {
+      await markNoteReindexed(file.id);
+    }
+
     lastError = null;
     lastJobDurationMs = Date.now() - startedAtMs;
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unknown ingestion worker error.";
+      error instanceof Error
+        ? error.message
+        : "Unknown ingestion worker error.";
     const causeMessage =
       error instanceof Error &&
       error.cause instanceof Error &&
@@ -206,16 +241,25 @@ async function processClaimedJob(
     });
 
     try {
-      if (job.attempts < maxIngestionAttempts) {
+      if (
+        job.attempts < maxIngestionAttempts &&
+        !isNonRetryableIngestionError(stage, error)
+      ) {
         const retryInMs = Math.min(
           retryMaxMs,
-          retryBaseMs * 2 ** Math.max(0, job.attempts - 1),
+          retryBaseMs * 2 ** Math.max(0, job.attempts - 1)
         );
         await retryIngestionJob({
           workspaceId: job.workspaceId,
           jobId: job.id,
           error: enrichedMessage,
           retryInMs,
+        });
+        await enqueueIngestionQueueJob({
+          workspaceId: job.workspaceId,
+          fileId: job.fileId,
+          jobId: job.id,
+          delayMs: retryInMs,
         });
         await publishIngestionEvent({
           workspaceId: job.workspaceId,
@@ -247,53 +291,108 @@ async function processClaimedJob(
           },
         });
       }
-    } catch (error) {
-      console.error(error);
+    } catch (retryError) {
+      const retryMessage =
+        retryError instanceof Error
+          ? `[retry-schedule] ${retryError.message}`
+          : "[retry-schedule] Unknown BullMQ retry scheduling error.";
+
+      await markIngestionJobFailed({
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        error: `${enrichedMessage} | ${retryMessage}`,
+      }).catch((markError) => {
+        console.error("ingestion.worker.retry_mark_failed_error", markError);
+      });
+
+      await publishIngestionEvent({
+        workspaceId: job.workspaceId,
+        jobId: job.id,
+        eventType: "job.failed",
+        payload: {
+          status: "failed",
+          error: `${enrichedMessage} | ${retryMessage}`,
+          attempts: job.attempts,
+          maxAttempts: maxIngestionAttempts,
+        },
+      }).catch((publishError) => {
+        console.error(
+          "ingestion.worker.retry_publish_failed_error",
+          publishError
+        );
+      });
+
+      console.error("ingestion.worker.retry_schedule_error", retryError);
     }
   } finally {
     activeJobs = Math.max(0, activeJobs - 1);
-    void tickScheduler();
   }
 }
 
-async function tickScheduler() {
-  if (schedulerRunning) {
-    return;
-  }
-
-  schedulerRunning = true;
-  lastTickAt = new Date().toISOString();
+async function recoverQueuedJobs() {
+  lastRecoverySweepAt = new Date().toISOString();
 
   try {
-    while (activeJobs < workerConcurrency) {
-      const job = await claimNextIngestionJob();
-      if (!job) {
-        break;
-      }
+    const queuedJobs = await listQueuedIngestionJobs(200);
+    lastRecoveredJobsCount = queuedJobs.length;
 
-      void processClaimedJob(job);
+    if (queuedJobs.length === 0) {
+      return;
     }
-  } finally {
-    schedulerRunning = false;
+
+    const results = await Promise.allSettled(
+      queuedJobs.map((job) =>
+        enqueueIngestionQueueJob({
+          workspaceId: job.workspaceId,
+          fileId: job.fileId,
+          jobId: job.id,
+        })
+      )
+    );
+
+    const rejectedCount = results.filter(
+      (result) => result.status === "rejected"
+    ).length;
+
+    if (rejectedCount > 0) {
+      console.error("ingestion.worker.recovery_enqueue_failed", {
+        queuedJobs: queuedJobs.length,
+        rejectedCount,
+      });
+      return;
+    }
+
+    console.log("ingestion.worker.recovery_enqueued", {
+      queuedJobs: queuedJobs.length,
+    });
+  } catch (error) {
+    lastError = error instanceof Error ? error.message : String(error);
+    console.error("ingestion.worker.recovery_error", error);
   }
 }
 
-setInterval(() => {
-  void tickScheduler();
-}, pollMs);
-void tickScheduler();
+const ingestionWorker = createIngestionQueueWorker(processQueuedJob, {
+  concurrency: workerConcurrency,
+});
+
+ingestionWorker.worker.on("error", (error) => {
+  lastError = error instanceof Error ? error.message : String(error);
+  console.error("ingestion.worker.error", error);
+});
 
 app.get("/health", (c) => {
   return c.json({
     ok: true,
     service: "ingestion-worker",
-    isRunning: activeJobs > 0 || schedulerRunning,
+    isRunning: activeJobs > 0,
     activeJobs,
     workerConcurrency,
-    pollMs,
-    lastTickAt,
+    queueName: "avenire-ingestion",
     lastError,
     lastJobDurationMs,
+    recoverySweepMs,
+    lastRecoverySweepAt,
+    lastRecoveredJobsCount,
   });
 });
 
@@ -304,5 +403,34 @@ serve(
   },
   (info) => {
     console.log(`Ingestion worker listening on http://localhost:${info.port}`);
-  },
+  }
 );
+
+const shutdown = async () => {
+  await ingestionWorker.close().catch((error) => {
+    console.error("Failed to close ingestion BullMQ worker", error);
+  });
+  process.exit(0);
+};
+
+process.on("SIGINT", () => {
+  shutdown().catch((error) => {
+    console.error("Failed to shut down ingestion worker on SIGINT", error);
+    process.exit(1);
+  });
+});
+process.on("SIGTERM", () => {
+  shutdown().catch((error) => {
+    console.error("Failed to shut down ingestion worker on SIGTERM", error);
+    process.exit(1);
+  });
+});
+
+recoverQueuedJobs().catch((error) => {
+  console.error("Failed initial ingestion queue recovery sweep", error);
+});
+setInterval(() => {
+  recoverQueuedJobs().catch((error) => {
+    console.error("Failed scheduled ingestion queue recovery sweep", error);
+  });
+}, recoverySweepMs);

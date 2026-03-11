@@ -1,6 +1,7 @@
 import {
   createFolder,
   isSharedFilesVirtualFolderId,
+  userCanAccessWorkspace,
   userCanEditFolder,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
@@ -28,11 +29,14 @@ export async function POST(
   if (body.parentId && isSharedFilesVirtualFolderId(body.parentId, workspaceUuid)) {
     return NextResponse.json({ error: "Cannot create items in Shared Files" }, { status: 400 });
   }
-  const canEdit = await userCanEditFolder({
-    workspaceId: workspaceUuid,
-    folderId: body.parentId,
-    userId: user.id,
-  });
+  const canEdit =
+    typeof body.parentId === "string"
+      ? await userCanEditFolder({
+          workspaceId: workspaceUuid,
+          folderId: body.parentId,
+          userId: user.id,
+        })
+      : await userCanAccessWorkspace(user.id, workspaceUuid);
   if (!canEdit) {
     return NextResponse.json({ error: "Read-only folder" }, { status: 403 });
   }

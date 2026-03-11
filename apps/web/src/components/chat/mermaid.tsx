@@ -3,7 +3,6 @@
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderMermaidSVG } from "beautiful-mermaid";
-import DOMPurify from "dompurify";
 import {
   Download,
   Maximize2,
@@ -42,6 +41,39 @@ function fixMermaidQuotes(code: string): string {
   return code.replace(/(\w+)\[([^"\]]+)\]/g, '$1["$2"]');
 }
 
+function sanitizeMermaidSvg(svg: string) {
+  if (typeof window === "undefined") {
+    return svg;
+  }
+
+  const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
+  const root = documentNode.documentElement;
+  if (!root) {
+    return svg;
+  }
+
+  root.querySelectorAll("script,foreignObject").forEach((node) => node.remove());
+  root.querySelectorAll("*").forEach((node) => {
+    const attributes = Array.from(node.attributes);
+    for (const attribute of attributes) {
+      const key = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (key.startsWith("on")) {
+        node.removeAttribute(attribute.name);
+        continue;
+      }
+      if (
+        (key === "href" || key === "xlink:href") &&
+        value.startsWith("javascript:")
+      ) {
+        node.removeAttribute(attribute.name);
+      }
+    }
+  });
+
+  return new XMLSerializer().serializeToString(root);
+}
+
 export function MermaidDiagram({
   chart,
   title,
@@ -73,9 +105,7 @@ export function MermaidDiagram({
         fg: "var(--foreground)",
         transparent: true,
       });
-      const sanitized = DOMPurify.sanitize(rendered, {
-        USE_PROFILES: { svg: true },
-      });
+      const sanitized = sanitizeMermaidSvg(rendered);
       return { svg: sanitized, error: null };
     } catch (err) {
       return {

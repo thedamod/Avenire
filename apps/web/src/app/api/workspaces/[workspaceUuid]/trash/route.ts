@@ -120,8 +120,8 @@ export async function DELETE(
   for (const item of body.items) {
     if (item.kind === "file") {
       const deleted = await permanentlyDeleteFileAsset(workspaceUuid, item.id);
-      if (deleted?.storageKey) {
-        storageKeys.push(deleted.storageKey);
+      if (deleted?.storageKeys?.length) {
+        storageKeys.push(...deleted.storageKeys);
       }
       results.push({ id: item.id, kind: item.kind, ok: Boolean(deleted) });
       continue;

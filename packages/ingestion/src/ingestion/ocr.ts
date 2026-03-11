@@ -107,29 +107,86 @@ const mergeShortChunks = (
   return merged;
 };
 
+const sleep = async (ms: number): Promise<void> =>
+  new Promise(resolve => {
+    setTimeout(resolve, ms);
+  });
+
+const getRetryableOcrStatus = (error: unknown): number | null => {
+  if (typeof error !== 'object' || error === null) {
+    return null;
+  }
+
+  const status = (error as { status?: unknown }).status;
+  if (typeof status === 'number') {
+    return status;
+  }
+
+  const message = error instanceof Error ? error.message : '';
+  const match = message.match(/\bstatus\s+(\d{3})\b/i);
+  if (!match) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(match[1] ?? '', 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isRetryableOcrError = (error: unknown): boolean => {
+  const status = getRetryableOcrStatus(error);
+  if (status !== null) {
+    return status === 408 || status === 425 || status === 429 || status >= 500;
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return (
+    message.includes('service unavailable') ||
+    message.includes('internal_server_error') ||
+    message.includes('timed out') ||
+    message.includes('timeout')
+  );
+};
+
+const withOcrRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+  const attempts = Math.max(1, config.remoteFetchMaxAttempts);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetryableOcrError(error)) {
+        throw error;
+      }
+
+      await sleep(Math.min(4000, 400 * 2 ** (attempt - 1)));
+    }
+  }
+
+  throw lastError;
+};
+
 const ocrSingleDocument = async (
   document: OcrDocument,
   includeImageBase64 = false,
 ): Promise<OcrResponse> => {
-  const ocr = await client.ocr.process({
-    model: config.mistralOcrModel,
-    document,
-    tableFormat: 'html',
-    includeImageBase64,
-    extractHeader: false,
-    extractFooter: false,
-  });
+  const ocr = await withOcrRetry(() =>
+    client.ocr.process({
+      model: config.mistralOcrModel,
+      document,
+      tableFormat: 'html',
+      includeImageBase64,
+      extractHeader: false,
+      extractFooter: false,
+    }),
+  );
 
   return {
     model: ocr.model,
     pages: ocr.pages,
   };
 };
-
-const sleep = async (ms: number): Promise<void> =>
-  new Promise(resolve => {
-    setTimeout(resolve, ms);
-  });
 
 const streamToText = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
   const reader = stream.getReader();
@@ -192,17 +249,21 @@ const ocrBatchDocuments = async (
     },
   }));
 
-  const job = await client.batch.jobs.create({
-    endpoint: '/v1/ocr',
-    requests,
-    metadata: { pipeline: 'avenire-ingestion', mode: 'pdf-batch-ocr' },
-    timeoutHours: 24,
-  });
+  const job = await withOcrRetry(() =>
+    client.batch.jobs.create({
+      endpoint: '/v1/ocr',
+      requests,
+      metadata: { pipeline: 'avenire-ingestion', mode: 'pdf-batch-ocr' },
+      timeoutHours: 24,
+    }),
+  );
 
   const timeoutAt = Date.now() + config.batchPollTimeoutMs;
   let current = job;
   while (Date.now() < timeoutAt) {
-    current = await client.batch.jobs.get({ jobId: job.id, inline: true });
+    current = await withOcrRetry(() =>
+      client.batch.jobs.get({ jobId: job.id, inline: true }),
+    );
     if (current.status === 'SUCCESS') break;
     if (
       current.status === 'FAILED' ||
@@ -231,8 +292,11 @@ const ocrBatchDocuments = async (
     }
   }
 
-  if (result.size < documents.length && current.outputFile) {
-    const stream = await client.files.download({ fileId: current.outputFile });
+  const outputFileId = current.outputFile ?? null;
+  if (result.size < documents.length && outputFileId) {
+    const stream = await withOcrRetry(() =>
+      client.files.download({ fileId: outputFileId as string }),
+    );
     const jsonl = await streamToText(stream);
     const rows = parseBatchOutputLines(jsonl);
     for (const row of rows) {

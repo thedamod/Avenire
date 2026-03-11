@@ -12,13 +12,15 @@
     "build": "tsc --noEmit",
     "lint": "biome check .",
     "check-types": "tsc --noEmit",
+    "test": "vitest run",
     "format": "biome format --write .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
     "drizzle-orm": "latest",
-    "pg": "latest"
+    "pg": "latest",
+    "ts-fsrs": "^5.2.3"
   },
   "devDependencies": {
     "@avenire/env-types": "workspace:*",
@@ -26,7 +28,8 @@
     "@types/pg": "latest",
     "dotenv": "latest",
     "drizzle-kit": "latest",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.0.18"
   },
   "engines": {
     "bun": ">=1.0.0"

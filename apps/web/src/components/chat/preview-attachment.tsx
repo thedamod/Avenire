@@ -14,12 +14,26 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@avenire/ui/components/tooltip";
+import {
+  FileMediaPlayer,
+  type MediaPlaybackSource,
+  useMediaPlaybackSource,
+} from "@avenire/ui/media";
 import { File, FileCode2, LoaderIcon, X } from "lucide-react";
 import { motion } from "motion/react";
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { Attachment } from "@/components/chat/attachment";
+import {
+  primeMediaPlayback,
+  releaseMediaPlaybackPrime,
+  resolveCachedPlaybackSource,
+} from "@/lib/file-preview-cache";
+import {
+  buildProgressivePlaybackSource,
+  type MediaPlaybackDescriptor,
+} from "@/lib/media-playback";
 import { cn } from "@/lib/utils";
 
 const PDFViewer = dynamic(() => import("@/components/files/pdf-viewer"), {
@@ -79,14 +93,132 @@ const isCodeLike = (contentType?: string, name?: string) => {
   return Boolean(extension && CODE_EXTENSIONS.includes(extension));
 };
 
+const playbackDescriptorCache = new Map<
+  string,
+  MediaPlaybackDescriptor | Promise<MediaPlaybackDescriptor | null> | null
+>();
+
+async function fetchWorkspacePlaybackDescriptor(
+  workspaceUuid: string,
+  workspaceFileId: string
+) {
+  const cacheKey = `${workspaceUuid}:${workspaceFileId}`;
+  const cached = playbackDescriptorCache.get(cacheKey);
+  if (cached && !(cached instanceof Promise)) {
+    return cached;
+  }
+  if (cached instanceof Promise) {
+    return await cached;
+  }
+
+  const request = fetch(
+    `/api/workspaces/${workspaceUuid}/files/${workspaceFileId}/playback`,
+    {
+      cache: "force-cache",
+      credentials: "include",
+    }
+  )
+    .then(async (response) => {
+      if (!response.ok) {
+        return null;
+      }
+      return (await response.json()) as MediaPlaybackDescriptor;
+    })
+    .catch(() => null)
+    .finally(() => {
+      const current = playbackDescriptorCache.get(cacheKey);
+      if (current === request) {
+        playbackDescriptorCache.delete(cacheKey);
+      }
+    });
+
+  playbackDescriptorCache.set(cacheKey, request);
+  const resolved = await request;
+  if (resolved?.status === "ready") {
+    playbackDescriptorCache.set(cacheKey, resolved);
+  } else {
+    playbackDescriptorCache.delete(cacheKey);
+  }
+  return resolved;
+}
+
+function InlineVideoPreview({
+  autoPlay = false,
+  className,
+  muted = true,
+  playbackSource,
+  posterUrl,
+}: {
+  autoPlay?: boolean;
+  className?: string;
+  muted?: boolean;
+  playbackSource: MediaPlaybackSource;
+  posterUrl?: string | null;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [resolvedSource, setResolvedSource] = useState(() =>
+    resolveCachedPlaybackSource(playbackSource)
+  );
+
+  useMediaPlaybackSource({
+    mediaRef: videoRef,
+    playbackSource: resolvedSource,
+  });
+
+  useEffect(() => {
+    setResolvedSource(resolveCachedPlaybackSource(playbackSource));
+  }, [playbackSource]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+
+    if (!autoPlay) {
+      video.pause();
+      video.currentTime = 0;
+      return;
+    }
+
+    const startPlayback = async () => {
+      try {
+        video.loop = true;
+        await video.play();
+      } catch {
+        // Browser may require a gesture.
+      }
+    };
+    void startPlayback();
+
+    return () => {
+      video.pause();
+      video.currentTime = 0;
+    };
+  }, [autoPlay, resolvedSource]);
+
+  return (
+    <video
+      className={className}
+      muted={muted}
+      playsInline
+      poster={posterUrl ?? undefined}
+      preload={autoPlay ? "auto" : "metadata"}
+      ref={videoRef}
+    />
+  );
+}
+
 export function PreviewAttachment({
   attachment,
   onRemove,
   variant = "default",
+  workspaceUuid,
 }: {
   attachment: Partial<Attachment>;
   onRemove?: (attachmentId: string) => void;
   variant?: "composer" | "default";
+  workspaceUuid?: string;
 }) {
   const {
     id,
@@ -98,8 +230,12 @@ export function PreviewAttachment({
     errorMessage,
     source,
     sizeBytes,
+    workspaceFileId,
   } = attachment;
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [playbackDescriptor, setPlaybackDescriptor] =
+    useState<MediaPlaybackDescriptor | null>(null);
   const [textPreview, setTextPreview] = useState<string | null>(null);
   const [isLoadingText, setIsLoadingText] = useState(false);
 
@@ -127,6 +263,65 @@ export function PreviewAttachment({
       ),
     [contentType, name, status, url]
   );
+
+  useEffect(() => {
+    if (
+      contentType?.startsWith("video") &&
+      status === "completed" &&
+      url &&
+      source === "workspace" &&
+      workspaceUuid &&
+      workspaceFileId
+    ) {
+      void fetchWorkspacePlaybackDescriptor(
+        workspaceUuid,
+        workspaceFileId
+      ).then((descriptor) => {
+        setPlaybackDescriptor(
+          descriptor ??
+            ({
+              fallbackSource: buildProgressivePlaybackSource(url, contentType),
+              posterUrl: null,
+              preferredSource: buildProgressivePlaybackSource(url, contentType),
+              status: "ready",
+            } satisfies MediaPlaybackDescriptor)
+        );
+      });
+      return;
+    }
+
+    if (contentType?.startsWith("video") && status === "completed" && url) {
+      const progressive = buildProgressivePlaybackSource(url, contentType);
+      setPlaybackDescriptor({
+        fallbackSource: progressive,
+        posterUrl: null,
+        preferredSource: progressive,
+        status: "ready",
+      });
+      return;
+    }
+
+    setPlaybackDescriptor(null);
+  }, [contentType, source, status, url, workspaceFileId, workspaceUuid]);
+
+  useEffect(() => {
+    if (
+      !(contentType?.startsWith("video") && playbackDescriptor) ||
+      !(isHovered || isModalOpen)
+    ) {
+      return;
+    }
+
+    void primeMediaPlayback(playbackDescriptor.preferredSource, {
+      mediaType: "video",
+      posterUrl: playbackDescriptor.posterUrl,
+      sizeBytes,
+      surface: "attachment",
+    });
+    return () => {
+      releaseMediaPlaybackPrime(playbackDescriptor.preferredSource);
+    };
+  }, [contentType, isHovered, isModalOpen, playbackDescriptor, sizeBytes]);
 
   const loadTextPreview = async () => {
     if (
@@ -180,7 +375,17 @@ export function PreviewAttachment({
     if (contentType?.startsWith("video") && url) {
       return (
         <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-muted">
-          <video className="h-full w-full object-cover" muted src={url} />
+          {playbackDescriptor?.posterUrl ? (
+            <img
+              alt={name ?? "A video attachment"}
+              className="h-full w-full object-cover"
+              height={48}
+              src={playbackDescriptor.posterUrl}
+              width={48}
+            />
+          ) : (
+            <video className="h-full w-full object-cover" muted src={url} />
+          )}
           {(status === "uploading" || status === "pending") && (
             <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/20">
               <LoaderIcon className="h-4 w-4 animate-spin text-foreground" />
@@ -246,9 +451,22 @@ export function PreviewAttachment({
     if (contentType?.startsWith("video") && url && status === "completed") {
       return (
         <div className="max-w-xs">
-          <video className="max-h-48 max-w-full rounded-md" controls src={url}>
-            <track kind="captions" />
-          </video>
+          {playbackDescriptor ? (
+            <InlineVideoPreview
+              autoPlay
+              className="max-h-48 max-w-full rounded-md"
+              playbackSource={playbackDescriptor.preferredSource}
+              posterUrl={playbackDescriptor.posterUrl}
+            />
+          ) : (
+            <video
+              className="max-h-48 max-w-full rounded-md"
+              controls
+              src={url}
+            >
+              <track kind="captions" />
+            </video>
+          )}
         </div>
       );
     }
@@ -285,13 +503,24 @@ export function PreviewAttachment({
     if (contentType?.startsWith("video") && url && status === "completed") {
       return (
         <div className="flex justify-center">
-          <video
-            className="max-h-[70vh] max-w-full rounded-md object-contain"
-            controls
-            src={url}
-          >
-            <track kind="captions" />
-          </video>
+          {playbackDescriptor ? (
+            <FileMediaPlayer
+              className="w-full max-w-4xl"
+              kind="video"
+              name={name ?? "Video attachment"}
+              openedCached
+              playbackSource={playbackDescriptor.preferredSource}
+              posterUrl={playbackDescriptor.posterUrl}
+            />
+          ) : (
+            <video
+              className="max-h-[70vh] max-w-full rounded-md object-contain"
+              controls
+              src={url}
+            >
+              <track kind="captions" />
+            </video>
+          )}
         </div>
       );
     }
@@ -387,8 +616,12 @@ export function PreviewAttachment({
                     loadTextPreview().catch(() => undefined);
                   }}
                   onMouseEnter={() => {
+                    setIsHovered(true);
                     loadTextPreview().catch(() => undefined);
                   }}
+                  onMouseLeave={() => setIsHovered(false)}
+                  onFocus={() => setIsHovered(true)}
+                  onBlur={() => setIsHovered(false)}
                   type="button"
                   variant="ghost"
                 />
@@ -412,11 +645,21 @@ export function PreviewAttachment({
                 {isVisualPreview ? (
                   <>
                     {contentType?.startsWith("video") ? (
-                      <video
-                        className="h-full w-full object-cover"
-                        muted
-                        src={url}
-                      />
+                      playbackDescriptor?.posterUrl ? (
+                        <img
+                          alt={name ?? "Attachment preview"}
+                          className="h-full w-full object-cover"
+                          height={64}
+                          src={playbackDescriptor.posterUrl}
+                          width={64}
+                        />
+                      ) : (
+                        <video
+                          className="h-full w-full object-cover"
+                          muted
+                          src={url}
+                        />
+                      )
                     ) : (
                       <img
                         alt={name ?? "Attachment preview"}
@@ -488,7 +731,15 @@ export function PreviewAttachment({
             </TooltipContent>
           </Tooltip>
 
-          <Dialog onOpenChange={setIsModalOpen} open={isModalOpen}>
+          <Dialog
+            onOpenChange={(nextOpen) => {
+              setIsModalOpen(nextOpen);
+              if (!nextOpen) {
+                setIsHovered(false);
+              }
+            }}
+            open={isModalOpen}
+          >
             <DialogContent className="max-w-4xl">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
@@ -536,8 +787,12 @@ export function PreviewAttachment({
                   loadTextPreview().catch(() => undefined);
                 }}
                 onMouseEnter={() => {
+                  setIsHovered(true);
                   loadTextPreview().catch(() => undefined);
                 }}
+                onMouseLeave={() => setIsHovered(false)}
+                onFocus={() => setIsHovered(true)}
+                onBlur={() => setIsHovered(false)}
                 size="default"
                 type="button"
                 variant="ghost"
@@ -587,7 +842,15 @@ export function PreviewAttachment({
           </TooltipContent>
         </Tooltip>
 
-        <Dialog onOpenChange={setIsModalOpen} open={isModalOpen}>
+        <Dialog
+          onOpenChange={(nextOpen) => {
+            setIsModalOpen(nextOpen);
+            if (!nextOpen) {
+              setIsHovered(false);
+            }
+          }}
+          open={isModalOpen}
+        >
           <DialogContent className="max-w-4xl">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">

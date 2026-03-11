@@ -27,8 +27,10 @@ import {
   useSession,
 } from "@avenire/auth/client";
 import { getFacehashUrl } from "@/lib/avatar";
+import { PRIVACY_MODE_STORAGE_KEY } from "@/lib/privacy-mode";
 import { useUploadThing } from "@/lib/uploadthing";
 import { cn } from "@/lib/utils";
+import { SensitiveText } from "@/components/shared/sensitive-text";
 import {
   Building2,
   Camera,
@@ -123,8 +125,6 @@ const PLAN_LABELS: Record<string, string> = {
   core: "Core Plan",
   scholar: "Scholar Plan",
 };
-const PRIVACY_MODE_STORAGE_KEY = "avenire:settings:privacy-mode";
-
 export function SettingsPanel({
   initialWorkspaces,
   tabMode = "url",
@@ -191,6 +191,7 @@ export function SettingsPanel({
   const [sudoRequestingCode, setSudoRequestingCode] = useState(false);
   const [sudoVerifyingCode, setSudoVerifyingCode] = useState(false);
   const pendingSudoActionRef = useRef<null | (() => Promise<void>)>(null);
+  const codeRequestedForSessionRef = useRef(false);
 
   useEffect(() => {
     setProfileName(session?.user?.name ?? "");
@@ -375,6 +376,7 @@ export function SettingsPanel({
 
       const pendingAction = pendingSudoActionRef.current;
       pendingSudoActionRef.current = null;
+      codeRequestedForSessionRef.current = false;
       setSudoDialogOpen(false);
 
       if (pendingAction) {
@@ -422,7 +424,8 @@ export function SettingsPanel({
   }, [privacyMode]);
 
   useEffect(() => {
-    if (sudoDialogOpen && !sudoActive) {
+    if (sudoDialogOpen && !sudoActive && !codeRequestedForSessionRef.current) {
+      codeRequestedForSessionRef.current = true;
       void requestSudoCode();
     }
   }, [sudoActive, sudoDialogOpen]);
@@ -1340,6 +1343,7 @@ export function SettingsPanel({
         onOpenChange={(open) => {
           setSudoDialogOpen(open);
           if (!open) {
+            codeRequestedForSessionRef.current = false;
             pendingSudoActionRef.current = null;
             setSudoCode("");
           }
@@ -1423,50 +1427,6 @@ function Section({
 
 function Divider() {
   return <div className="border-t border-border/40" />;
-}
-
-function SensitiveText({
-  value,
-  privacyMode,
-  className,
-  fallback = "—",
-}: {
-  value?: string | null;
-  privacyMode: boolean;
-  className?: string;
-  fallback?: string;
-}) {
-  const [revealed, setRevealed] = useState(false);
-
-  useEffect(() => {
-    if (!privacyMode) {
-      setRevealed(false);
-    }
-  }, [privacyMode, value]);
-
-  if (!value) {
-    return <span className={className}>{fallback}</span>;
-  }
-
-  if (!privacyMode || revealed) {
-    return <span className={className}>{value}</span>;
-  }
-
-  return (
-    <button
-      className={cn(
-        "max-w-full cursor-pointer appearance-none border-0 bg-transparent p-0 text-left",
-        className
-      )}
-      onClick={() => setRevealed(true)}
-      title="Click to reveal"
-      type="button"
-    >
-      <span className="inline-block max-w-full truncate blur-[6px] select-none">
-        {value}
-      </span>
-    </button>
-  );
 }
 
 function ToggleRow({

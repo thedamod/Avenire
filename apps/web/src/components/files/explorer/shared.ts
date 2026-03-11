@@ -1,3 +1,5 @@
+import type { VideoDeliveryRecord } from "@/lib/file-data";
+
 export type UploadStatus = "failed" | "queued" | "uploaded" | "uploading";
 
 export interface FolderRecord {
@@ -14,6 +16,8 @@ export interface FileRecord {
   storageUrl: string;
   mimeType: string | null;
   sizeBytes: number;
+  videoDelivery?: VideoDeliveryRecord | null;
+  isNote?: boolean;
   createdAt: string;
   isShared?: boolean;
   readOnly?: boolean;

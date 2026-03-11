@@ -24,7 +24,6 @@ import {
   Link2,
   MessageSquareText,
   Share2,
-  Sparkles,
 } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter } from "next/navigation";
@@ -35,9 +34,9 @@ import {
   CHAT_NAME_UPDATED_EVENT,
   type ChatNameUpdatedDetail,
 } from "@/lib/chat-events";
-import type { ShareSuggestion } from "@/types/share";
 import { useDashboardViewStore } from "@/stores/dashboardViewStore";
 import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
+import type { ShareSuggestion } from "@/types/share";
 
 interface ChatWorkspaceProps {
   chatSlug: string;
@@ -45,26 +44,6 @@ interface ChatWorkspaceProps {
   initialMessages: UIMessage[];
   isReadonly?: boolean;
   workspaceUuid: string;
-}
-
-function PlaceholderCard({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: typeof Sparkles;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="mx-auto flex max-w-xl flex-col items-center rounded-xl border bg-muted/20 p-8 text-center">
-      <div className="mb-3 flex size-9 items-center justify-center rounded-full border">
-        <Icon className="size-4" />
-      </div>
-      <p className="font-medium text-sm">{title}</p>
-      <p className="mt-1 text-muted-foreground text-sm">{description}</p>
-    </div>
-  );
 }
 
 export function ChatWorkspace({
@@ -149,6 +128,7 @@ export function ChatWorkspace({
       setShareSuggestions([]);
       return;
     }
+    const controller = new AbortController();
     const timer = setTimeout(() => {
       const loadSuggestions = async () => {
         try {
@@ -191,17 +171,6 @@ export function ChatWorkspace({
     };
   }, [chatSlug, isShareDialogOpen, shareEmail]);
 
-  if (view === "flashcards") {
-    return (
-      <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
-        <PlaceholderCard
-          description="Flashcards view is coming next. Switch back to Chat anytime."
-          icon={Sparkles}
-          title="Flashcards"
-        />
-      </div>
-    );
-  }
   const shareWithEmail = async () => {
     const email = shareEmail.trim();
     if (!email) {
@@ -394,9 +363,8 @@ export function ChatWorkspace({
           id={chatSlug}
           initialMessages={initialMessages}
           isReadonly={isReadonly}
-          key={chatSlug}
-          selectedModel="apollo-agent"
-          selectedReasoningModel="apollo-agent"
+          selectedModel="apollo-apex"
+          selectedReasoningModel="apollo-apex"
           workspaceUuid={workspaceUuid}
         />
       </div>

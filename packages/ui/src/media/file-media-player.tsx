@@ -1,10 +1,16 @@
 "use client";
 
-import * as React from "react";
+import { type Ref, useEffect, useRef, useState } from "react";
+import { Button } from "../components/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/dropdown-menu";
 import { cn } from "../lib/utils";
 import {
   MediaPlayer,
-  MediaPlayerAudio,
   MediaPlayerCaptions,
   MediaPlayerControls,
   MediaPlayerControlsOverlay,
@@ -12,8 +18,6 @@ import {
   MediaPlayerError,
   MediaPlayerFullscreen,
   MediaPlayerLoading,
-  MediaPlayerLoop,
-  MediaPlayerPiP,
   MediaPlayerPlay,
   MediaPlayerSeek,
   MediaPlayerSeekBackward,
@@ -23,19 +27,65 @@ import {
   MediaPlayerVideo,
   MediaPlayerVolume,
 } from "./media";
+import {
+  type MediaPlaybackController,
+  type MediaPlaybackSource,
+  useMediaPlaybackSource,
+} from "./playback-source";
 
 interface FileMediaPlayerProps {
   activeRangeIndex?: number | null;
   captionsSrc?: string;
   className?: string;
   kind: "audio" | "video";
-  mimeType?: string | null;
   name: string;
   onError?: () => void;
   openedCached?: boolean;
+  playbackSource: MediaPlaybackSource;
+  posterUrl?: string | null;
   retrievalRanges?: Array<{ endMs?: number | null; startMs: number }>;
   seekToMs?: number | null;
-  src: string;
+}
+
+function PlaybackQualityMenu(input: {
+  playbackController: MediaPlaybackController;
+}) {
+  const { playbackController } = input;
+  if (playbackController.qualities.length <= 1) {
+    return null;
+  }
+
+  const selectedLabel =
+    playbackController.qualities.find(
+      (quality) => quality.id === playbackController.selectedQualityId
+    )?.label ?? "Auto";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            className="h-8 min-w-[72px] px-2 text-white hover:bg-white/10 hover:text-white"
+            size="sm"
+            type="button"
+            variant="ghost"
+          />
+        }
+      >
+        {selectedLabel}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-40">
+        {playbackController.qualities.map((quality) => (
+          <DropdownMenuItem
+            key={quality.id}
+            onSelect={() => playbackController.setSelectedQualityId(quality.id)}
+          >
+            {quality.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 export function FileMediaPlayer({
@@ -43,32 +93,30 @@ export function FileMediaPlayer({
   captionsSrc,
   className,
   kind,
-  mimeType,
   name,
   openedCached = false,
   onError,
+  playbackSource,
+  posterUrl,
   retrievalRanges,
   seekToMs,
-  src,
 }: FileMediaPlayerProps) {
   const isVideo = kind === "video";
-  const mediaRef = React.useRef<HTMLVideoElement | HTMLAudioElement | null>(
-    null
-  );
-  const [autoplayMuted, setAutoplayMuted] = React.useState(false);
-  // Keep startup fast for large media while still allowing warmed sessions to
-  // begin quickly.
-  const preloadStrategy = isVideo
-    ? "metadata"
-    : openedCached
-      ? "auto"
-      : "metadata";
+  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const [autoplayMuted, setAutoplayMuted] = useState(false);
+  const preloadStrategy = openedCached ? "auto" : "metadata";
 
-  React.useEffect(() => {
+  const playbackController = useMediaPlaybackSource({
+    mediaRef,
+    onError,
+    playbackSource,
+  });
+
+  useEffect(() => {
     setAutoplayMuted(false);
-  }, [src]);
+  }, [playbackSource]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const media = mediaRef.current;
     if (!(media && typeof seekToMs === "number" && Number.isFinite(seekToMs))) {
       return;
@@ -88,9 +136,9 @@ export function FileMediaPlayer({
     return () => {
       media.removeEventListener("loadedmetadata", applySeek);
     };
-  }, [seekToMs, src]);
+  }, [seekToMs, playbackSource]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const media = mediaRef.current;
     if (!media) {
       return;
@@ -124,14 +172,14 @@ export function FileMediaPlayer({
     };
 
     if (media.readyState >= 1) {
-      void attempt();
+      attempt().catch(() => undefined);
       return () => {
         cancelled = true;
       };
     }
 
     const onLoadedMetadata = () => {
-      void attempt();
+      attempt().catch(() => undefined);
     };
     media.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
 
@@ -139,98 +187,117 @@ export function FileMediaPlayer({
       cancelled = true;
       media.removeEventListener("loadedmetadata", onLoadedMetadata);
     };
-  }, [src]);
+  }, [playbackSource]);
+
+  if (!isVideo) {
+    return (
+      <div
+        className={cn(
+          "w-full rounded-2xl border border-border/70 bg-card p-3 shadow-sm",
+          className
+        )}
+      >
+        <div className="space-y-3 bg-muted/20 p-4">
+          <p className="line-clamp-1 font-medium text-foreground text-sm">
+            {name}
+          </p>
+          <audio
+            autoPlay
+            controls
+            key={
+              playbackSource.kind === "hls"
+                ? playbackSource.manifestUrl
+                : playbackSource.url
+            }
+            onError={() => onError?.()}
+            preload={preloadStrategy}
+            ref={mediaRef as Ref<HTMLAudioElement>}
+          >
+            <track
+              default
+              kind="captions"
+              label="Empty captions"
+              src="data:text/vtt;charset=utf-8,WEBVTT%0A%0A"
+              srcLang="en"
+            />
+          </audio>
+        </div>
+      </div>
+    );
+  }
+
+  const highlightRanges = retrievalRanges?.map((range) => ({
+    endTime:
+      typeof range.endMs === "number" && Number.isFinite(range.endMs)
+        ? Math.max(0, range.endMs / 1000)
+        : undefined,
+    startTime: Math.max(0, range.startMs / 1000),
+  }));
 
   return (
-    <div
+    <MediaPlayer
+      autoHide
       className={cn(
-        "w-full rounded-2xl border border-border/70 bg-card p-3 shadow-sm",
+        "w-full rounded-2xl border border-border/70 bg-card shadow-sm",
         className
       )}
+      label={name}
     >
-      <MediaPlayer
-        autoHide={isVideo}
-        className="rounded-xl border border-border/70 bg-black"
-      >
-        {isVideo ? (
-          <MediaPlayerVideo
-            autoPlay
-            className="h-auto max-h-[70vh] w-full"
-            key={src}
-            muted={autoplayMuted}
-            onError={() => onError?.()}
-            playsInline
-            preload={preloadStrategy}
-            ref={mediaRef as React.Ref<HTMLVideoElement>}
-            src={src}
-          >
-            {mimeType ? <source key={src} src={src} type={mimeType} /> : null}
-            {captionsSrc ? (
-              <track
-                default
-                key={`${src}:captions`}
-                kind="captions"
-                label="English"
-                src={captionsSrc}
-                srcLang="en"
-              />
-            ) : null}
-          </MediaPlayerVideo>
-        ) : (
-          <div className="space-y-3 bg-muted/20 p-4">
-            <p className="line-clamp-1 font-medium text-foreground text-sm">
-              {name}
-            </p>
-            <MediaPlayerAudio
-              autoPlay
-              key={src}
-              onError={() => onError?.()}
-              playsInline
-              preload={preloadStrategy}
-              ref={mediaRef as React.Ref<HTMLAudioElement>}
-              src={src}
-            >
-              {mimeType ? <source key={src} src={src} type={mimeType} /> : null}
-            </MediaPlayerAudio>
-          </div>
-        )}
-
+      <div className="relative w-full bg-black">
+        <MediaPlayerVideo
+          autoPlay
+          className="h-auto max-h-[70vh] w-full bg-black object-contain"
+          key={
+            playbackSource.kind === "hls"
+              ? playbackSource.manifestUrl
+              : playbackSource.url
+          }
+          muted={autoplayMuted}
+          onError={() => onError?.()}
+          playsInline
+          poster={posterUrl ?? undefined}
+          preload={preloadStrategy}
+          ref={mediaRef as Ref<HTMLVideoElement>}
+        >
+          {captionsSrc ? (
+            <track
+              default
+              key={`${name}:captions`}
+              kind="captions"
+              label="English"
+              src={captionsSrc}
+              srcLang="en"
+            />
+          ) : null}
+        </MediaPlayerVideo>
+        <MediaPlayerControlsOverlay />
         <MediaPlayerLoading />
         <MediaPlayerError />
-        {isVideo ? <MediaPlayerControlsOverlay /> : null}
-
-        <MediaPlayerControls
-          className={cn("gap-2", isVideo ? "" : "relative opacity-100")}
-        >
-          <MediaPlayerPlay />
-          <MediaPlayerSeekBackward />
-          <div className="min-w-0 flex-1">
-            <MediaPlayerSeek
-              activeRangeIndex={activeRangeIndex ?? undefined}
-              highlightRanges={retrievalRanges?.map((range) => ({
-                startTime: Math.max(0, range.startMs / 1000),
-                endTime:
-                  typeof range.endMs === "number"
-                    ? Math.max(range.startMs / 1000, range.endMs / 1000)
-                    : undefined,
-              }))}
-            />
+        <MediaPlayerControls className="flex-col items-stretch gap-3 p-3">
+          <MediaPlayerSeek
+            activeRangeIndex={activeRangeIndex ?? undefined}
+            className="w-full"
+            highlightRanges={highlightRanges}
+            withTime={false}
+          />
+          <div className="flex items-center gap-1 rounded-xl bg-black/60 px-2 py-2 text-white backdrop-blur-sm">
+            <MediaPlayerPlay className="text-white hover:bg-white/10 hover:text-white" />
+            <MediaPlayerSeekBackward className="text-white hover:bg-white/10 hover:text-white" />
+            <MediaPlayerSeekForward className="text-white hover:bg-white/10 hover:text-white" />
+            <MediaPlayerTime className="min-w-[96px] text-white/80" />
+            <div className="ml-auto flex items-center gap-1">
+              <PlaybackQualityMenu playbackController={playbackController} />
+              <MediaPlayerVolume className="text-white" />
+              {captionsSrc ? (
+                <MediaPlayerCaptions className="text-white hover:bg-white/10 hover:text-white" />
+              ) : null}
+              <MediaPlayerSettings className="text-white hover:bg-white/10 hover:text-white" />
+              <MediaPlayerDownload className="text-white hover:bg-white/10 hover:text-white" />
+              <MediaPlayerFullscreen className="text-white hover:bg-white/10 hover:text-white" />
+            </div>
           </div>
-          <MediaPlayerSeekForward />
-          <MediaPlayerTime />
-          <MediaPlayerVolume expandable={isVideo} />
-          <MediaPlayerLoop />
-          <MediaPlayerDownload />
-          {isVideo ? (
-            <>
-              <MediaPlayerCaptions />
-              <MediaPlayerPiP />
-              <MediaPlayerSettings />
-              <MediaPlayerFullscreen />
-            </>
-          ) : null}
         </MediaPlayerControls>
-      </MediaPlayer>
-    </div>
+      </div>
+    </MediaPlayer>
   );
 }

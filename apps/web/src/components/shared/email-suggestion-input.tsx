@@ -45,7 +45,7 @@ export function EmailSuggestionInput({
       ),
     [normalizedValue, suggestions]
   );
-  const open = isFocused && filteredSuggestions.length > 0;
+  const open = isFocused && suggestions.length > 0;
 
   return (
     <div className="relative w-full">

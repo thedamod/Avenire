@@ -1,6 +1,6 @@
+import { Toaster } from "@avenire/ui/components/sonner";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
-import { Toaster } from "@avenire/ui/components/sonner";
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
 import { metadataBase } from "@/lib/page-metadata";
 import "./globals.css";
@@ -41,13 +41,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html className="dark" lang="en">
+    <html className="light" lang="en">
       <body
         className={`${fonde.variable} font-sans antialiased`}
-        style={{
-          "--font-sans":
-            'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
-        } as React.CSSProperties}
+        style={
+          {
+            "--font-sans":
+              'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+          } as React.CSSProperties
+        }
       >
         <ServiceWorkerRegistration />
         {children}

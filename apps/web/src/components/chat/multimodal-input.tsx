@@ -37,6 +37,7 @@ import {
   revokeAttachmentUrl,
 } from "@/components/chat/attachment";
 import { PreviewAttachment } from "@/components/chat/preview-attachment";
+import { getUploadErrorMessage } from "@/lib/upload";
 import { useUploadThing } from "@/lib/uploadthing";
 import { cn } from "@/lib/utils";
 
@@ -139,7 +140,7 @@ function buildWorkspaceFileIndex(input: {
 
   const indexedFiles: MentionableWorkspaceFile[] = [];
   for (const file of input.files) {
-    if (!(file.id && file.name) || !file.storageUrl) {
+    if (!(file.id && file.name && file.storageUrl)) {
       continue;
     }
     const parentPath = resolveFolderPath(file.folderId);
@@ -215,7 +216,10 @@ function PureMultimodalInput({
   stop: UseChatHelpers<UIMessage>["stop"];
   attachments: Attachment[];
   setAttachments: Dispatch<SetStateAction<Attachment[]>>;
-  handleSubmit: (files: Attachment[]) => void | Promise<void>;
+  handleSubmit: (
+    inputValue: string,
+    files: Attachment[]
+  ) => void | Promise<void>;
   workspaceUuid: string;
   className?: string;
   centered?: boolean;
@@ -504,10 +508,11 @@ function PureMultimodalInput({
           url: uploadedUrl,
           storageKey: "key" in uploaded ? uploaded.key : undefined,
         });
-      } catch {
+      } catch (error) {
+        const errorMessage = getUploadErrorMessage(error);
         updateAttachment(attachment.id, {
           status: "failed",
-          errorMessage: ERROR_MESSAGES.UPLOAD_ERROR,
+          errorMessage,
         });
       }
     },
@@ -664,16 +669,8 @@ function PureMultimodalInput({
       return;
     }
 
-    try {
-      await handleSubmit(completedAttachments);
-    } catch {
-      toast.error(ERROR_MESSAGES.UNKNOWN_ERROR);
-      return;
-    }
-
-    for (const attachment of attachments) {
-      revokeAttachmentUrl(attachment.url);
-    }
+    const inputValue = input;
+    const attachmentsToSubmit = completedAttachments;
 
     setAttachments([]);
     setInput("");
@@ -683,8 +680,27 @@ function PureMultimodalInput({
     if (width && width > 768) {
       textareaRef.current?.focus();
     }
+
+    try {
+      await handleSubmit(inputValue, attachmentsToSubmit);
+    } catch {
+      setInput(inputValue);
+      setLocalStorageInput(inputValue);
+      setAttachments(attachmentsToSubmit);
+      toast.error(ERROR_MESSAGES.UNKNOWN_ERROR);
+      return;
+    }
+
+    try {
+      window.localStorage.removeItem("chat-input");
+    } catch {
+      // ignore localStorage errors in restricted contexts
+    }
+
+    for (const attachment of attachmentsToSubmit) {
+      revokeAttachmentUrl(attachment.url);
+    }
   }, [
-    attachments,
     completedAttachments,
     handleSubmit,
     input,
@@ -803,6 +819,7 @@ function PureMultimodalInput({
                 key={attachment.id}
                 onRemove={removeAttachment}
                 variant="composer"
+                workspaceUuid={workspaceUuid}
               />
             ))}
           </motion.div>
@@ -838,11 +855,11 @@ function PureMultimodalInput({
                               "bg-accent text-accent-foreground"
                           )}
                           key={file.id}
-                          onSelect={() => {
-                            selectMention(file);
-                          }}
                           onMouseDown={(event) => {
                             event.preventDefault();
+                          }}
+                          onSelect={() => {
+                            selectMention(file);
                           }}
                           value={file.workspacePath}
                         >
@@ -871,7 +888,7 @@ function PureMultimodalInput({
           <Textarea
             autoFocus
             className={cn(
-              "max-h-[calc(24dvh)] min-h-16 resize-none overflow-visible border-none! bg-transparent! px-0! pb-2 text-sm shadow-none! ring-0! focus-visible:border-transparent! focus-visible:ring-0! [&::-webkit-scrollbar-thumb]:bg-background",
+              "max-h-[calc(24dvh)] min-h-16 resize-none overflow-visible border-none! bg-transparent! px-0! pb-2 text-base shadow-none! ring-0! focus-visible:border-transparent! focus-visible:ring-0! [&::-webkit-scrollbar-thumb]:bg-background",
               className
             )}
             data-testid="multimodal-input"
