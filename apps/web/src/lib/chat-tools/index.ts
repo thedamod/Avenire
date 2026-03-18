@@ -16,6 +16,7 @@ import {
 } from "@avenire/ai/generative-ui/guidelines";
 import { retrieveWorkspaceChunks } from "@avenire/ingestion";
 import { scheduleIngestionJob } from "@avenire/ingestion/queue";
+import { createClient, type RedisClientType } from "redis";
 import { z } from "zod";
 import {
   createFolder,
@@ -59,6 +60,8 @@ const FILE_MANAGER_DEFAULT_MAX_FILES = 4;
 const FILE_MANAGER_LIST_LIMIT = 120;
 const FILE_MANAGER_MAX_FILE_CHARS = 5000;
 const FILE_MANAGER_MAX_OUTPUT_TOKENS = 260;
+const MISCONCEPTION_KEY_PREFIX = "chat-misconceptions:";
+const MISCONCEPTION_CONTEXT_LIMIT = 5;
 
 type FlashcardTaxonomy = {
   concept: string;
@@ -81,6 +84,254 @@ type WorkspacePathMaps = {
   filePathById: Map<string, string>;
   folderPathById: Map<string, string>;
 };
+
+type MisconceptionRecord = {
+  confidence: number;
+  concept: string;
+  createdAt: string;
+  reason: string;
+  resolvedAt: string | null;
+  source: string;
+  subject: string;
+  topic: string;
+  updatedAt: string;
+  workspaceId: string;
+};
+
+const misconceptionRecordSchema = z.object({
+  confidence: z.number().min(0).max(1),
+  concept: z.string(),
+  createdAt: z.string(),
+  reason: z.string(),
+  resolvedAt: z.string().nullable(),
+  source: z.string(),
+  subject: z.string(),
+  topic: z.string(),
+  updatedAt: z.string(),
+  workspaceId: z.string(),
+});
+
+const misconceptionListSchema = z.array(misconceptionRecordSchema);
+
+let misconceptionRedisClient: RedisClientType | null = null;
+
+function hasMisconceptionStore() {
+  return Boolean(process.env.REDIS_URL);
+}
+
+async function getMisconceptionRedisClient() {
+  if (!process.env.REDIS_URL) {
+    return null;
+  }
+
+  if (!misconceptionRedisClient) {
+    misconceptionRedisClient = createClient({ url: process.env.REDIS_URL });
+    misconceptionRedisClient.on("error", (error) => {
+      console.error("Redis client error in chat-tools misconception store", error);
+    });
+  }
+
+  if (!misconceptionRedisClient.isOpen) {
+    await misconceptionRedisClient.connect();
+  }
+
+  return misconceptionRedisClient;
+}
+
+function getMisconceptionStoreKey(params: {
+  userId: string;
+  workspaceId: string;
+}) {
+  return `${MISCONCEPTION_KEY_PREFIX}${params.workspaceId}:${params.userId}`;
+}
+
+function normalizeMisconceptionField(value: string, maxLength: number) {
+  return sanitizeTaxonomyLabel(value, maxLength).replace(/\s+/g, " ");
+}
+
+function normalizeMisconceptionIdentity(record: {
+  concept: string;
+  subject: string;
+}) {
+  return `${normalizeMisconceptionField(record.subject, 80).toLowerCase()}::${normalizeMisconceptionField(record.concept, 180).toLowerCase()}`;
+}
+
+async function loadMisconceptions(params: {
+  userId: string;
+  workspaceId: string;
+}) {
+  if (!hasMisconceptionStore()) {
+    return [];
+  }
+
+  try {
+    const client = await getMisconceptionRedisClient();
+    if (!client) {
+      return [];
+    }
+
+    const raw = await client.get(getMisconceptionStoreKey(params));
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = misconceptionListSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      return [];
+    }
+
+    return parsed.data;
+  } catch (error) {
+    console.error("Failed to load misconceptions", { error, ...params });
+    return [];
+  }
+}
+
+async function saveMisconceptions(params: {
+  misconceptions: MisconceptionRecord[];
+  userId: string;
+  workspaceId: string;
+}) {
+  if (!hasMisconceptionStore()) {
+    return;
+  }
+
+  try {
+    const client = await getMisconceptionRedisClient();
+    if (!client) {
+      return;
+    }
+
+    await client.set(
+      getMisconceptionStoreKey(params),
+      JSON.stringify(params.misconceptions),
+      { EX: 60 * 60 * 24 * 30 }
+    );
+  } catch (error) {
+    console.error("Failed to save misconceptions", { error, ...params });
+  }
+}
+
+function buildMisconceptionContext(misconceptions: MisconceptionRecord[]) {
+  if (misconceptions.length === 0) {
+    return null;
+  }
+
+  const lines = misconceptions.slice(0, MISCONCEPTION_CONTEXT_LIMIT).map(
+    (misconception, index) =>
+      `${index + 1}. ${misconception.concept} [${misconception.subject} / ${misconception.topic}] - ${misconception.reason} (confidence ${misconception.confidence.toFixed(2)})`
+  );
+
+  return [
+    "Active learning misconceptions:",
+    ...lines,
+    "Use this as private tutoring context. Correct these misunderstandings when relevant, but do not mention that this context was injected unless the user asks.",
+  ].join("\n");
+}
+
+export async function getActiveMisconceptionContext(params: {
+  subject?: string | null;
+  userId: string;
+  workspaceId: string;
+}) {
+  const subject = params.subject?.trim();
+  if (!subject) {
+    return null;
+  }
+
+  const misconceptions = await loadMisconceptions({
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+  });
+  const active = misconceptions
+    .filter(
+      (misconception) =>
+        !misconception.resolvedAt &&
+        normalizeMisconceptionField(misconception.subject, 80).toLowerCase() ===
+          normalizeMisconceptionField(subject, 80).toLowerCase()
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, MISCONCEPTION_CONTEXT_LIMIT);
+
+  return buildMisconceptionContext(active);
+}
+
+async function upsertMisconception(params: {
+  confidence: number;
+  concept: string;
+  reason: string;
+  subject: string;
+  topic: string;
+  userId: string;
+  workspaceId: string;
+}) {
+  const now = new Date().toISOString();
+  const normalizedConcept = sanitizeTaxonomyLabel(params.concept, 180);
+  const normalizedSubject = sanitizeTaxonomyLabel(params.subject, 80);
+  const normalizedTopic = sanitizeTaxonomyLabel(params.topic, 120);
+  const normalizedReason = sanitizeTaxonomyLabel(params.reason, 400);
+
+  const misconceptions = await loadMisconceptions({
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+  });
+
+  const nextRecord: MisconceptionRecord = {
+    confidence: Math.max(0, Math.min(1, params.confidence)),
+    concept: normalizedConcept,
+    createdAt: now,
+    reason: normalizedReason,
+    resolvedAt: null,
+    source: "chat_tool",
+    subject: normalizedSubject,
+    topic: normalizedTopic,
+    updatedAt: now,
+    workspaceId: params.workspaceId,
+  };
+
+  const identity = normalizeMisconceptionIdentity(nextRecord);
+  const index = misconceptions.findIndex(
+    (record) =>
+      !record.resolvedAt &&
+      normalizeMisconceptionIdentity(record) === identity
+  );
+
+  if (index >= 0) {
+    const existing = misconceptions[index];
+    misconceptions[index] = {
+      ...existing,
+      confidence: Math.min(
+        1,
+        Math.max(existing.confidence, nextRecord.confidence) + 0.1
+      ),
+      reason: nextRecord.reason,
+      subject: nextRecord.subject,
+      topic: nextRecord.topic,
+      updatedAt: now,
+    };
+  } else {
+    misconceptions.unshift(nextRecord);
+  }
+
+  await saveMisconceptions({
+    misconceptions,
+    userId: params.userId,
+    workspaceId: params.workspaceId,
+  });
+
+  const activeCount = misconceptions.filter(
+    (record) =>
+      !record.resolvedAt &&
+      normalizeMisconceptionIdentity(record) === identity
+  ).length;
+
+  return {
+    activeCount,
+    misconception: misconceptions.find(
+      (record) => normalizeMisconceptionIdentity(record) === identity
+    ) ?? nextRecord,
+  };
+}
 
 function formatCitationLocation(match: {
   endMs?: number | null;
@@ -1595,6 +1846,29 @@ The agent decides which operations to perform based on the task.`,
           operation,
           summary: `${operation} ${notes.length} note(s)`,
           task: input.task,
+        };
+      },
+    }),
+    log_misconception: tool({
+      description:
+        "Record a misconception the user explicitly reports or the conversation establishes with high confidence. Use when the user is repeatedly confused about a concept and the response should retain that learning context.",
+      inputSchema: chatToolSchemas.log_misconception.input,
+      outputSchema: chatToolSchemas.log_misconception.output,
+      execute: async (input) => {
+        const result = await upsertMisconception({
+          confidence: input.confidence,
+          concept: input.concept,
+          reason: input.reason,
+          subject: input.subject,
+          topic: input.topic,
+          userId: ctx.userId,
+          workspaceId: ctx.workspaceId,
+        });
+
+        return {
+          activeMisconceptionsCount: result.activeCount,
+          misconception: result.misconception,
+          summary: `Stored misconception for ${result.misconception.concept}`,
         };
       },
     }),

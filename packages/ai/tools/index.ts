@@ -61,6 +61,19 @@ const notePreviewSchema = z.object({
   workspacePath: z.string(),
 });
 
+const misconceptionSchema = z.object({
+  confidence: z.number().min(0).max(1),
+  concept: z.string(),
+  createdAt: z.string(),
+  reason: z.string(),
+  resolvedAt: z.string().nullable(),
+  source: z.string(),
+  subject: z.string(),
+  topic: z.string(),
+  updatedAt: z.string(),
+  workspaceId: z.string(),
+});
+
 export const chatToolSchemas = {
   search_materials: {
     input: z.object({
@@ -182,6 +195,20 @@ export const chatToolSchemas = {
       modules: z.array(z.string()),
     }),
   },
+  log_misconception: {
+    input: z.object({
+      confidence: z.number().min(0).max(1),
+      concept: z.string().min(1),
+      reason: z.string().min(1),
+      subject: z.string().min(1),
+      topic: z.string().min(1),
+    }),
+    output: z.object({
+      activeMisconceptionsCount: z.number().int(),
+      misconception: misconceptionSchema,
+      summary: z.string(),
+    }),
+  },
   show_widget: {
     input: z
       .object({
@@ -240,6 +267,10 @@ export const chatTools = {
   visualize_read_me: tool({
     inputSchema: chatToolSchemas.visualize_read_me.input,
     outputSchema: chatToolSchemas.visualize_read_me.output,
+  }),
+  log_misconception: tool({
+    inputSchema: chatToolSchemas.log_misconception.input,
+    outputSchema: chatToolSchemas.log_misconception.output,
   }),
   show_widget: tool({
     inputSchema: chatToolSchemas.show_widget.input,

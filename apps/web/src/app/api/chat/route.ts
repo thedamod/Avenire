@@ -30,7 +30,10 @@ import {
   DEFAULT_CHAT_ICON,
   isChatIconName,
 } from "@/lib/chat-icons";
-import { createChatTools } from "@/lib/chat-tools";
+import {
+  createChatTools,
+  getActiveMisconceptionContext,
+} from "@/lib/chat-tools";
 import { resolveWorkspaceForUser } from "@/lib/file-data";
 import { normalizeMediaType } from "@/lib/media-type";
 import { createApiLogger } from "@/lib/observability";
@@ -54,6 +57,7 @@ const MODEL_TOOL_ALLOW_LIST = new Set([
   "note_agent",
   "generate_flashcards",
   "get_due_cards",
+  "log_misconception",
   "quiz_me",
   "visualize_read_me",
   "show_widget",
@@ -882,6 +886,14 @@ export async function POST(request: Request) {
           workspaceId: workspace.workspaceId,
         });
         const modelTools = pickModelTools(tools);
+        const activeMisconceptionContext = await getActiveMisconceptionContext({
+          subject:
+            subjectDetection.subject && subjectDetection.confidence >= 0.5
+              ? subjectDetection.subject
+              : null,
+          userId: session.user.id,
+          workspaceId: workspace.workspaceId,
+        });
 
         try {
           result = streamText({
@@ -890,7 +902,9 @@ export async function POST(request: Request) {
             ),
             system: APOLLO_PROMPT(
               body.userName ?? session.user.name ?? undefined,
-              mergedContext || undefined
+              [mergedContext, activeMisconceptionContext]
+                .filter((value) => Boolean(value))
+                .join("\n\n") || undefined
             ),
             providerOptions: {
               baseten: {
