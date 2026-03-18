@@ -134,6 +134,13 @@ export interface GetMasteryBySubjectInput {
   workspaceId?: string | null;
 }
 
+export interface GetWeakestConceptsInput {
+  limit?: number;
+  subject?: string;
+  userId: string;
+  workspaceId?: string | null;
+}
+
 export interface RecomputeConceptMasteryInput {
   concept: string;
   reviewedAt?: Date;
@@ -711,6 +718,37 @@ export async function getMasteryBySubject(
     )
     .orderBy(
       desc(conceptMastery.score),
+      desc(conceptMastery.lastReviewedAt),
+      asc(conceptMastery.topic),
+      asc(conceptMastery.concept)
+    )
+    .limit(Math.max(1, input.limit ?? DEFAULT_MASTERY_LIMIT));
+
+  return rows.map(mapMasteryRow);
+}
+
+export async function getWeakestConcepts(
+  input: GetWeakestConceptsInput
+): Promise<ConceptMasteryRecord[]> {
+  const subject = input.subject
+    ? normalizeRequiredText(input.subject, "subject")
+    : null;
+
+  const rows = await db
+    .select()
+    .from(conceptMastery)
+    .where(
+      and(
+        eq(conceptMastery.userId, input.userId),
+        subject ? eq(conceptMastery.subject, subject) : undefined,
+        input.workspaceId
+          ? eq(conceptMastery.workspaceId, input.workspaceId)
+          : undefined
+      )
+    )
+    .orderBy(
+      asc(conceptMastery.score),
+      desc(conceptMastery.activeMisconceptionCount),
       desc(conceptMastery.lastReviewedAt),
       asc(conceptMastery.topic),
       asc(conceptMastery.concept)

@@ -100,6 +100,52 @@ export const workspace = pgTable(
   ]
 );
 
+export const sessionSummary = pgTable(
+  "session_summaries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    chatId: text("chat_id")
+      .notNull()
+      .references(() => chatThread.id, { onDelete: "cascade" }),
+    subject: text("subject"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
+    startPosition: integer("start_position").notNull().default(0),
+    endPosition: integer("end_position").notNull().default(0),
+    conceptsCovered: jsonb("concepts_covered")
+      .notNull()
+      .$type<string[]>()
+      .default([]),
+    misconceptionsDetected: jsonb("misconceptions_detected")
+      .notNull()
+      .$type<string[]>()
+      .default([]),
+    flashcardsCreated: integer("flashcards_created").notNull().default(0),
+    summaryText: text("summary_text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("session_summary_user_ended_idx").on(table.userId, table.endedAt),
+    index("session_summary_chat_ended_idx").on(table.chatId, table.endedAt),
+    index("session_summary_workspace_subject_ended_idx").on(
+      table.workspaceId,
+      table.subject,
+      table.endedAt
+    ),
+  ]
+);
+
 export const fileFolder = pgTable(
   "file_folder",
   {

@@ -11,6 +11,7 @@ export type { FlashcardRating } from "./flashcard-fsrs";
 export * from "./learning-data";
 export * from "./ingestion-data";
 export * from "./maintenance-data";
+export * from "./session-summary-data";
 export * from "./schema";
 export * from "./sudo-data";
 export * from "./task-data";

@@ -38,6 +38,12 @@ import { resolveWorkspaceForUser } from "@/lib/file-data";
 import "@/lib/learning-automation";
 import { normalizeMediaType } from "@/lib/media-type";
 import { createApiLogger } from "@/lib/observability";
+import {
+  buildRecentSessionSummaryContext,
+  getLatestSessionSummaryForChat,
+  getRecentRelevantSessionSummary,
+  persistSessionSummaryForCompletedTurn,
+} from "@/lib/session-summaries";
 import { detectSubjectFromText } from "@/lib/subject-detection";
 import {
   clearActiveStreamId,
@@ -628,6 +634,7 @@ export async function POST(request: Request) {
     type CreatedChat = Awaited<ReturnType<typeof createChatForUser>>;
     let chat: ExistingChat | CreatedChat | null = null;
     let chatCreatedFromNew = false;
+    const requestStartedAt = new Date();
     if (chatSlug === "new") {
       if (idempotencyHeader) {
         idempotencyRedisKey = buildChatIdempotencyRedisKey({
@@ -713,6 +720,19 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+
+    const previousLastMessageAt = chat.lastMessageAt
+      ? new Date(chat.lastMessageAt)
+      : null;
+    const latestSummary = await getLatestSessionSummaryForChat(chat.id);
+    const recentRelevantSummary =
+      subjectDetection.subject && subjectDetection.confidence >= 0.5
+        ? await getRecentRelevantSessionSummary({
+            subject: subjectDetection.subject,
+            userId: session.user.id,
+            workspaceId: workspace.workspaceId,
+          })
+        : null;
 
     if (idempotencyHeader && !idempotencyRedisKey) {
       idempotencyRedisKey = buildChatIdempotencyRedisKey({
@@ -866,6 +886,7 @@ export async function POST(request: Request) {
         const mergedContext = [
           body.context?.trim(),
           buildDetectedSubjectContext(subjectDetection),
+          buildRecentSessionSummaryContext(recentRelevantSummary),
         ]
           .filter((value) => Boolean(value))
           .join("\n\n");
@@ -989,6 +1010,44 @@ export async function POST(request: Request) {
                 logInfo("Persisted streamed messages", {
                   chatId: chatSlug,
                   messageCount: persistedMessages.length,
+                });
+
+                after(async () => {
+                  try {
+                    const latestUserPosition = Math.max(
+                      0,
+                      [...persistedMessages]
+                        .map((message, index) =>
+                          message.role === "user" ? index : -1
+                        )
+                        .reduce(
+                          (highest, index) => Math.max(highest, index),
+                          -1
+                        )
+                    );
+
+                    await persistSessionSummaryForCompletedTurn({
+                      chatId: chat.id,
+                      endedAt: new Date(),
+                      latestSummary,
+                      latestUserPosition,
+                      messages: persistedMessages,
+                      previousLastMessageAt,
+                      requestStartedAt,
+                      subject:
+                        subjectDetection.subject &&
+                        subjectDetection.confidence >= 0.5
+                          ? subjectDetection.subject
+                          : null,
+                      userId: session.user.id,
+                      workspaceId: workspace.workspaceId,
+                    });
+                  } catch (summaryError) {
+                    logError("Failed to persist session summary", {
+                      chatId: chatSlug,
+                      error: summaryError,
+                    });
+                  }
                 });
 
                 try {
