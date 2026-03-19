@@ -7,6 +7,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  or,
   sql,
 } from "drizzle-orm";
 import { db } from "./client";
@@ -245,13 +246,31 @@ export async function beginIngestionJob(input: {
   });
 }
 
-export async function listQueuedIngestionJobs(limit = 200) {
+export async function listQueuedIngestionJobs(input?: {
+  after?: { createdAt: Date; id: string } | null;
+  limit?: number;
+}) {
+  const limit = Math.max(1, Math.min(1000, input?.limit ?? 200));
+  const after = input?.after ?? null;
   const rows = await db
     .select()
     .from(ingestionJob)
-    .where(eq(ingestionJob.status, "queued"))
-    .orderBy(asc(ingestionJob.createdAt))
-    .limit(Math.max(1, Math.min(1000, limit)));
+    .where(
+      and(
+        eq(ingestionJob.status, "queued"),
+        after
+          ? or(
+              gt(ingestionJob.createdAt, after.createdAt),
+              and(
+                eq(ingestionJob.createdAt, after.createdAt),
+                gt(ingestionJob.id, after.id)
+              )
+            )
+          : undefined
+      )
+    )
+    .orderBy(asc(ingestionJob.createdAt), asc(ingestionJob.id))
+    .limit(limit);
 
   return rows.map(mapJobRow);
 }

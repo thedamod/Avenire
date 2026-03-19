@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import {
   appendIngestionJobEvent,
   beginIngestionJob,
-  deleteIngestionDataForFile,
   getFileForIngestion,
   listQueuedIngestionJobs,
   markNoteReindexed,
@@ -142,10 +141,6 @@ async function processQueuedJob(queueJob: IngestionQueueJobData) {
     const file = await getFileForIngestion(job.workspaceId, job.fileId);
     if (!file) {
       throw new Error("File not found for ingestion job.");
-    }
-
-    if (file.isNote) {
-      await deleteIngestionDataForFile(job.workspaceId, file.id);
     }
 
     stage = "ingest";
@@ -331,37 +326,64 @@ async function recoverQueuedJobs() {
   lastRecoverySweepAt = new Date().toISOString();
 
   try {
-    const queuedJobs = await listQueuedIngestionJobs(200);
-    lastRecoveredJobsCount = queuedJobs.length;
+    const pageSize = 1000;
+    let cursor: { createdAt: Date; id: string } | null = null;
+    let recoveredJobsCount = 0;
+    let rejectedCount = 0;
 
-    if (queuedJobs.length === 0) {
+    while (true) {
+      const queuedJobs = await listQueuedIngestionJobs({
+        after: cursor,
+        limit: pageSize,
+      });
+
+      if (queuedJobs.length === 0) {
+        break;
+      }
+
+      recoveredJobsCount += queuedJobs.length;
+
+      const results = await Promise.allSettled(
+        queuedJobs.map((job) =>
+          enqueueIngestionQueueJob({
+            workspaceId: job.workspaceId,
+            fileId: job.fileId,
+            jobId: job.id,
+          })
+        )
+      );
+
+      rejectedCount += results.filter(
+        (result) => result.status === "rejected"
+      ).length;
+
+      const lastJob = queuedJobs[queuedJobs.length - 1];
+      cursor = {
+        createdAt: new Date(lastJob.createdAt),
+        id: lastJob.id,
+      };
+
+      if (queuedJobs.length < pageSize) {
+        break;
+      }
+    }
+
+    lastRecoveredJobsCount = recoveredJobsCount;
+
+    if (recoveredJobsCount === 0) {
       return;
     }
 
-    const results = await Promise.allSettled(
-      queuedJobs.map((job) =>
-        enqueueIngestionQueueJob({
-          workspaceId: job.workspaceId,
-          fileId: job.fileId,
-          jobId: job.id,
-        })
-      )
-    );
-
-    const rejectedCount = results.filter(
-      (result) => result.status === "rejected"
-    ).length;
-
     if (rejectedCount > 0) {
       console.error("ingestion.worker.recovery_enqueue_failed", {
-        queuedJobs: queuedJobs.length,
+        queuedJobs: recoveredJobsCount,
         rejectedCount,
       });
       return;
     }
 
     console.log("ingestion.worker.recovery_enqueued", {
-      queuedJobs: queuedJobs.length,
+      queuedJobs: recoveredJobsCount,
     });
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error);

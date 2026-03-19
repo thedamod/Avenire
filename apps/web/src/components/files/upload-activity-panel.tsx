@@ -74,12 +74,13 @@ export function UploadActivityPanel() {
   const ingestionSseRetryTimerRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
+  const ingestionSseCursorRef = useRef<string | null>(null);
 
   const workspaceFromPath = useMemo(() => {
-    const match = pathname.match(/^\/dashboard\/files\/([^/]+)/);
+    const match = pathname.match(/^\/workspace\/files\/([^/]+)/);
     return match?.[1] ?? null;
   }, [pathname]);
-  const isFilesRoute = pathname.startsWith("/dashboard/files");
+  const isFilesRoute = pathname.startsWith("/workspace/files");
   useEffect(() => {
     try {
       setPreferredWorkspaceId(
@@ -167,6 +168,7 @@ export function UploadActivityPanel() {
       return;
     }
 
+    ingestionSseCursorRef.current = null;
     let closed = false;
     let eventSource: EventSource | null = null;
 
@@ -201,6 +203,9 @@ export function UploadActivityPanel() {
           window.location.origin
         );
         url.searchParams.set("workspaceUuid", activeWorkspaceUuid);
+        if (ingestionSseCursorRef.current) {
+          url.searchParams.set("cursor", ingestionSseCursorRef.current);
+        }
 
         eventSource = new EventSource(url.toString());
         eventSource.onerror = () => {
@@ -208,11 +213,20 @@ export function UploadActivityPanel() {
           scheduleReconnect();
         };
         eventSource.addEventListener("ingestion.job", (event) => {
-          const payload = JSON.parse((event as MessageEvent).data) as {
+          const messageEvent = event as MessageEvent;
+          const payload = JSON.parse(messageEvent.data) as {
             jobId: string;
             eventType: string;
             payload?: Record<string, unknown>;
           };
+          const cursor =
+            typeof messageEvent.lastEventId === "string" &&
+            messageEvent.lastEventId.length > 0
+              ? messageEvent.lastEventId
+              : null;
+          if (cursor) {
+            ingestionSseCursorRef.current = cursor;
+          }
           const status: FilesActivityItem["status"] =
             payload.eventType === "job.failed"
               ? "failed"
