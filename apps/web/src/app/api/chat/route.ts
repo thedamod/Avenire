@@ -6,6 +6,7 @@ import {
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
+  Output,
   generateText,
   smoothStream,
   stepCountIs,
@@ -16,11 +17,13 @@ import { auth } from "@avenire/auth/server";
 import { headers } from "next/headers";
 import { after, NextResponse } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
+import { z } from "zod";
 import { consumeChatUnits } from "@/lib/billing";
 import {
   createChatForUser,
   deleteChatForUser,
   getChatBySlugForUser,
+  getMessagesByChatSlugForUser,
   isChatOwnerForUser,
   saveMessagesForChatSlug,
   updateChatForUser,
@@ -42,9 +45,10 @@ import {
   buildRecentSessionSummaryContext,
   getLatestSessionSummaryForChat,
   getRecentRelevantSessionSummary,
+  getWorkspaceSubjectSummary,
   persistSessionSummaryForCompletedTurn,
 } from "@/lib/session-summaries";
-import { detectSubjectFromText } from "@/lib/subject-detection";
+import { normalizeSubjectLabel } from "@/lib/subject-detection";
 import {
   clearActiveStreamId,
   getActiveStreamId,
@@ -58,6 +62,12 @@ const LOG_PREFIX = "[api/chat]";
 const DEFAULT_CHAT_TOKENS_PER_CREDIT = 4000;
 const DEFAULT_CHAT_TITLE_MODEL: ApolloModelName = "apollo-sprint";
 const WHITESPACE_PATTERN = /\s+/g;
+const DEFAULT_THINKING_MESSAGES = [
+  "Thinking through the details",
+  "Checking the shape of the answer",
+  "Putting the pieces together",
+  "Finishing the last pass",
+];
 const MODEL_TOOL_ALLOW_LIST = new Set([
   "avenire_agent",
   "file_manager_agent",
@@ -88,6 +98,15 @@ function logError(message: string, meta?: Record<string, unknown>) {
   console.error(`${LOG_PREFIX} ${message}`);
 }
 
+function logWarn(message: string, meta?: Record<string, unknown>) {
+  if (meta) {
+    console.warn(`${LOG_PREFIX} ${message}`, meta);
+    return;
+  }
+
+  console.warn(`${LOG_PREFIX} ${message}`);
+}
+
 function formatError(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -113,6 +132,41 @@ function fallbackChatNameFromText(value: string) {
   );
 
   return normalized.length > 0 ? normalized : DEFAULT_CHAT_TITLE;
+}
+
+function normalizeThinkingMessage(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+const SESSION_CLOSE_KEY_PREFIX = "chat:session-close:";
+const SESSION_CLOSE_TTL_SECONDS = 60 * 60 * 24;
+
+function buildSessionCloseKey(input: {
+  chatId: string;
+  sessionId: string;
+  userId: string;
+  workspaceId: string;
+}) {
+  return [
+    SESSION_CLOSE_KEY_PREFIX,
+    input.userId,
+    input.workspaceId,
+    input.chatId,
+    input.sessionId,
+  ].join("");
+}
+
+async function markSessionCloseSeen(key: string) {
+  try {
+    const client = await getRedisClient();
+    const result = await client.set(key, "1", {
+      EX: SESSION_CLOSE_TTL_SECONDS,
+      NX: true,
+    });
+    return result === "OK";
+  } catch {
+    return true;
+  }
 }
 
 function resolveChatTitleModel(): ApolloModelName {
@@ -202,27 +256,13 @@ function extractLatestUserText(messages: UIMessage[]) {
   return text;
 }
 
-function buildSubjectDetectionText(input: {
-  context?: string;
-  messages: UIMessage[];
-}) {
-  const parts = [extractLatestUserText(input.messages), input.context?.trim()]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => value.trim());
-
-  return parts.join("\n\n");
-}
-
-function buildDetectedSubjectContext(
-  detection: ReturnType<typeof detectSubjectFromText>
-) {
-  if (!(detection.subject && detection.confidence >= 0.5)) {
+function buildDetectedSubjectContext(subject: string | null) {
+  if (!subject) {
     return null;
   }
 
   return [
-    `Detected session subject: ${detection.subject}.`,
-    `Confidence: ${detection.confidence.toFixed(2)} via ${detection.source}.`,
+    `Detected session subject: ${subject}.`,
     "Treat this as soft context, not a hard constraint.",
   ].join(" ");
 }
@@ -317,6 +357,52 @@ async function generateChatMetadata(
       title: fallbackChatNameFromText(latestUserText),
       icon: DEFAULT_CHAT_ICON,
     };
+  }
+}
+
+const thinkingMessagesSchema = z.object({
+  messages: z.array(z.string().min(1)).min(3).max(4),
+});
+
+async function generateChatThinkingMessages(
+  messages: UIMessage[],
+  abortSignal?: AbortSignal
+) {
+  const latestUserText = extractLatestUserText(messages);
+  if (!latestUserText) {
+    return null;
+  }
+
+  try {
+    const modelName = resolveChatTitleModel();
+    const { output } = await generateText({
+      model: apollo.languageModel(modelName),
+      output: Output.object({ schema: thinkingMessagesSchema }),
+      prompt: [
+        "Generate 3 or 4 short loading messages for a live chat thinking animation.",
+        "The messages should sound like the assistant is actively working.",
+        "Keep each message short and concrete.",
+        "Avoid quotes and punctuation at the end.",
+        "Return only valid JSON with this shape:",
+        "{\"messages\":[\"...\",\"...\",\"...\",\"...\"]}",
+        `User message: ${latestUserText}`,
+      ].join("\n"),
+      maxOutputTokens: 96,
+      temperature: 0.7,
+      abortSignal,
+    });
+
+    const normalized = output.messages
+      .map(normalizeThinkingMessage)
+      .filter(Boolean)
+      .slice(0, 4);
+
+    return normalized.length > 0 ? normalized : DEFAULT_THINKING_MESSAGES;
+  } catch (error) {
+    logWarn("Failed to generate thinking messages; using fallback", {
+      error: formatError(error),
+    });
+    return DEFAULT_THINKING_MESSAGES;
   }
 }
 
@@ -594,13 +680,116 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json().catch(() => ({}))) as {
+      kind?: "session-close";
       messages?: UIMessage[];
       selectedModel?: ApolloModelName;
-      selectedReasoningModel?: ApolloModelName;
       chatId?: string;
+      sessionId?: string;
+      status?: string;
       userName?: string;
       context?: string;
     };
+
+    if (body.kind === "session-close") {
+      const chatId = body.chatId?.trim() ?? "";
+      const sessionId = body.sessionId?.trim() ?? "";
+      if (!chatId || chatId === "new" || !sessionId) {
+        apiLogger.requestSucceeded(202, {
+          chatId: chatId || null,
+          kind: "session-close",
+          ignored: true,
+        });
+        return NextResponse.json({ ok: true, ignored: true }, { status: 202 });
+      }
+
+      const dedupeKey = buildSessionCloseKey({
+        chatId,
+        sessionId,
+        userId: session.user.id,
+        workspaceId: workspace.workspaceId,
+      });
+      const shouldProcess = await markSessionCloseSeen(dedupeKey);
+      if (!shouldProcess) {
+        apiLogger.requestSucceeded(202, {
+          chatId,
+          kind: "session-close",
+          deduped: true,
+        });
+        return NextResponse.json({ ok: true, deduped: true }, { status: 202 });
+      }
+
+      const chat = await getChatBySlugForUser(
+        session.user.id,
+        chatId,
+        workspace.workspaceId
+      );
+      if (!chat) {
+        apiLogger.requestFailed(404, "Chat not found", { chatId });
+        return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      }
+
+      const messages = await getMessagesByChatSlugForUser(
+        session.user.id,
+        chatId,
+        workspace.workspaceId
+      );
+      if (!messages || messages.length === 0) {
+        apiLogger.requestSucceeded(202, {
+          chatId,
+          kind: "session-close",
+          ignored: true,
+        });
+        return NextResponse.json({ ok: true, ignored: true }, { status: 202 });
+      }
+
+      const latestSummary = await getLatestSessionSummaryForChat(chat.id).catch(
+        (error) => {
+          logWarn("Failed to load latest session summary; continuing without it", {
+            chatId,
+            error: formatError(error),
+          });
+          return null;
+        }
+      );
+      const latestUserPosition = Math.max(
+        0,
+        messages
+          .map((message, index) => (message.role === "user" ? index : -1))
+          .reduce((highest, index) => Math.max(highest, index), -1)
+      );
+
+      apiLogger.requestSucceeded(202, {
+        chatId,
+        kind: "session-close",
+        messageCount: messages.length,
+      });
+
+      after(async () => {
+        try {
+          await persistSessionSummaryForCompletedTurn({
+            chatId: chat.id,
+            endedAt: new Date(),
+            latestSummary,
+            latestUserPosition,
+            messages,
+            previousLastMessageAt: chat.lastMessageAt
+              ? new Date(chat.lastMessageAt)
+              : null,
+            requestStartedAt: new Date(),
+            forceNewSessionBoundary: true,
+            userId: session.user.id,
+            workspaceId: workspace.workspaceId,
+          });
+        } catch (error) {
+          logError("Failed to persist session summary on session close", {
+            chatId,
+            error,
+          });
+        }
+      });
+
+      return NextResponse.json({ ok: true }, { status: 202 });
+    }
 
     let chatSlug: string = body.chatId?.trim() ?? "";
     if (!chatSlug) {
@@ -613,20 +802,6 @@ export async function POST(request: Request) {
       normalizeMessageFileMediaTypes(body.messages ?? [])
     );
     const modelContextMessages = trimMessagesForModelContext(originalMessages);
-    const subjectDetection = detectSubjectFromText(
-      buildSubjectDetectionText({
-        context: body.context,
-        messages: originalMessages,
-      })
-    );
-    logInfo("Incoming chat request", {
-      chatId: body.chatId ?? null,
-      selectedModel: body.selectedModel ?? null,
-      selectedReasoningModel: body.selectedReasoningModel ?? null,
-      messageCount: originalMessages.length,
-      modelContextCount: modelContextMessages.length,
-      subjectDetection,
-    });
 
     type ExistingChat = NonNullable<
       Awaited<ReturnType<typeof getChatBySlugForUser>>
@@ -634,7 +809,6 @@ export async function POST(request: Request) {
     type CreatedChat = Awaited<ReturnType<typeof createChatForUser>>;
     let chat: ExistingChat | CreatedChat | null = null;
     let chatCreatedFromNew = false;
-    const requestStartedAt = new Date();
     if (chatSlug === "new") {
       if (idempotencyHeader) {
         idempotencyRedisKey = buildChatIdempotencyRedisKey({
@@ -721,16 +895,43 @@ export async function POST(request: Request) {
       );
     }
 
-    const previousLastMessageAt = chat.lastMessageAt
-      ? new Date(chat.lastMessageAt)
-      : null;
-    const latestSummary = await getLatestSessionSummaryForChat(chat.id);
+    const workspaceSubjectSummary = await getWorkspaceSubjectSummary({
+      userId: session.user.id,
+      workspaceId: workspace.workspaceId,
+    }).catch((error) => {
+      logWarn("Failed to load workspace subject summary; continuing without it", {
+        chatId: chat.id,
+        error: formatError(error),
+      });
+      return null;
+    });
+    const resolvedSubject = normalizeSubjectLabel(
+      workspaceSubjectSummary?.subject ?? null
+    );
+    logInfo("Incoming chat request", {
+      chatId: body.chatId ?? null,
+      selectedModel: body.selectedModel ?? null,
+      messageCount: originalMessages.length,
+      modelContextCount: modelContextMessages.length,
+      workspaceSubjectSummary,
+      resolvedSubject,
+    });
     const recentRelevantSummary =
-      subjectDetection.subject && subjectDetection.confidence >= 0.5
+      resolvedSubject
         ? await getRecentRelevantSessionSummary({
-            subject: subjectDetection.subject,
+            subject: resolvedSubject,
             userId: session.user.id,
             workspaceId: workspace.workspaceId,
+          }).catch((error) => {
+            logWarn(
+              "Failed to load recent relevant session summary; continuing without it",
+              {
+                chatId: chat.id,
+                error: formatError(error),
+                subject: resolvedSubject,
+              }
+            );
+            return null;
           })
         : null;
 
@@ -822,12 +1023,18 @@ export async function POST(request: Request) {
 
     const streamId = randomUUID();
     const previousStreamId = await getActiveStreamId(chatSlug);
+    await setActiveStreamId(chatSlug, streamId);
     if (previousStreamId) {
       await clearActiveStreamId(chatSlug, previousStreamId);
     }
 
     const stream = createUIMessageStream<UIMessage>({
       execute: async ({ writer }) => {
+        const thinkingMessagesPromise = generateChatThinkingMessages(
+          originalMessages,
+          request.signal
+        );
+
         if (chatCreatedFromNew) {
           writer.write({
             type: "data-chatCreated",
@@ -876,16 +1083,28 @@ export async function POST(request: Request) {
           }
         }
 
+        const nextThinkingMessages = await thinkingMessagesPromise;
+        if (nextThinkingMessages?.length) {
+          writer.write({
+            type: "data-thinkingMessages",
+            transient: true,
+            data: {
+              id: chatSlug,
+              messages: nextThinkingMessages,
+            },
+          });
+        }
+
+        const selectedModel = body.selectedModel ?? "apollo-apex";
         logInfo("Starting model stream", {
           chatId: chatSlug,
-          model:
-            body.selectedModel ?? body.selectedReasoningModel ?? "apollo-apex",
+          model: selectedModel,
         });
 
         let result: Awaited<ReturnType<typeof streamText>>;
         const mergedContext = [
           body.context?.trim(),
-          buildDetectedSubjectContext(subjectDetection),
+          buildDetectedSubjectContext(resolvedSubject),
           buildRecentSessionSummaryContext(recentRelevantSummary),
         ]
           .filter((value) => Boolean(value))
@@ -909,19 +1128,14 @@ export async function POST(request: Request) {
         });
         const modelTools = pickModelTools(tools);
         const activeMisconceptionContext = await getActiveMisconceptionContext({
-          subject:
-            subjectDetection.subject && subjectDetection.confidence >= 0.5
-              ? subjectDetection.subject
-              : null,
+          subject: resolvedSubject,
           userId: session.user.id,
           workspaceId: workspace.workspaceId,
         });
 
         try {
           result = streamText({
-            model: apollo.languageModel(
-              body.selectedModel ?? body.selectedReasoningModel ?? "apollo-apex"
-            ),
+            model: apollo.languageModel(selectedModel),
             system: APOLLO_PROMPT(
               body.userName ?? session.user.name ?? undefined,
               [mergedContext, activeMisconceptionContext]
@@ -965,10 +1179,7 @@ export async function POST(request: Request) {
           await clearActiveStreamId(chatSlug, streamId);
           logError("Failed to start model stream", {
             chatId: chatSlug,
-            model:
-              body.selectedModel ??
-              body.selectedReasoningModel ??
-              "apollo-apex",
+            model: selectedModel,
             error,
           });
           apiLogger.requestFailed(500, error, { chatId: chatSlug });
@@ -1012,53 +1223,11 @@ export async function POST(request: Request) {
                   messageCount: persistedMessages.length,
                 });
 
-                after(async () => {
-                  try {
-                    const latestUserPosition = Math.max(
-                      0,
-                      [...persistedMessages]
-                        .map((message, index) =>
-                          message.role === "user" ? index : -1
-                        )
-                        .reduce(
-                          (highest, index) => Math.max(highest, index),
-                          -1
-                        )
-                    );
-
-                    await persistSessionSummaryForCompletedTurn({
-                      chatId: chat.id,
-                      endedAt: new Date(),
-                      latestSummary,
-                      latestUserPosition,
-                      messages: persistedMessages,
-                      previousLastMessageAt,
-                      requestStartedAt,
-                      subject:
-                        subjectDetection.subject &&
-                        subjectDetection.confidence >= 0.5
-                          ? subjectDetection.subject
-                          : null,
-                      userId: session.user.id,
-                      workspaceId: workspace.workspaceId,
-                    });
-                  } catch (summaryError) {
-                    logError("Failed to persist session summary", {
-                      chatId: chatSlug,
-                      error: summaryError,
-                    });
-                  }
-                });
-
                 try {
                   const totalUsage = await result.totalUsage;
                   const totalTokens = resolveTotalTokens(totalUsage);
                   const requiredCredits = getRequiredChatCredits(totalTokens);
                   const additionalCredits = Math.max(0, requiredCredits - 1);
-                  const modelName =
-                    body.selectedModel ??
-                    body.selectedReasoningModel ??
-                    "apollo-apex";
 
                   if (additionalCredits > 0) {
                     const meteredUsage = await consumeChatUnits(
@@ -1083,7 +1252,7 @@ export async function POST(request: Request) {
                   });
                   apiLogger.meter("meter.chat.tokens", {
                     chatId: chatSlug,
-                    model: modelName,
+                    model: selectedModel,
                     inputTokens: totalUsage.inputTokens ?? null,
                     outputTokens: totalUsage.outputTokens ?? null,
                     totalTokens,
@@ -1091,12 +1260,12 @@ export async function POST(request: Request) {
                   });
                   apiLogger.meter("meter.chat.request", {
                     chatId: chatSlug,
-                    model: modelName,
+                    model: selectedModel,
                     messageCount: persistedMessages.length,
                   });
                   apiLogger.featureUsed("chat", {
                     chatId: chatSlug,
-                    model: modelName,
+                    model: selectedModel,
                   });
                 } catch (usageError) {
                   logError("Failed to apply token-based chat usage", {
@@ -1124,6 +1293,7 @@ export async function POST(request: Request) {
 
     const baseResponse = createUIMessageStreamResponse({ stream });
     if (!baseResponse.body) {
+      await clearActiveStreamId(chatSlug, streamId);
       return baseResponse;
     }
 
@@ -1144,8 +1314,8 @@ export async function POST(request: Request) {
           streamId,
           () => resumableTextStream
         );
-        await setActiveStreamId(chatSlug, streamId);
       } catch (error) {
+        await clearActiveStreamId(chatSlug, streamId);
         logError("Failed to create resumable chat stream", {
           chatSlug,
           streamId,
@@ -1156,8 +1326,7 @@ export async function POST(request: Request) {
 
     apiLogger.requestSucceeded(200, {
       chatId: chatSlug,
-      selectedModel:
-        body.selectedModel ?? body.selectedReasoningModel ?? "apollo-apex",
+      selectedModel: body.selectedModel ?? "apollo-apex",
       messageCount: originalMessages.length,
     });
 

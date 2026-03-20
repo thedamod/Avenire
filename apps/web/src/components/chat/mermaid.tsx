@@ -41,37 +41,55 @@ function fixMermaidQuotes(code: string): string {
   return code.replace(/(\w+)\[([^"\]]+)\]/g, '$1["$2"]');
 }
 
+function stripUnsafeSvg(svg: string): string {
+  return svg
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject>/gi, "")
+    .replace(
+      /\son[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,
+      ""
+    )
+    .replace(
+      /\s(?:href|xlink:href)\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi,
+      ""
+    );
+}
+
 function sanitizeMermaidSvg(svg: string) {
-  if (typeof window === "undefined") {
-    return svg;
+  if (typeof DOMParser === "undefined") {
+    return stripUnsafeSvg(svg);
   }
 
-  const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
-  const root = documentNode.documentElement;
-  if (!root) {
-    return svg;
-  }
-
-  root.querySelectorAll("script,foreignObject").forEach((node) => node.remove());
-  root.querySelectorAll("*").forEach((node) => {
-    const attributes = Array.from(node.attributes);
-    for (const attribute of attributes) {
-      const key = attribute.name.toLowerCase();
-      const value = attribute.value.trim().toLowerCase();
-      if (key.startsWith("on")) {
-        node.removeAttribute(attribute.name);
-        continue;
-      }
-      if (
-        (key === "href" || key === "xlink:href") &&
-        value.startsWith("javascript:")
-      ) {
-        node.removeAttribute(attribute.name);
-      }
+  try {
+    const documentNode = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const root = documentNode.documentElement;
+    if (!root || root.nodeName.toLowerCase() === "parsererror") {
+      return stripUnsafeSvg(svg);
     }
-  });
 
-  return new XMLSerializer().serializeToString(root);
+    root.querySelectorAll("script,foreignObject").forEach((node) => node.remove());
+    root.querySelectorAll("*").forEach((node) => {
+      const attributes = Array.from(node.attributes);
+      for (const attribute of attributes) {
+        const key = attribute.name.toLowerCase();
+        const value = attribute.value.trim().toLowerCase();
+        if (key.startsWith("on")) {
+          node.removeAttribute(attribute.name);
+          continue;
+        }
+        if (
+          (key === "href" || key === "xlink:href") &&
+          value.startsWith("javascript:")
+        ) {
+          node.removeAttribute(attribute.name);
+        }
+      }
+    });
+
+    return new XMLSerializer().serializeToString(root);
+  } catch {
+    return stripUnsafeSvg(svg);
+  }
 }
 
 export function MermaidDiagram({
