@@ -13,8 +13,8 @@ import { Textarea } from "@avenire/ui/components/textarea";
 import {
   ArrowUpIcon,
   FileTextIcon,
-  PaperclipIcon,
   Loader2,
+  PaperclipIcon,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import type React from "react";
@@ -773,8 +773,8 @@ function PureMultimodalInput({
       }
 
       if (
+        (event.metaKey || event.ctrlKey) &&
         event.key === "Enter" &&
-        !event.shiftKey &&
         !event.nativeEvent.isComposing
       ) {
         event.preventDefault();
@@ -884,12 +884,13 @@ function PureMultimodalInput({
           )}
 
           <Textarea
-          autoFocus
-          className={cn(
+            autoFocus
+            className={cn(
               "max-h-[calc(24dvh)] min-h-16 resize-none overflow-visible border-none! bg-transparent! px-0! pb-2 text-[17px] leading-7 shadow-none! ring-0! focus-visible:border-transparent! focus-visible:ring-0! [&::-webkit-scrollbar-thumb]:bg-background",
               className
             )}
             data-testid="multimodal-input"
+            enterKeyHint="enter"
             onChange={(event) => {
               setDismissedMentionKey(null);
               setInput(event.target.value);
@@ -934,7 +935,7 @@ function PureMultimodalInput({
           />
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 pt-2.5 pb-2.5 sm:flex-nowrap sm:gap-0 sm:px-3 sm:pt-3 sm:pb-3">
+        <div className="flex flex-nowrap items-center justify-between gap-2 px-2.5 pt-2.5 pb-2.5 sm:gap-0 sm:px-3 sm:pt-3 sm:pb-3">
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <AttachmentsButton
               onClick={() => fileInputRef.current?.click()}

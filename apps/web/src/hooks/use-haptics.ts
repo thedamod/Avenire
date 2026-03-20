@@ -11,43 +11,16 @@ const patternByType: Record<HapticFeedbackType, number | number[]> = {
 };
 
 export function useHaptics() {
-  return useCallback(async (type: HapticFeedbackType = "selection") => {
+  return useCallback((type: HapticFeedbackType = "selection") => {
     if (typeof window === "undefined") {
       return;
     }
-    if (!window.matchMedia("(pointer: coarse)").matches) {
+
+    const hasTouchInput =
+      navigator.maxTouchPoints > 0 ||
+      window.matchMedia("(pointer: coarse)").matches;
+    if (!hasTouchInput) {
       return;
-    }
-
-    try {
-      const dynamicImport = new Function(
-        "m",
-        "return import(m)"
-      ) as (moduleName: string) => Promise<Record<string, unknown>>;
-      const hapticsModule = await dynamicImport("web-haptics");
-      const impact = hapticsModule?.impact as
-        | ((style: "heavy" | "light" | "medium") => void)
-        | undefined;
-      if (impact) {
-        if (type === "error") {
-          impact("heavy");
-        } else if (type === "success") {
-          impact("medium");
-        } else {
-          impact("light");
-        }
-        return;
-      }
-
-      const vibrate = hapticsModule?.vibrate as
-        | ((pattern?: number | number[]) => void)
-        | undefined;
-      if (vibrate) {
-        vibrate(patternByType[type]);
-        return;
-      }
-    } catch {
-      // Fall through to native vibration.
     }
 
     if (typeof navigator !== "undefined" && "vibrate" in navigator) {

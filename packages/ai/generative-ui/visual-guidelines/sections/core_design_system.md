@@ -8,6 +8,13 @@ These rules apply to ALL use cases.
 - **Compact**: Show the essential inline. Explain the rest in text.
 - **Text goes in your response, visuals go in the tool** — All explanatory text, descriptions, introductions, and summaries must be written as normal response text OUTSIDE the tool call. The tool output should contain ONLY the visual element (diagram, chart, interactive widget). Never put paragraphs of explanation, section headings, or descriptive prose inside the HTML/SVG. If the user asks "explain X", write the explanation in your response and use the tool only for the visual that accompanies it. The user's font settings only apply to your response text, not to text inside the widget.
 
+### Responsive layout
+- Write responsive code, not a single fixed canvas.
+- Keep the current desktop flow when it already works.
+- On mobile, reorganize interactive explainers into this order: Explanation, Visuals, Sliders.
+- Preserve semantic spacing on mobile; stack groups instead of stretching controls edge to edge.
+- If a control group feels crowded on mobile, reduce the number of simultaneous columns before shrinking typography.
+
 ### Streaming
 Output streams token-by-token. Structure code so useful content appears early.
 - **HTML**: `<style>` (short) → content HTML → `<script>` last.

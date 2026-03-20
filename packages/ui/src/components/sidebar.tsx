@@ -38,6 +38,7 @@ type SidebarContextProps = {
   setOpen: (open: boolean) => void
   openMobile: boolean
   setOpenMobile: (open: boolean) => void
+  closeMobileSidebar: () => void
   isMobile: boolean
   toggleSidebar: () => void
 }
@@ -68,6 +69,9 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
+  const closeMobileSidebar = React.useCallback(() => {
+    setOpenMobile(false)
+  }, [])
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -121,9 +125,19 @@ function SidebarProvider({
       isMobile,
       openMobile,
       setOpenMobile,
+      closeMobileSidebar,
       toggleSidebar,
     }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
+    [
+      state,
+      open,
+      setOpen,
+      isMobile,
+      openMobile,
+      setOpenMobile,
+      closeMobileSidebar,
+      toggleSidebar,
+    ]
   )
 
   return (
@@ -505,17 +519,24 @@ function SidebarMenuButton({
   size = "default",
   tooltip,
   className,
+  onClick,
   ...props
 }: useRender.ComponentProps<"button"> &
   React.ComponentProps<"button"> & {
     isActive?: boolean
     tooltip?: string | React.ComponentProps<typeof TooltipContent>
   } & VariantProps<typeof sidebarMenuButtonVariants>) {
-  const { isMobile, state } = useSidebar()
+  const { isMobile, state, closeMobileSidebar } = useSidebar()
   const comp = useRender({
     defaultTagName: "button",
     props: mergeProps<"button">(
       {
+        onClick: (event) => {
+          onClick?.(event)
+          if (isMobile) {
+            closeMobileSidebar()
+          }
+        },
         className: cn(sidebarMenuButtonVariants({ variant, size }), className),
       },
       props

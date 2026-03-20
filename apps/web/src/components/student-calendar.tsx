@@ -9,20 +9,29 @@ import {
   CalendarRange,
   ChevronLeft,
   ChevronRight,
+  ListTodo,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 export type CalendarMode = "month" | "week";
 
-export type RevisionItem = {
+export interface RevisionItem {
+  dueCount: number;
   id: string;
   setId: string;
   title: string;
-  dueCount: number;
-};
+}
 
 export type RevisionData = Record<string, RevisionItem[]>;
+
+interface UpcomingTask {
+  description: string | null;
+  dueAt: string | null;
+  id: string;
+  status: "pending" | "in_progress" | "completed";
+  title: string;
+}
 
 const MONTHS = [
   "January",
@@ -112,7 +121,23 @@ const getWeekRange = (weekStart: Date) => ({
   to: addUtcDays(weekStart, 6),
 });
 
-type PopoverPos = { top: number; left: number; originX: string };
+const formatTaskDue = (dueAt: string | null) => {
+  if (!dueAt) {
+    return "No due date";
+  }
+
+  return new Date(dueAt).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+};
+
+interface PopoverPos {
+  left: number;
+  originX: string;
+  top: number;
+}
 
 function DayPopover({
   dayKey: dk,
@@ -417,7 +442,7 @@ function WeekGrid({
   );
 }
 
-export function RevisionCalendar() {
+export function StudentCalendar() {
   const today = useMemo(() => new Date(), []);
   const [mode, setMode] = useState<CalendarMode>("month");
   const [curYear, setCurYear] = useState(today.getUTCFullYear());
@@ -430,10 +455,50 @@ export function RevisionCalendar() {
   const [data, setData] = useState<RevisionData>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [upcomingTasks, setUpcomingTasks] = useState<UpcomingTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState<string | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [dir, setDir] = useState<1 | -1>(1);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cacheRef = useRef<Map<string, RevisionData>>(new Map());
+
+  useEffect(() => {
+    const loadTasks = async () => {
+      setTasksLoading(true);
+      setTasksError(null);
+      try {
+        const response = await fetch(
+          "/api/tasks?includeCompleted=false&limit=8",
+          {
+            cache: "no-store",
+          }
+        );
+        if (!response.ok) {
+          throw new Error("Unable to load upcoming tasks.");
+        }
+        const payload = (await response.json()) as { tasks?: UpcomingTask[] };
+        setUpcomingTasks(payload.tasks ?? []);
+      } catch (err) {
+        setTasksError(
+          err instanceof Error ? err.message : "Unable to load upcoming tasks."
+        );
+      } finally {
+        setTasksLoading(false);
+      }
+    };
+
+    loadTasks().catch(() => undefined);
+
+    const refresh = () => {
+      loadTasks().catch(() => undefined);
+    };
+
+    window.addEventListener("dashboard.tasks.refresh", refresh);
+    return () => {
+      window.removeEventListener("dashboard.tasks.refresh", refresh);
+    };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -540,6 +605,78 @@ export function RevisionCalendar() {
   }, [curMonth, curYear, data, mode, weekStart]);
 
   const activeItems = activeKey ? (data[activeKey] ?? []) : [];
+  const sortedUpcomingTasks = useMemo(
+    () =>
+      upcomingTasks
+        .slice()
+        .sort((left, right) => {
+          if (left.dueAt && right.dueAt) {
+            return (
+              new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime()
+            );
+          }
+          if (left.dueAt) {
+            return -1;
+          }
+          if (right.dueAt) {
+            return 1;
+          }
+          return left.title.localeCompare(right.title);
+        })
+        .slice(0, 6),
+    [upcomingTasks]
+  );
+
+  let upcomingTasksContent: React.ReactNode;
+  if (tasksLoading) {
+    upcomingTasksContent = (
+      <div className="rounded-lg border border-border/70 border-dashed px-3 py-4 text-muted-foreground text-xs">
+        Loading upcoming tasks...
+      </div>
+    );
+  } else if (tasksError) {
+    upcomingTasksContent = (
+      <div className="rounded-lg border border-border/70 border-dashed px-3 py-4 text-muted-foreground text-xs">
+        {tasksError}
+      </div>
+    );
+  } else if (sortedUpcomingTasks.length === 0) {
+    upcomingTasksContent = (
+      <div className="rounded-lg border border-border/70 border-dashed px-3 py-4 text-muted-foreground text-xs">
+        No upcoming tasks yet.
+      </div>
+    );
+  } else {
+    upcomingTasksContent = sortedUpcomingTasks.map((task) => (
+      <button
+        className="w-full rounded-lg border border-border/70 bg-muted/20 px-3 py-3 text-left transition-colors hover:bg-muted/40"
+        key={task.id}
+        onClick={jumpToTaskManager}
+        type="button"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="truncate font-medium text-foreground text-sm">
+              {task.title}
+            </p>
+            <p className="mt-1 line-clamp-2 text-muted-foreground text-xs">
+              {task.description?.trim()
+                ? task.description
+                : "Open the task manager to add details or change the date."}
+            </p>
+          </div>
+          <Badge className="shrink-0 rounded-sm" variant="outline">
+            {formatTaskDue(task.dueAt)}
+          </Badge>
+        </div>
+      </button>
+    ));
+  }
+
+  const jumpToTaskManager = () => {
+    const element = document.getElementById("task-manager");
+    element?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const handleDayClick = (
     e: React.MouseEvent<HTMLButtonElement>,
@@ -686,57 +823,86 @@ export function RevisionCalendar() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="text-muted-foreground text-xs">
-          Loading upcoming reviews...
-        </div>
-      ) : null}
-      {error ? (
-        <div className="text-muted-foreground text-xs">{error}</div>
-      ) : null}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="min-w-0 space-y-3">
+          {loading ? (
+            <div className="text-muted-foreground text-xs">
+              Loading upcoming reviews...
+            </div>
+          ) : null}
+          {error ? (
+            <div className="text-muted-foreground text-xs">{error}</div>
+          ) : null}
 
-      <div className="overflow-hidden">
-        <AnimatePresence custom={dir} initial={false} mode="wait">
-          <motion.div
-            animate={{
-              opacity: 1,
-              x: 0,
-              transition: {
-                type: "spring",
-                stiffness: 280,
-                damping: 28,
-                mass: 0.85,
-              },
-            }}
-            custom={dir}
-            exit={{
-              opacity: 0,
-              x: dir * -30,
-              transition: { duration: 0.15, ease: [0.32, 0, 0.67, 0] },
-            }}
-            initial={{ opacity: 0, x: dir * 40 }}
-            key={periodKey}
-          >
-            {mode === "month" ? (
-              <MonthGrid
-                activeKey={activeKey}
-                curMonth={curMonth}
-                curYear={curYear}
-                data={data}
-                onDayClick={handleDayClick}
-                todayKey={todayKey}
-              />
-            ) : (
-              <WeekGrid
-                activeKey={activeKey}
-                data={data}
-                onDayClick={handleDayClick}
-                todayKey={todayKey}
-                weekStart={weekStart}
-              />
-            )}
-          </motion.div>
-        </AnimatePresence>
+          <div className="overflow-hidden">
+            <AnimatePresence custom={dir} initial={false} mode="wait">
+              <motion.div
+                animate={{
+                  opacity: 1,
+                  x: 0,
+                  transition: {
+                    type: "spring",
+                    stiffness: 280,
+                    damping: 28,
+                    mass: 0.85,
+                  },
+                }}
+                custom={dir}
+                exit={{
+                  opacity: 0,
+                  x: dir * -30,
+                  transition: { duration: 0.15, ease: [0.32, 0, 0.67, 0] },
+                }}
+                initial={{ opacity: 0, x: dir * 40 }}
+                key={periodKey}
+              >
+                {mode === "month" ? (
+                  <MonthGrid
+                    activeKey={activeKey}
+                    curMonth={curMonth}
+                    curYear={curYear}
+                    data={data}
+                    onDayClick={handleDayClick}
+                    todayKey={todayKey}
+                  />
+                ) : (
+                  <WeekGrid
+                    activeKey={activeKey}
+                    data={data}
+                    onDayClick={handleDayClick}
+                    todayKey={todayKey}
+                    weekStart={weekStart}
+                  />
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </div>
+
+        <aside className="rounded-xl border border-border/70 bg-background p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 font-medium text-foreground text-sm">
+                <ListTodo className="size-4 text-muted-foreground" />
+                Upcoming tasks
+              </p>
+              <p className="mt-1 text-muted-foreground text-xs">
+                Tasks with dates show up here so they stay visible.
+              </p>
+            </div>
+            <Button
+              className="shrink-0"
+              onClick={jumpToTaskManager}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Manage
+            </Button>
+          </div>
+
+          <div className="mt-3 space-y-2">{upcomingTasksContent}</div>
+        </aside>
       </div>
 
       <AnimatePresence>

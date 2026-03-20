@@ -20,6 +20,9 @@ For summary numbers (revenue, count, percentage) — surface card with muted 13p
 - Editorial (explanatory content): no card wrapper, prose flows naturally
 - Card (bounded objects like a contact record, receipt): single raised card wraps the whole thing
 - Don't put tables here — output them as markdown in your response text
+- Responsive layouts must be intentional: desktop may use one row, but mobile should reflow into a legible stack or two-row grouping.
+- Buttons should stay compact and spaced; avoid stretching unrelated actions into equal-width slabs just to fill the line.
+- When a panel contains explanation, visuals, and controls, make the mobile order Explanation → Visuals → Sliders.
 
 **Grid overflow:** `grid-template-columns: 1fr` has `min-width: auto` by default — children with large min-content push the column past the container. Use `minmax(0, 1fr)` to clamp.
 

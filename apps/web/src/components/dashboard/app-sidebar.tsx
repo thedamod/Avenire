@@ -23,6 +23,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarTrigger,
+  useSidebar,
 } from "@avenire/ui/components/sidebar";
 import {
   Tooltip,
@@ -53,6 +54,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   type ComponentProps,
   type ComponentType,
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -492,6 +494,7 @@ export function DashboardSidebar({
   activeChatSlug?: string;
 }) {
   const router = useRouter();
+  const { setOpenMobile } = useSidebar();
   const triggerHaptic = useHaptics();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -555,7 +558,10 @@ export function DashboardSidebar({
     return match[1];
   }, [pathname]);
   const activeChatSlug =
-    activeChatSlugFromPath || activeChatSlugOverride || activeChatSlugProp || "";
+    activeChatSlugFromPath ||
+    activeChatSlugOverride ||
+    activeChatSlugProp ||
+    "";
   const sessionCloseRef = useRef<{
     chatId: string;
     sent: boolean;
@@ -573,6 +579,17 @@ export function DashboardSidebar({
     routeView = "chat";
   }
   const activeView = routeView;
+  const closeMobileSidebar = useCallback(() => {
+    setOpenMobile(false);
+  }, [setOpenMobile]);
+  const navigate = useCallback(
+    (href: Route) => {
+      startTransition(() => {
+        router.push(href);
+      });
+    },
+    [router]
+  );
   const currentFlashcardSetId = useMemo(() => {
     const match = pathname.match(DASHBOARD_FLASHCARDS_ROUTE_REGEX);
     return match?.[1] ?? undefined;
@@ -616,6 +633,12 @@ export function DashboardSidebar({
   );
 
   useEffect(() => {
+    router.prefetch("/workspace/chats" as Route);
+    router.prefetch("/workspace/flashcards" as Route);
+    router.prefetch("/workspace/files" as Route);
+  }, [router]);
+
+  useEffect(() => {
     const clearSessionCloseTimer = () => {
       if (sessionCloseTimerRef.current) {
         clearTimeout(sessionCloseTimerRef.current);
@@ -631,37 +654,40 @@ export function DashboardSidebar({
         return;
       }
 
-      sessionCloseTimerRef.current = setTimeout(() => {
-        const scope = sessionCloseRef.current;
-        sessionCloseTimerRef.current = null;
-        if (!scope || scope.sent || !scope.chatId) {
-          return;
-        }
-        scope.sent = true;
+      sessionCloseTimerRef.current = setTimeout(
+        () => {
+          const scope = sessionCloseRef.current;
+          sessionCloseTimerRef.current = null;
+          if (!scope || scope.sent || !scope.chatId) {
+            return;
+          }
+          scope.sent = true;
 
-        const payload = JSON.stringify({
-          kind: "session-close",
-          chatId: scope.chatId,
-          sessionId: scope.sessionId,
-        });
+          const payload = JSON.stringify({
+            kind: "session-close",
+            chatId: scope.chatId,
+            sessionId: scope.sessionId,
+          });
 
-        if (navigator.sendBeacon) {
-          navigator.sendBeacon(
-            "/api/chat",
-            new Blob([payload], { type: "application/json" })
-          );
-          return;
-        }
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon(
+              "/api/chat",
+              new Blob([payload], { type: "application/json" })
+            );
+            return;
+          }
 
-        void fetch("/api/chat", {
-          body: payload,
-          keepalive: true,
-          headers: {
-            "Content-Type": "application/json",
-          },
-          method: "POST",
-        }).catch(() => undefined);
-      }, 5 * 60 * 1000);
+          void fetch("/api/chat", {
+            body: payload,
+            keepalive: true,
+            headers: {
+              "Content-Type": "application/json",
+            },
+            method: "POST",
+          }).catch(() => undefined);
+        },
+        5 * 60 * 1000
+      );
     };
 
     const updateSessionScope = () => {
@@ -1482,7 +1508,7 @@ export function DashboardSidebar({
   }, [activeView, refreshWorkspaceTreeDebounced, workspaceUuid]);
 
   const createChat = async () => {
-    router.push("/workspace/chats/new" as Route);
+    navigate("/workspace/chats/new" as Route);
   };
 
   const updateChat = async (
@@ -1523,7 +1549,7 @@ export function DashboardSidebar({
 
     if (activeChatSlug === chatSlug) {
       if (remaining.length > 0) {
-        router.push(`/workspace/chats/${remaining[0].slug}` as Route);
+        navigate(`/workspace/chats/${remaining[0].slug}` as Route);
       } else {
         await createChat();
       }
@@ -1558,7 +1584,7 @@ export function DashboardSidebar({
     }
     setWorkspaceUuid(workspace.workspaceId);
     window.localStorage.setItem("preferredWorkspaceId", workspace.workspaceId);
-    router.push(
+    navigate(
       `/workspace/files/${workspace.workspaceId}/folder/${workspace.rootFolderId}` as Route
     );
   };
@@ -1875,10 +1901,10 @@ export function DashboardSidebar({
       if (!isChatsRoute) {
         const chatSlug = activeChatSlug || chats[0]?.slug;
         if (chatSlug) {
-          router.push(`/workspace/chats/${chatSlug}` as Route);
+          navigate(`/workspace/chats/${chatSlug}` as Route);
           return;
         }
-        router.push("/workspace/chats" as Route);
+        navigate("/workspace/chats" as Route);
         return;
       }
     },
@@ -1890,7 +1916,7 @@ export function DashboardSidebar({
     (event) => {
       event.preventDefault();
       if (!pathname.startsWith("/workspace/flashcards")) {
-        router.push("/workspace/flashcards" as Route);
+        navigate("/workspace/flashcards" as Route);
         return;
       }
     },
@@ -2067,6 +2093,7 @@ export function DashboardSidebar({
                   nextView === "files" &&
                   !pathname.startsWith("/workspace/files")
                 ) {
+                  closeMobileSidebar();
                   void navigateToFilesRoot();
                   return;
                 }
@@ -2075,17 +2102,20 @@ export function DashboardSidebar({
                   nextView === "flashcards" &&
                   !pathname.startsWith("/workspace/flashcards")
                 ) {
-                  router.push("/workspace/flashcards" as Route);
+                  closeMobileSidebar();
+                  navigate("/workspace/flashcards" as Route);
                   return;
                 }
 
                 if (nextView === "chat" && !isChatsRoute) {
                   const chatSlug = activeChatSlug || chats[0]?.slug;
                   if (chatSlug) {
-                    router.push(`/workspace/chats/${chatSlug}` as Route);
+                    closeMobileSidebar();
+                    navigate(`/workspace/chats/${chatSlug}` as Route);
                     return;
                   }
-                  router.push("/workspace/chats" as Route);
+                  closeMobileSidebar();
+                  navigate("/workspace/chats" as Route);
                   return;
                 }
               }}
@@ -2144,7 +2174,7 @@ export function DashboardSidebar({
                   onSelect={(chatSlug) => {
                     setEditingChatSlug(null);
                     setEditingTitle("");
-                    router.push(`/workspace/chats/${chatSlug}` as Route);
+                    navigate(`/workspace/chats/${chatSlug}` as Route);
                   }}
                   onStartRename={(chat) => {
                     setEditingChatSlug(chat.slug);
@@ -2181,7 +2211,7 @@ export function DashboardSidebar({
                   onSelect={(chatSlug) => {
                     setEditingChatSlug(null);
                     setEditingTitle("");
-                    router.push(`/workspace/chats/${chatSlug}` as Route);
+                    navigate(`/workspace/chats/${chatSlug}` as Route);
                   }}
                   onStartRename={(chat) => {
                     setEditingChatSlug(chat.slug);
@@ -2235,7 +2265,7 @@ export function DashboardSidebar({
                             <SidebarMenuItem key={`pinned-folder-${item.id}`}>
                               <SidebarMenuButton
                                 onClick={() => {
-                                  router.push(
+                                  navigate(
                                     `/workspace/files/${item.workspaceId}/folder/${item.id}` as Route
                                   );
                                 }}
@@ -2252,7 +2282,7 @@ export function DashboardSidebar({
                                   if (!item.folderId) {
                                     return;
                                   }
-                                  router.push(
+                                  navigate(
                                     `/workspace/files/${item.workspaceId}/folder/${item.folderId}?file=${item.id}` as Route
                                   );
                                 }}
@@ -2348,6 +2378,7 @@ export function DashboardSidebar({
               className="hit-area h-8 w-8"
               onClick={() => {
                 void triggerHaptic("selection");
+                closeMobileSidebar();
                 setTrashOpen(true);
               }}
               size="icon-sm"
@@ -2361,6 +2392,7 @@ export function DashboardSidebar({
               className="hit-area h-8 w-8"
               onClick={() => {
                 void triggerHaptic("selection");
+                closeMobileSidebar();
                 filesUiActions.toggleUploadActivityOpen();
               }}
               size="icon-sm"
@@ -2374,6 +2406,7 @@ export function DashboardSidebar({
               className="hit-area h-8 w-8"
               onClick={() => {
                 void triggerHaptic("selection");
+                closeMobileSidebar();
                 setSettingsOpen(true);
               }}
               size="icon-sm"

@@ -78,7 +78,15 @@
 }
 
 .hit-area::after {
-  content: "";
   position: absolute;
   inset: -8px;
+  content: "";
+}
+
+@media (max-width: 767px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
 }
