@@ -38,10 +38,10 @@
       ]
     },
     {
-      "name": "Dashboard",
-      "short_name": "Dashboard",
-      "description": "View your learning dashboard",
-      "url": "/dashboard",
+      "name": "Workspace",
+      "short_name": "Workspace",
+      "description": "View your learning workspace",
+      "url": "/workspace",
       "icons": [
         {
           "src": "/branding/avenire-logo-full.png",

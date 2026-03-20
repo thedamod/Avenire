@@ -25,7 +25,6 @@ interface MessagesProps {
   reload: UseChatHelpers<UIMessage>["regenerate"];
   sendMessage: UseChatHelpers<UIMessage>["sendMessage"];
   setMessages: UseChatHelpers<UIMessage>["setMessages"];
-  thinkingMessages: string[];
   status: UseChatHelpers<UIMessage>["status"];
   workspaceUuid: string;
   userName?: string;
@@ -69,7 +68,6 @@ function PureMessages({
   reload,
   sendMessage,
   setMessages,
-  thinkingMessages,
   isReadonly,
   workspaceUuid,
   userName,
@@ -132,7 +130,6 @@ function PureMessages({
               reload={reload}
               sendMessage={sendMessage}
               setMessages={setMessages}
-              thinkingMessages={thinkingMessages}
               workspaceUuid={workspaceUuid}
             />
           );
@@ -186,12 +183,6 @@ export const Messages = memo(PureMessages, (prevProps, nextProps) => {
     }
   }
   if (prevProps.workspaceUuid !== nextProps.workspaceUuid) {
-    return false;
-  }
-  if (
-    prevProps.thinkingMessages.join("\u0000") !==
-    nextProps.thinkingMessages.join("\u0000")
-  ) {
     return false;
   }
   return true;

@@ -627,6 +627,11 @@ export function StudentCalendar() {
     [upcomingTasks]
   );
 
+  const jumpToTaskManager = () => {
+    const element = document.getElementById("task-manager");
+    element?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   let upcomingTasksContent: React.ReactNode;
   if (tasksLoading) {
     upcomingTasksContent = (
@@ -672,11 +677,6 @@ export function StudentCalendar() {
       </button>
     ));
   }
-
-  const jumpToTaskManager = () => {
-    const element = document.getElementById("task-manager");
-    element?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
 
   const handleDayClick = (
     e: React.MouseEvent<HTMLButtonElement>,

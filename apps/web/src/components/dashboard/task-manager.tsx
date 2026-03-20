@@ -2,21 +2,17 @@
 
 import { Button } from "@avenire/ui/components/button";
 import { Card, CardContent, CardHeader } from "@avenire/ui/components/card";
-import { Input } from "@avenire/ui/components/input";
-import { Label } from "@avenire/ui/components/label";
-import { Textarea } from "@avenire/ui/components/textarea";
 import {
   CalendarDays,
   CheckCircle2,
   Circle,
-  Loader2,
   Pencil,
-  Plus,
   Sparkles,
   Trash2,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { QuickCaptureDialog } from "@/components/dashboard/quick-capture-dialog";
 import { cn } from "@/lib/utils";
 
 interface TaskRecord {
@@ -29,26 +25,12 @@ interface TaskRecord {
 
 export function DashboardTaskManager() {
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskDescription, setTaskDescription] = useState("");
-  const [taskDueAt, setTaskDueAt] = useState("");
   const [loading, setLoading] = useState(true);
-  const [savingTask, setSavingTask] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const taskInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
   const notifyTaskRefresh = () => {
     window.dispatchEvent(new Event("dashboard.tasks.refresh"));
   };
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editingDraft, setEditingDraft] = useState<{
-    description: string;
-    dueAt: string;
-    title: string;
-  }>({
-    description: "",
-    dueAt: "",
-    title: "",
-  });
 
   useEffect(() => {
     const loadTasks = async () => {
@@ -111,47 +93,6 @@ export function DashboardTaskManager() {
     (task) => task.status !== "completed"
   ).length;
 
-  const handleCreateTask = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const title = taskTitle.trim();
-    if (!title || savingTask) {
-      return;
-    }
-
-    setSavingTask(true);
-    setErrorMessage(null);
-
-    try {
-      const response = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: taskDescription.trim() || null,
-          dueAt: taskDueAt || null,
-          title,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create task.");
-      }
-
-      const data = (await response.json()) as { task: TaskRecord };
-      setTasks((prev) => [data.task, ...prev]);
-      setTaskTitle("");
-      setTaskDescription("");
-      setTaskDueAt("");
-      notifyTaskRefresh();
-      requestAnimationFrame(() => {
-        taskInputRef.current?.focus();
-      });
-    } catch {
-      setErrorMessage("Could not create that task.");
-    } finally {
-      setSavingTask(false);
-    }
-  };
-
   const handleToggleTask = async (taskId: string) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task) {
@@ -209,58 +150,6 @@ export function DashboardTaskManager() {
     }
   };
 
-  const beginEditingTask = (task: TaskRecord) => {
-    setEditingTaskId(task.id);
-    setEditingDraft({
-      description: task.description ?? "",
-      dueAt: task.dueAt ?? "",
-      title: task.title,
-    });
-  };
-
-  const cancelEditingTask = () => {
-    setEditingTaskId(null);
-    setEditingDraft({
-      description: "",
-      dueAt: "",
-      title: "",
-    });
-  };
-
-  const handleSaveTask = async (taskId: string) => {
-    const title = editingDraft.title.trim();
-    if (!title) {
-      setErrorMessage("Task title is required.");
-      return;
-    }
-
-    setErrorMessage(null);
-
-    try {
-      const response = await fetch(`/api/tasks/${taskId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: editingDraft.description.trim() || null,
-          dueAt: editingDraft.dueAt || null,
-          title,
-        }),
-      });
-      if (!response.ok) {
-        throw new Error("Failed to update task.");
-      }
-
-      const data = (await response.json()) as { task: TaskRecord };
-      setTasks((prev) =>
-        prev.map((task) => (task.id === taskId ? data.task : task))
-      );
-      setEditingTaskId(null);
-      notifyTaskRefresh();
-    } catch {
-      setErrorMessage("Could not update that task.");
-    }
-  };
-
   const displayTasks = useMemo(() => {
     const completedTasks = sortedTasks.filter(
       (task) => task.status === "completed"
@@ -284,7 +173,7 @@ export function DashboardTaskManager() {
               Today&apos;s Tasks
             </p>
             <p className="text-muted-foreground text-xs">
-              Tap to mark complete, or add a task below.
+              Tap to mark complete, edit, or delete below.
             </p>
           </div>
           <div className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-muted-foreground text-xs">
@@ -294,59 +183,9 @@ export function DashboardTaskManager() {
         </div>
       </CardHeader>
       <CardContent className="max-h-[22rem] space-y-3 overflow-auto">
-        <form className="space-y-2" onSubmit={handleCreateTask}>
-          <div className="space-y-2 rounded-lg border border-border/70 bg-background p-3">
-            <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_13rem]">
-              <Input
-                aria-label="New task title"
-                className="min-w-0"
-                disabled={savingTask}
-                onChange={(event) => setTaskTitle(event.target.value)}
-                placeholder="Add a quick task"
-                ref={taskInputRef}
-                value={taskTitle}
-              />
-              <Input
-                aria-label="New task due date"
-                disabled={savingTask}
-                onChange={(event) => setTaskDueAt(event.target.value)}
-                type="datetime-local"
-                value={taskDueAt}
-              />
-            </div>
-            <Textarea
-              aria-label="New task details"
-              className="min-h-20"
-              disabled={savingTask}
-              onChange={(event) => setTaskDescription(event.target.value)}
-              placeholder="Optional details for the task"
-              value={taskDescription}
-            />
-            <div className="flex justify-end">
-              <Button
-                className="w-full sm:w-auto"
-                disabled={savingTask}
-                type="submit"
-              >
-                {savingTask ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Saving
-                  </>
-                ) : (
-                  <>
-                    <Plus className="h-4 w-4" />
-                    Add
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-          {errorMessage && (
-            <p className="text-destructive text-xs">{errorMessage}</p>
-          )}
-        </form>
-
+        {errorMessage && (
+          <p className="text-destructive text-xs">{errorMessage}</p>
+        )}
         <div className="space-y-1">
           {loading && (
             <div className="text-muted-foreground text-xs">
@@ -355,17 +194,26 @@ export function DashboardTaskManager() {
           )}
           {!loading && sortedTasks.length === 0 && (
             <div className="rounded-md border border-border/70 border-dashed bg-muted/20 px-3 py-4 text-muted-foreground text-xs">
-              No tasks yet. Add one above to get started.
+              No tasks yet.
             </div>
           )}
           {!loading &&
             displayTasks.length > 0 &&
             displayTasks.map((task) => {
               const isCompleted = task.status === "completed";
-              const isEditing = editingTaskId === task.id;
               return (
                 <div className="space-y-1" key={task.id}>
                   <div className="flex w-full items-center gap-1 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/60">
+                    <button
+                      className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingTask(task);
+                      }}
+                      type="button"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
                     <motion.button
                       animate={{ opacity: 1, scale: 1 }}
                       className={cn(
@@ -415,16 +263,6 @@ export function DashboardTaskManager() {
                       </span>
                     </motion.button>
                     <button
-                      className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        beginEditingTask(task);
-                      }}
-                      type="button"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    <button
                       className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-destructive"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -435,80 +273,35 @@ export function DashboardTaskManager() {
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
-
-                  {isEditing && (
-                    <div className="rounded-md border border-border/70 bg-muted/20 p-3">
-                      <div className="grid gap-3">
-                        <div className="space-y-1.5">
-                          <Label htmlFor={`task-edit-title-${task.id}`}>
-                            Title
-                          </Label>
-                          <Input
-                            id={`task-edit-title-${task.id}`}
-                            onChange={(event) =>
-                              setEditingDraft((prev) => ({
-                                ...prev,
-                                title: event.target.value,
-                              }))
-                            }
-                            value={editingDraft.title}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor={`task-edit-desc-${task.id}`}>
-                            Details
-                          </Label>
-                          <Textarea
-                            id={`task-edit-desc-${task.id}`}
-                            onChange={(event) =>
-                              setEditingDraft((prev) => ({
-                                ...prev,
-                                description: event.target.value,
-                              }))
-                            }
-                            value={editingDraft.description}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label htmlFor={`task-edit-due-${task.id}`}>
-                            Due date
-                          </Label>
-                          <Input
-                            id={`task-edit-due-${task.id}`}
-                            onChange={(event) =>
-                              setEditingDraft((prev) => ({
-                                ...prev,
-                                dueAt: event.target.value,
-                              }))
-                            }
-                            type="datetime-local"
-                            value={editingDraft.dueAt}
-                          />
-                        </div>
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            onClick={cancelEditingTask}
-                            type="button"
-                            variant="outline"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              handleSaveTask(task.id).catch(() => undefined);
-                            }}
-                            type="button"
-                          >
-                            Save
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}
         </div>
+        <QuickCaptureDialog
+          initialKind="task"
+          onOpenChange={(open) => {
+            if (!open) {
+              setEditingTask(null);
+            }
+          }}
+          open={editingTask !== null}
+          taskId={editingTask?.id}
+          taskMode="edit"
+          taskValues={
+            editingTask
+              ? {
+                  description: editingTask.description ?? "",
+                  dueAt: editingTask.dueAt ?? "",
+                  title: editingTask.title,
+                }
+              : undefined
+          }
+          trigger={
+            <Button className="sr-only" type="button">
+              Edit task
+            </Button>
+          }
+        />
       </CardContent>
     </Card>
   );

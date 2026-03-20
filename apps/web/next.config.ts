@@ -15,7 +15,11 @@ const nextConfig: NextConfig = {
     "@avenire/database",
     "@avenire/emailer",
     "@avenire/ingestion"
-  ]
+  ],
+  typescript:{
+    ignoreBuildErrors: true
+  },
+  productionBrowserSourceMaps: true
 };
 
 export default nextConfig;

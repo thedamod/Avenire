@@ -9,6 +9,7 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
 } from "ai";
 import { ChevronDown } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion, useInView } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
@@ -27,7 +28,6 @@ import {
   CHAT_NAME_UPDATED_EVENT,
   CHAT_STREAM_FINISHED_EVENT,
   CHAT_STREAM_STATUS_EVENT,
-  type ChatThinkingMessagesDetail,
   type ChatCreatedDetail,
   type ChatNameUpdatedDetail,
   type ChatStreamStatusDetail,
@@ -71,8 +71,8 @@ interface ChatProps {
   initialPrompt?: string | null;
   isReadonly: boolean;
   selectedModel: string;
-  workspaceUuid: string;
   userName?: string;
+  workspaceUuid: string;
 }
 
 export function Chat({
@@ -90,7 +90,7 @@ export function Chat({
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(
     null
   );
-  const [thinkingMessages, setThinkingMessages] = useState<string[]>([]);
+  const router = useRouter();
   const lastCompletedMessageIdRef = useRef<string | null>(null);
   const pendingChatRouteRef = useRef<string | null>(null);
   const autoPromptSentRef = useRef<string | null>(null);
@@ -114,7 +114,6 @@ export function Chat({
     setAttachments([]);
     setInput("");
     setAgentActivity(null);
-    setThinkingMessages([]);
   }, [id]);
 
   const {
@@ -168,17 +167,6 @@ export function Chat({
         return;
       }
 
-      if (dataPart.type === "data-thinkingMessages") {
-        const detail = dataPart.data as ChatThinkingMessagesDetail;
-        if (!(detail?.id && Array.isArray(detail.messages))) {
-          return;
-        }
-        setThinkingMessages(
-          detail.messages.filter((message) => typeof message === "string")
-        );
-        return;
-      }
-
       if (dataPart.type === "data-agent_activity") {
         setAgentActivity(dataPart.data as AgentActivityData);
       }
@@ -220,18 +208,14 @@ export function Chat({
     }
     const nextChatId = pendingChatRouteRef.current;
     const timer = window.setTimeout(() => {
-      window.history.replaceState(
-        { chatId: nextChatId },
-        "",
-        `/workspace/chats/${nextChatId}`
-      );
+      router.replace(`/workspace/chats/${nextChatId}`);
       pendingChatRouteRef.current = null;
     }, 0);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [status]);
+  }, [router, status]);
 
   useEffect(() => {
     if (status !== "ready") {
@@ -256,7 +240,6 @@ export function Chat({
     if (status !== "ready") {
       return;
     }
-    setThinkingMessages([]);
     const lastMessage = messages.at(-1);
     if (!lastMessage || lastMessage.role !== "assistant") {
       return;
@@ -407,7 +390,6 @@ export function Chat({
             reload={reload}
             sendMessage={append}
             setMessages={setMessages}
-            thinkingMessages={thinkingMessages}
             status={status}
             userName={userName}
             workspaceUuid={workspaceUuid}
@@ -426,7 +408,7 @@ export function Chat({
                 transition={{ duration: 0.24, ease: "easeOut" }}
               >
                 <div className="flex w-full max-w-3xl flex-col items-center justify-center">
-                <div className="mb-6">
+                  <div className="mb-6">
                     <Overview userName={userName} />
                   </div>
                   {inputCard(true)}

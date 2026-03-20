@@ -39,8 +39,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { Route } from "next";
-import { usePathname, useRouter } from "next/navigation";
-import { startTransition, useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { WorkspaceHeader } from "@/components/dashboard/workspace-header";
 import type {
   FlashcardCardSnapshot,
@@ -238,6 +238,7 @@ export function FlashcardsDashboard({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const recordRoute = useWorkspaceHistoryStore((state) => state.recordRoute);
   const [dashboard] = useState(initialDashboard);
   const [createOpen, setCreateOpen] = useState(false);
@@ -252,6 +253,7 @@ export function FlashcardsDashboard({
     from: startOfUtcDay(new Date()),
     to: addUtcDays(startOfUtcDay(new Date()), 13),
   });
+  const autoOpenCreateRef = useRef(false);
 
   const orderedSets = dashboard.sets.slice().sort((left, right) => {
     const pressureDiff =
@@ -317,6 +319,14 @@ export function FlashcardsDashboard({
   useEffect(() => {
     recordRoute(pathname);
   }, [pathname, recordRoute]);
+
+  useEffect(() => {
+    if (searchParams.get("create") !== "1" || autoOpenCreateRef.current) {
+      return;
+    }
+    autoOpenCreateRef.current = true;
+    setCreateOpen(true);
+  }, [searchParams]);
 
   const createSet = async () => {
     setBusy(true);
@@ -449,7 +459,7 @@ export function FlashcardsDashboard({
           }
         >
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-foreground">
+            <p className="truncate font-medium text-foreground text-sm">
               Flashcards
             </p>
           </div>
@@ -500,7 +510,7 @@ export function FlashcardsDashboard({
                 value={activeDeckCount}
               />
             </div>
-            <div className="rounded-lg border border-border/70 bg-muted/15 px-4 py-4">
+            <div className="rounded-2xl border border-border/50 bg-muted/15 px-4 py-4 shadow-[0_1px_0_rgba(255,255,255,0.03)]">
               <div className="flex items-end justify-between gap-4">
                 <div>
                   <p className="font-medium text-2xl text-foreground">
@@ -524,8 +534,8 @@ export function FlashcardsDashboard({
           </CardContent>
         </Card>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(18rem,0.92fr)_minmax(0,1.08fr)]">
-          <Card className="min-h-[34rem]">
+        <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(18rem,0.92fr)_minmax(0,1.08fr)]">
+          <Card className="flex h-full min-h-[34rem] flex-col overflow-hidden">
             <CardHeader>
               <CardTitle>Decks</CardTitle>
               <CardDescription>
@@ -533,11 +543,11 @@ export function FlashcardsDashboard({
                 right.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-[28rem] rounded-lg border border-border/70">
+            <CardContent className="min-h-0 flex-1">
+              <ScrollArea className="h-[28rem]">
                 <div className="space-y-2 p-3">
                   {orderedSets.length === 0 ? (
-                    <div className="rounded-lg border border-border/70 border-dashed px-4 py-8 text-center text-muted-foreground text-xs">
+                    <div className="rounded-2xl border border-border/45 border-dashed px-4 py-8 text-center text-muted-foreground text-xs">
                       No flashcard sets yet.
                     </div>
                   ) : (
@@ -546,8 +556,8 @@ export function FlashcardsDashboard({
                       return (
                         <button
                           className={cn(
-                            "block w-full rounded-lg border border-border/70 bg-background px-3 py-3 text-left transition-colors hover:bg-muted/20",
-                            isSelected && "border-primary/40 bg-muted/25"
+                            "block w-full rounded-2xl border border-border/45 bg-background/70 px-3 py-3 text-left transition-colors hover:bg-muted/20",
+                            isSelected && "border-primary/35 bg-muted/25"
                           )}
                           key={set.id}
                           onClick={() => setSelectedSetId(set.id)}
@@ -586,7 +596,7 @@ export function FlashcardsDashboard({
             </CardContent>
           </Card>
 
-          <Card className="min-h-[34rem]">
+          <Card className="flex h-full min-h-[34rem] flex-col overflow-hidden">
             {selectedSet ? (
               <>
                 <CardHeader>
@@ -649,7 +659,7 @@ export function FlashcardsDashboard({
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent className="space-y-5">
+                <CardContent className="min-h-0 flex-1 space-y-5">
                   <div className="grid gap-3 md:grid-cols-3">
                     <DeckStat label="Due" value={selectedSet.dueCount} />
                     <DeckStat label="New" value={selectedSet.newCount} />
@@ -676,7 +686,7 @@ export function FlashcardsDashboard({
                       ) : (
                         selectedStateEntries.map((entry) => (
                           <div
-                            className="flex items-center gap-2 rounded-lg border border-border/70 bg-muted/15 px-3 py-2"
+                            className="flex items-center gap-2 rounded-2xl border border-border/45 bg-muted/15 px-3 py-2"
                             key={entry.state}
                           >
                             {stateBadge(entry.state)}
@@ -699,10 +709,10 @@ export function FlashcardsDashboard({
                           {selectedUpcomingCount} due in range
                         </p>
                       </div>
-                      <ScrollArea className="h-[18rem] rounded-lg border border-border/70">
+                      <ScrollArea className="h-[18rem]">
                         <div className="space-y-3 p-3">
                           {selectedUpcomingGroups.length === 0 ? (
-                            <div className="rounded-lg border border-border/70 border-dashed px-4 py-8 text-center text-muted-foreground text-xs">
+                            <div className="rounded-2xl border border-border/45 border-dashed px-4 py-8 text-center text-muted-foreground text-xs">
                               No cards due for this deck in the selected range.
                             </div>
                           ) : (
@@ -721,7 +731,7 @@ export function FlashcardsDashboard({
                                 <div className="space-y-2">
                                   {group.cards.slice(0, 4).map((snapshot) => (
                                     <div
-                                      className="rounded-lg border border-border/70 bg-background px-3 py-3"
+                                      className="rounded-2xl border border-border/45 bg-background/70 px-3 py-3"
                                       key={snapshot.card.id}
                                     >
                                       <div className="flex items-start justify-between gap-3">
@@ -764,16 +774,16 @@ export function FlashcardsDashboard({
                           {selectedReviewedToday.length} cards
                         </p>
                       </div>
-                      <ScrollArea className="h-[18rem] rounded-lg border border-border/70">
+                      <ScrollArea className="h-[18rem]">
                         <div className="space-y-2 p-3">
                           {selectedReviewedToday.length === 0 ? (
-                            <div className="rounded-lg border border-border/70 border-dashed px-4 py-8 text-center text-muted-foreground text-xs">
+                            <div className="rounded-2xl border border-border/45 border-dashed px-4 py-8 text-center text-muted-foreground text-xs">
                               Nothing reviewed from this deck today.
                             </div>
                           ) : (
                             selectedReviewedToday.map((event) => (
                               <div
-                                className="rounded-lg border border-border/70 bg-muted/15 px-3 py-3"
+                                className="rounded-2xl border border-border/45 bg-muted/15 px-3 py-3"
                                 key={event.id}
                               >
                                 <div className="flex items-start justify-between gap-3">
@@ -812,7 +822,7 @@ export function FlashcardsDashboard({
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="rounded-lg border border-border/70 border-dashed px-4 py-10 text-center text-muted-foreground text-xs">
+                  <div className="rounded-2xl border border-border/45 border-dashed px-4 py-10 text-center text-muted-foreground text-xs">
                     Nothing to show yet.
                   </div>
                 </CardContent>
@@ -841,14 +851,14 @@ function MetricTile({
   return (
     <div
       className={cn(
-        "rounded-lg border border-border/70 bg-muted/15 px-4 py-4",
+        "rounded-2xl border border-border/45 bg-muted/15 px-4 py-4 shadow-[0_1px_0_rgba(255,255,255,0.03)]",
         emphasis && "border-primary/25 bg-primary/10"
       )}
     >
       <div className="flex items-center gap-3">
         <div
           className={cn(
-            "flex size-8 items-center justify-center rounded-md border border-border/70 bg-background",
+            "flex size-8 items-center justify-center rounded-xl border border-border/45 bg-background/75",
             emphasis && "border-primary/20 bg-primary/10"
           )}
         >
@@ -880,7 +890,7 @@ function MetricTile({
 
 function DeckStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-border/70 bg-muted/15 px-4 py-3">
+    <div className="rounded-2xl border border-border/45 bg-muted/15 px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.03)]">
       <p className="text-[11px] text-muted-foreground">{label}</p>
       <p className="mt-1 font-medium text-2xl text-foreground">{value}</p>
     </div>

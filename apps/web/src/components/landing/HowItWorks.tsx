@@ -462,7 +462,7 @@ export function HowItWorks() {
 
         <div className="hidden md:block" ref={sequenceRef} style={{ height: `${features.length * 90}vh` }}>
           <div className="sticky top-20 h-[calc(100vh-5rem)]">
-            <div className="h-full flex flex-col">
+            <div className="relative h-full flex flex-col">
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={isInView ? { opacity: 1, y: 0 } : {}}
@@ -478,6 +478,33 @@ export function HowItWorks() {
                 <p className="text-sm text-muted-foreground/70 max-w-xl">
                   Scroll through three phases. The section stays pinned while each phase activates the next interactive state.
                 </p>
+              </motion.div>
+
+              <motion.div
+                aria-hidden="true"
+                className="pointer-events-none absolute bottom-4 right-4 z-10 hidden items-center gap-2 rounded-full border border-border/70 bg-background/75 px-3 py-2 shadow-sm backdrop-blur-sm md:flex"
+                animate={{ opacity: [0.45, 1, 0.45] }}
+                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <span className="text-[9px] font-mono uppercase tracking-[0.24em] text-muted-foreground/55">
+                  Scroll
+                </span>
+                <motion.svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-muted-foreground/70"
+                  animate={{ y: [0, 4, 0] }}
+                  transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                >
+                  <path d="M12 5v14" />
+                  <path d="m6 13 6 6 6-6" />
+                </motion.svg>
               </motion.div>
 
               <div className="min-h-0 flex-1 grid grid-cols-[1fr_1.05fr] gap-14 items-center">

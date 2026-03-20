@@ -340,85 +340,93 @@ export function DashboardHome({
           />
         </div>
 
-        <div className="grid gap-3 md:flex md:items-stretch md:gap-4">
-          <div className="grid grid-cols-3 gap-2 md:flex md:items-center md:gap-2">
+        <div className="grid w-full gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+          <div className="flex min-w-0">
             <QuickCaptureDialog
               initialKind="task"
               trigger={
                 <Button
-                  className="h-10 w-full justify-center md:w-auto md:min-w-28"
+                  className="h-10 w-full justify-start px-3 text-sm"
                   type="button"
                   variant="outline"
                 >
-                  <Plus className="size-4" />
+                  <Plus className="size-3.5" />
                   Task
                 </Button>
               }
             />
+          </div>
+
+          <div className="flex min-w-0">
             <QuickCaptureDialog
               initialKind="note"
               trigger={
                 <Button
-                  className="h-10 w-full justify-center md:w-auto md:min-w-28"
+                  className="h-10 w-full justify-start px-3 text-sm"
                   type="button"
                   variant="outline"
                 >
-                  <FileText className="size-4" />
+                  <FileText className="size-3.5" />
                   Note
                 </Button>
               }
             />
+          </div>
+
+          <div className="flex min-w-0">
             <QuickCaptureDialog
               initialKind="misconception"
               trigger={
                 <Button
-                  className="h-10 w-full justify-center md:w-auto md:min-w-28"
+                  className="h-10 w-full justify-start px-3 text-sm"
                   type="button"
                   variant="outline"
                 >
-                  <TriangleAlert className="size-4" />
+                  <TriangleAlert className="size-3.5" />
                   Misconception
                 </Button>
               }
             />
           </div>
 
-          <div className="hidden md:block md:self-stretch">
-            <div className="h-full w-px bg-border/70" />
-          </div>
-
-          <div className="grid grid-cols-3 gap-2 md:flex md:items-center md:gap-2">
+          <div className="flex min-w-0">
             <Button
-              className="h-10 w-full justify-center md:w-auto md:min-w-28"
+              className="h-10 w-full justify-start px-3 text-sm"
               onClick={() => {
                 router.push("/workspace/chats" as Route);
               }}
               type="button"
-              variant="ghost"
+              variant="outline"
             >
-              <MessageSquareText className="size-4" />
+              <MessageSquareText className="size-3.5" />
               Chat
             </Button>
+          </div>
+
+          <div className="flex min-w-0">
             <Button
-              className="h-10 w-full justify-center md:w-auto md:min-w-28"
+              className="h-10 w-full justify-start px-3 text-sm"
               onClick={() => {
                 router.push("/workspace/flashcards" as Route);
               }}
               type="button"
-              variant="ghost"
+              variant="outline"
             >
-              <BookOpenCheck className="size-4" />
+              <BookOpenCheck className="size-3.5" />
               Flashcards
             </Button>
+          </div>
+
+          <div className="flex min-w-0">
             <Button
-              className="h-10 w-full justify-center md:w-auto md:min-w-28"
+              className="h-10 w-full justify-start px-3 text-sm"
               onClick={() => {
                 router.push("/workspace/files" as Route);
               }}
               type="button"
-              variant="ghost"
+              variant="outline"
             >
-              <Files className="size-4" />
+              <Files className="size-3.5" />
               Files
             </Button>
           </div>
@@ -430,12 +438,28 @@ export function DashboardHome({
           </p>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">
-          <Card className="overflow-hidden">
-            <CardHeader className="border-border/70 border-b pb-3">
-              <CardTitle className="text-sm">Study focus</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4">
+        <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(18rem,0.92fr)_minmax(0,1.08fr)]">
+          <Card className="flex h-full min-h-[34rem] flex-col overflow-hidden">
+            <CardContent className="min-h-0 flex-1 overflow-y-auto pt-4">
+              <Tabs className="space-y-4" defaultValue="tasks">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="tasks">Tasks</TabsTrigger>
+                  <TabsTrigger value="activity">Activity</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="tasks">
+                  <DashboardTaskManager />
+                </TabsContent>
+
+                <TabsContent className="space-y-2" value="activity">
+                  {activityContent}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
+          <Card className="flex h-full min-h-[34rem] flex-col overflow-hidden">
+            <CardContent className="min-h-0 flex-1 overflow-y-auto pt-4">
               <Tabs className="space-y-4" defaultValue="weak-points">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="weak-points">Weak points</TabsTrigger>
@@ -552,28 +576,6 @@ export function DashboardHome({
                     flashcardSets={flashcardSets}
                     onStartReview={startReview}
                   />
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </Card>
-
-          <Card className="overflow-hidden">
-            <CardHeader className="border-border/70 border-b pb-3">
-              <CardTitle className="text-sm">Work</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4">
-              <Tabs className="space-y-4" defaultValue="tasks">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="tasks">Tasks</TabsTrigger>
-                  <TabsTrigger value="activity">Activity</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="tasks">
-                  <DashboardTaskManager />
-                </TabsContent>
-
-                <TabsContent className="space-y-2" value="activity">
-                  {activityContent}
                 </TabsContent>
               </Tabs>
             </CardContent>

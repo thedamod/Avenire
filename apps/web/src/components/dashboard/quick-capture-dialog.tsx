@@ -16,10 +16,21 @@ import { Loader2, Plus, TriangleAlert } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 
-type CaptureKind = "task" | "note" | "misconception";
+export type CaptureKind = "task" | "note" | "misconception";
+
+export interface QuickCaptureTaskValues {
+  description: string;
+  dueAt: string;
+  title: string;
+}
 
 interface QuickCaptureDialogProps {
   initialKind?: CaptureKind;
+  taskId?: string;
+  taskMode?: "create" | "edit";
+  taskValues?: QuickCaptureTaskValues;
+  onOpenChange?: (open: boolean) => void;
+  open?: boolean;
   trigger: ReactElement;
 }
 
@@ -52,23 +63,32 @@ function resetMisconceptionState() {
 
 export function QuickCaptureDialog({
   initialKind = "task",
+  taskId,
+  taskMode = "create",
+  taskValues,
+  onOpenChange,
+  open,
   trigger,
 }: QuickCaptureDialogProps) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [busyKind, setBusyKind] = useState<CaptureKind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [task, setTask] = useState(resetTaskState);
   const [note, setNote] = useState(resetNoteState);
   const [misconception, setMisconception] = useState(resetMisconceptionState);
   const kind = initialKind;
+  const isTaskEdit = kind === "task" && taskMode === "edit";
+  const isControlled = open !== undefined;
+  const resolvedOpen = isControlled ? open : internalOpen;
   let dialogTitle: string;
   let dialogDescription: string;
 
   if (kind === "task") {
-    dialogTitle = "Capture task";
-    dialogDescription =
-      "Add the task now and set a due date so it shows up in the student calendar.";
+    dialogTitle = isTaskEdit ? "Edit task" : "Capture task";
+    dialogDescription = isTaskEdit
+      ? "Update the task details and save the changes."
+      : "Add the task now and set a due date so it shows up in the student calendar.";
   } else if (kind === "note") {
     dialogTitle = "Capture note";
     dialogDescription = "Capture a note without losing the thread.";
@@ -81,7 +101,13 @@ export function QuickCaptureDialog({
   const isBusy = busyKind !== null;
 
   useEffect(() => {
-    if (open) {
+    if (resolvedOpen) {
+      if (kind === "task") {
+        setTask(
+          taskValues ??
+            (taskMode === "edit" ? resetTaskState() : resetTaskState())
+        );
+      }
       return;
     }
 
@@ -90,7 +116,7 @@ export function QuickCaptureDialog({
     setTask(resetTaskState());
     setNote(resetNoteState());
     setMisconception(resetMisconceptionState());
-  }, [initialKind, open]);
+  }, [kind, resolvedOpen, taskMode, taskValues]);
 
   const submitLabel = useMemo(() => {
     if (busyKind === kind) {
@@ -103,49 +129,62 @@ export function QuickCaptureDialog({
       case "misconception":
         return "Capture misconception";
       default:
-        return "Capture task";
+        return isTaskEdit ? "Save task" : "Capture task";
     }
-  }, [busyKind, kind]);
+  }, [busyKind, isTaskEdit, kind]);
 
   const submit = async (nextKind: CaptureKind) => {
     setBusyKind(nextKind);
     setError(null);
 
     try {
-      let payload: Record<string, unknown>;
-      switch (nextKind) {
-        case "note":
-          payload = {
+      let response: Response;
+      if (nextKind === "task") {
+        const payload = {
+          description: task.description.trim(),
+          dueAt: task.dueAt || null,
+          title: task.title.trim(),
+        };
+
+        response =
+          isTaskEdit && taskId
+            ? await fetch(`/api/tasks/${taskId}`, {
+                body: JSON.stringify(payload),
+                headers: { "Content-Type": "application/json" },
+                method: "PATCH",
+              })
+            : await fetch("/api/capture", {
+                body: JSON.stringify({
+                  ...payload,
+                  kind: nextKind,
+                }),
+                headers: { "Content-Type": "application/json" },
+                method: "POST",
+              });
+      } else if (nextKind === "note") {
+        response = await fetch("/api/capture", {
+          body: JSON.stringify({
             content: note.content,
             kind: nextKind,
             title: note.title,
-          };
-          break;
-        case "misconception":
-          payload = {
+          }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        });
+      } else {
+        response = await fetch("/api/capture", {
+          body: JSON.stringify({
             confidence: misconception.confidence,
             concept: misconception.concept,
             kind: nextKind,
             reason: misconception.reason,
             subject: misconception.subject,
             topic: misconception.topic,
-          };
-          break;
-        default:
-          payload = {
-            description: task.description,
-            dueAt: task.dueAt || null,
-            kind: nextKind,
-            title: task.title,
-          };
-          break;
+          }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        });
       }
-
-      const response = await fetch("/api/capture", {
-        body: JSON.stringify(payload),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      });
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => ({}))) as {
@@ -159,7 +198,7 @@ export function QuickCaptureDialog({
       }
 
       router.refresh();
-      setOpen(false);
+      handleOpenChange(false);
     } catch (submissionError) {
       setError(
         submissionError instanceof Error
@@ -171,8 +210,17 @@ export function QuickCaptureDialog({
     }
   };
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (isControlled) {
+      onOpenChange?.(nextOpen);
+      return;
+    }
+
+    setInternalOpen(nextOpen);
+  };
+
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
+    <Dialog onOpenChange={handleOpenChange} open={resolvedOpen}>
       <DialogTrigger render={trigger} />
       <DialogContent className="max-w-4xl" largeWidth>
         <DialogHeader className="space-y-2">
@@ -350,7 +398,7 @@ export function QuickCaptureDialog({
 
         <div className="flex items-center justify-end gap-2">
           <Button
-            onClick={() => setOpen(false)}
+            onClick={() => handleOpenChange(false)}
             type="button"
             variant="outline"
           >

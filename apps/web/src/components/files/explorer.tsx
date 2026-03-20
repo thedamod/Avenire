@@ -3501,168 +3501,169 @@ export function FileExplorer({
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
-      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-4 pt-3 pb-1">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <SidebarTrigger className="rounded-md md:hidden" />
-          <Button
-            aria-label="Go back"
-            className="rounded-md"
-            disabled={!backRoute}
-            onClick={() => {
-              if (backRoute) {
-                router.push(backRoute as Route);
-              }
-            }}
-            size="icon-xs"
-            type="button"
-            variant="outline"
-          >
-            <ArrowLeft className="size-3.5" />
-          </Button>
-          <Button
-            aria-label="Go forward"
-            className="hidden rounded-md sm:inline-flex"
-            disabled={!forwardRoute}
-            onClick={() => {
-              if (forwardRoute) {
-                router.push(forwardRoute as Route);
-              }
-            }}
-            size="icon-xs"
-            type="button"
-            variant="outline"
-          >
-            <ArrowRight className="size-3.5" />
-          </Button>
-          <Button
-            aria-label="Go home"
-            className="hidden rounded-md sm:inline-flex"
-            disabled={pathname === "/workspace"}
-            onClick={() => {
-              if (pathname !== "/workspace") {
-                router.push("/workspace" as Route);
-              }
-            }}
-            size="icon-xs"
-            type="button"
-            variant="outline"
-          >
-            <House className="size-3.5" />
-          </Button>
-          <Breadcrumb className="min-w-0 flex-1">
-            <BreadcrumbList className="flex-nowrap overflow-x-auto whitespace-nowrap pr-2">
-              {breadcrumbs.map((crumb, index) => {
-                const isLast = index === breadcrumbs.length - 1;
-                const Icon = index === 0 ? House : Folder;
-                return (
-                  <BreadcrumbItem key={crumb.id}>
-                    {isLast ? (
-                      <BreadcrumbPage className="inline-flex items-center gap-2">
-                        <Icon className="hidden size-3.5 text-muted-foreground sm:inline-flex" />
-                        <span>{crumb.name}</span>
-                      </BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink
-                        className="inline-flex items-center gap-2"
-                        href="#"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          navigateToFolder(crumb.id);
-                        }}
-                      >
-                        <Icon className="hidden size-3.5 text-muted-foreground sm:inline-flex" />
-                        <span>{crumb.name}</span>
-                      </BreadcrumbLink>
-                    )}
-                    {isLast ? null : <BreadcrumbSeparator />}
-                  </BreadcrumbItem>
-                );
-              })}
-            </BreadcrumbList>
-          </Breadcrumb>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <ShareDialog
-            variant="folder"
-            workspaceUuid={workspaceUuid}
-            currentFolder={currentFolder}
-            isAtWorkspaceRoot={isAtWorkspaceRoot}
-            loadShareSuggestions={loadShareSuggestions}
-          />
-          <Button
-            className="rounded-md"
-            onClick={toggleCurrentPinnedItem}
-            size="sm"
-            type="button"
-            variant={isCurrentPinned ? "secondary" : "outline"}
-          >
-            {isCurrentPinned ? (
-              <PinOff className="size-3.5" />
-            ) : (
-              <Pin className="size-3.5" />
-            )}
-            {isCurrentPinned ? "Unpin" : "Pin"}
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  aria-label="More actions"
-                  className="rounded-md"
-                  size="icon-sm"
-                  type="button"
-                  variant="outline"
-                />
-              }
+      <div className="sticky top-0 z-30 shrink-0 border-border/70 border-b bg-background/95 backdrop-blur-sm">
+        <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-4 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <SidebarTrigger className="rounded-md md:hidden" />
+            <Button
+              aria-label="Go back"
+              className="rounded-md"
+              disabled={!backRoute}
+              onClick={() => {
+                if (backRoute) {
+                  router.push(backRoute as Route);
+                }
+              }}
+              size="icon-xs"
+              type="button"
+              variant="outline"
             >
-              <MoreHorizontal className="size-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onClick={toggleCurrentPinnedItem}>
-                {isCurrentPinned ? (
-                  <PinOff className="size-3.5" />
-                ) : (
-                  <Pin className="size-3.5" />
-                )}
-                {isCurrentPinned ? "Unpin" : "Pin"}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    openRenameFolderDialog(currentFolder);
-                  }
-                }}
+              <ArrowLeft className="size-3.5" />
+            </Button>
+            <Button
+              aria-label="Go forward"
+              className="hidden rounded-md sm:inline-flex"
+              disabled={!forwardRoute}
+              onClick={() => {
+                if (forwardRoute) {
+                  router.push(forwardRoute as Route);
+                }
+              }}
+              size="icon-xs"
+              type="button"
+              variant="outline"
+            >
+              <ArrowRight className="size-3.5" />
+            </Button>
+            <Button
+              aria-label="Go home"
+              className="hidden rounded-md sm:inline-flex"
+              disabled={pathname === "/workspace"}
+              onClick={() => {
+                if (pathname !== "/workspace") {
+                  router.push("/workspace" as Route);
+                }
+              }}
+              size="icon-xs"
+              type="button"
+              variant="outline"
+            >
+              <House className="size-3.5" />
+            </Button>
+            <Breadcrumb className="min-w-0 flex-1">
+              <BreadcrumbList className="flex-nowrap overflow-x-auto whitespace-nowrap pr-2">
+                {breadcrumbs.map((crumb, index) => {
+                  const isLast = index === breadcrumbs.length - 1;
+                  const Icon = index === 0 ? House : Folder;
+                  return (
+                    <BreadcrumbItem key={crumb.id}>
+                      {isLast ? (
+                        <BreadcrumbPage className="inline-flex items-center gap-2">
+                          <Icon className="hidden size-3.5 text-muted-foreground sm:inline-flex" />
+                          <span>{crumb.name}</span>
+                        </BreadcrumbPage>
+                      ) : (
+                        <BreadcrumbLink
+                          className="inline-flex items-center gap-2"
+                          href="#"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            navigateToFolder(crumb.id);
+                          }}
+                        >
+                          <Icon className="hidden size-3.5 text-muted-foreground sm:inline-flex" />
+                          <span>{crumb.name}</span>
+                        </BreadcrumbLink>
+                      )}
+                      {isLast ? null : <BreadcrumbSeparator />}
+                    </BreadcrumbItem>
+                  );
+                })}
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <ShareDialog
+              variant="folder"
+              workspaceUuid={workspaceUuid}
+              currentFolder={currentFolder}
+              isAtWorkspaceRoot={isAtWorkspaceRoot}
+              loadShareSuggestions={loadShareSuggestions}
+            />
+            <Button
+              className="rounded-md"
+              onClick={toggleCurrentPinnedItem}
+              size="sm"
+              type="button"
+              variant={isCurrentPinned ? "secondary" : "outline"}
+            >
+              {isCurrentPinned ? (
+                <PinOff className="size-3.5" />
+              ) : (
+                <Pin className="size-3.5" />
+              )}
+              {isCurrentPinned ? "Unpin" : "Pin"}
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    aria-label="More actions"
+                    className="rounded-md"
+                    size="icon-sm"
+                    type="button"
+                    variant="outline"
+                  />
+                }
               >
-                <Pencil className="size-3.5" />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void duplicateItem({
-                      id: currentFolder.id,
-                      kind: "folder",
-                      parentId: currentFolder.parentId,
-                    });
-                  }
-                }}
-              >
-                <Copy className="size-3.5" />
-                Duplicate
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void copyFolderShareLink(currentFolder);
-                  }
-                }}
-              >
-                <Share2 className="size-3.5" />
-                Share
-              </DropdownMenuItem>
+                <MoreHorizontal className="size-3.5" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={toggleCurrentPinnedItem}>
+                  {isCurrentPinned ? (
+                    <PinOff className="size-3.5" />
+                  ) : (
+                    <Pin className="size-3.5" />
+                  )}
+                  {isCurrentPinned ? "Unpin" : "Pin"}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={isAtWorkspaceRoot || !currentFolder}
+                  onClick={() => {
+                    if (currentFolder) {
+                      openRenameFolderDialog(currentFolder);
+                    }
+                  }}
+                >
+                  <Pencil className="size-3.5" />
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={isAtWorkspaceRoot || !currentFolder}
+                  onClick={() => {
+                    if (currentFolder) {
+                      void duplicateItem({
+                        id: currentFolder.id,
+                        kind: "folder",
+                        parentId: currentFolder.parentId,
+                      });
+                    }
+                  }}
+                >
+                  <Copy className="size-3.5" />
+                  Duplicate
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={isAtWorkspaceRoot || !currentFolder}
+                  onClick={() => {
+                    if (currentFolder) {
+                      void copyFolderShareLink(currentFolder);
+                    }
+                  }}
+                >
+                  <Share2 className="size-3.5" />
+                  Share
+                </DropdownMenuItem>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger
                   disabled={isAtWorkspaceRoot || !currentFolder}
@@ -3747,6 +3748,7 @@ export function FileExplorer({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+      </div>
       </div>
 
       <div className="px-4 pt-0 pb-4">

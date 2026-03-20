@@ -113,6 +113,8 @@ const tabs = [
 type TabKey = (typeof tabs)[number]["key"];
 
 const KEYBOARD_SHORTCUTS = [
+  { label: "Command Palette", keys: ["Ctrl", "Shift", "P"] },
+  { label: "Open Files", keys: ["Ctrl", "P"] },
   { label: "Search", keys: ["Ctrl", "K"] },
   { label: "New Chat", keys: ["Ctrl", "Shift", "O"] },
   { label: "Toggle Sidebar", keys: ["Ctrl", "B"] },

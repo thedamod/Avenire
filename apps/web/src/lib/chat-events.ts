@@ -4,9 +4,9 @@ export const CHAT_STREAM_STATUS_EVENT = "avenire:chat-stream-status";
 export const CHAT_CREATED_EVENT = "avenire:chat-created";
 
 export interface ChatNameUpdatedDetail {
+  icon?: string | null;
   id: string;
   name: string;
-  icon?: string | null;
 }
 
 export interface ChatStreamFinishedDetail {
@@ -22,9 +22,4 @@ export interface ChatCreatedDetail {
   fromId: string;
   id: string;
   title: string;
-}
-
-export interface ChatThinkingMessagesDetail {
-  id: string;
-  messages: string[];
 }

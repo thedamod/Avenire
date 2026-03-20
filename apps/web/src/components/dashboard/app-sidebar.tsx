@@ -80,6 +80,7 @@ import {
 } from "@/lib/chat-events";
 import { isChatIconName } from "@/lib/chat-icons";
 import { useDashboardOverlayStore } from "@/stores/dashboardOverlayStore";
+import { commandPaletteActions } from "@/stores/commandPaletteStore";
 import { useFilesPinsStore } from "@/stores/filesPinsStore";
 import { filesUiActions, useFilesUiStore } from "@/stores/filesUiStore";
 
@@ -576,6 +577,8 @@ export function DashboardSidebar({
   } else if (pathname.startsWith("/workspace/files")) {
     routeView = "files";
   } else if (isChatsRoute) {
+    routeView = "chat";
+  } else if (pathname === "/workspace") {
     routeView = "chat";
   }
   const activeView = routeView;
@@ -1144,6 +1147,14 @@ export function DashboardSidebar({
   useEffect(() => {
     void loadWorkspaces();
   }, [loadWorkspaces]);
+
+  useEffect(() => {
+    commandPaletteActions.setFileIndex({
+      workspaceUuid,
+      folders: folderTree,
+      files: fileTree,
+    });
+  }, [fileTree, folderTree, workspaceUuid]);
 
   const activeOrgSyncRef = useRef<string | null>(null);
   useEffect(() => {

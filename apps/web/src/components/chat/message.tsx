@@ -19,7 +19,6 @@ import {
   RollingAgentActivity,
   RollingToolActivity,
 } from "@/components/chat/rolling-tool-activity";
-import { ThinkingIndicator } from "@/components/chat/thinking-indicator";
 import { ChatToolPart, ToolRow } from "@/components/chat/tool-part";
 import { WidgetRenderer } from "@/components/WidgetRenderer";
 import { cn } from "@/lib/utils";
@@ -175,7 +174,6 @@ const PurePreviewMessage = ({
   reload,
   sendMessage,
   isReadonly,
-  thinkingMessages,
   workspaceUuid,
 }: {
   addToolApprovalResponse: UseChatHelpers<UIMessage>["addToolApprovalResponse"];
@@ -189,7 +187,6 @@ const PurePreviewMessage = ({
   reload: UseChatHelpers<UIMessage>["regenerate"];
   sendMessage: UseChatHelpers<UIMessage>["sendMessage"];
   isReadonly: boolean;
-  thinkingMessages?: string[];
   workspaceUuid: string;
 }) => {
   const parts = message.parts ?? [];
@@ -362,10 +359,6 @@ const PurePreviewMessage = ({
               }
               return null;
             })}
-
-            {isLoading && message.role === "assistant" && (
-              <ThinkingMessage messages={thinkingMessages} />
-            )}
           </div>
 
           {!isReadonly && message.role === "assistant" && isComplete && (
@@ -420,28 +413,6 @@ export const PreviewMessage = memo(PurePreviewMessage, (prev, next) => {
     prevSignature === nextSignature &&
   prev.isLoading === next.isLoading &&
   prev.isComplete === next.isComplete &&
-  prev.thinkingMessages?.join("\u0000") ===
-    next.thinkingMessages?.join("\u0000") &&
   prev.workspaceUuid === next.workspaceUuid
 );
-});
-
-export const ThinkingMessage = memo(function ThinkingMessage({
-  messages,
-}: {
-  messages?: string[];
-}) {
-  return (
-    <motion.div
-      animate={{ opacity: 1 }}
-      className="mx-auto w-full max-w-3xl px-4"
-      initial={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-    >
-      <ThinkingIndicator
-        className="px-0 py-0 text-muted-foreground"
-        messages={messages}
-      />
-    </motion.div>
-  );
 });

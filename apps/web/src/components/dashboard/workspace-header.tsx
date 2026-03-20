@@ -1,12 +1,12 @@
 "use client";
 
-import { Button } from "@avenire/ui/components/button";
-import { cn } from "@avenire/ui/lib/utils";
-import { ArrowLeft, ArrowRight, House } from "lucide-react";
-import type { ReactNode } from "react";
-import { useRouter, usePathname } from "next/navigation";
 import type { Route } from "next";
+import { usePathname, useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, House } from "lucide-react";
+import { Button } from "@avenire/ui/components/button";
 import { SidebarTrigger } from "@avenire/ui/components/sidebar";
+import { cn } from "@avenire/ui/lib/utils";
+import type { ReactNode } from "react";
 import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
 
 interface WorkspaceHeaderProps {
@@ -38,13 +38,13 @@ export function WorkspaceHeader({
   return (
     <header
       className={cn(
-        "shrink-0 border-border/70 border-b bg-background/95 backdrop-blur-xs",
+        "sticky top-0 z-30 shrink-0 border-border/70 border-b bg-background/95 backdrop-blur-sm",
         className
       )}
     >
-      <div className="flex min-h-10 shrink-0 flex-nowrap items-center gap-2 overflow-hidden px-4 py-1.5">
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-4 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <SidebarTrigger className="md:hidden rounded-md" />
+          <SidebarTrigger className="rounded-md md:hidden" />
           <Button
             aria-label="Go back"
             className="rounded-md"
