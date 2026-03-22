@@ -1,14 +1,12 @@
-import { auth } from "@avenire/auth/server";
 import type { Route } from "next";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { FlashcardSetDetail } from "@/components/flashcards/set-detail";
-import { resolveWorkspaceForUser } from "@/lib/file-data";
 import {
   type FlashcardTaxonomy,
   getFlashcardSetForUser,
   listDueFlashcardsForUser,
 } from "@/lib/flashcards";
+import { requireWorkspaceRouteContext } from "@/lib/workspace-route-context";
 
 function parseDrillFilters(
   rawDrill: string | string[] | undefined
@@ -52,11 +50,9 @@ export default async function DashboardFlashcardSetPage({
   params: Promise<{ setId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-
-  if (!session?.user) {
-    redirect("/login");
-  }
+  const { session, workspace } = await requireWorkspaceRouteContext(
+    "/workspace" as Route
+  );
 
   const { setId } = await params;
   const query = await searchParams;
@@ -66,17 +62,6 @@ export default async function DashboardFlashcardSetPage({
     query.study === "true" ||
     query.review === "1" ||
     query.review === "true";
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const workspace = await resolveWorkspaceForUser(
-    session.user.id,
-    activeOrganizationId
-  );
-
-  if (!workspace) {
-    redirect("/workspace" as Route);
-  }
 
   const [set, queue] = await Promise.all([
     getFlashcardSetForUser(session.user.id, workspace.workspaceId, setId),

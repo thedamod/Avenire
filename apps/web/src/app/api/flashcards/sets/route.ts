@@ -4,6 +4,7 @@ import {
   listFlashcardSetSummariesForUser,
 } from "@/lib/flashcards";
 import { getWorkspaceContextForUser } from "@/lib/workspace";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
 export async function GET() {
   const ctx = await getWorkspaceContextForUser();
@@ -45,6 +46,16 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: ctx.workspace.workspaceId,
+    type: "flashcards.invalidate",
+    payload: {
+      action: "created",
+      setId: set.id,
+      workspaceUuid: ctx.workspace.workspaceId,
+    },
+  });
 
   return NextResponse.json({ set }, { status: 201 });
 }

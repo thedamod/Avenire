@@ -590,7 +590,7 @@ export function WidgetRenderer({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full overflow-hidden rounded-lg border border-border ${className}`}
+      className={`relative w-full overflow-visible rounded-lg border border-border ${className}`}
     >
       {isStreaming && (
         <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">

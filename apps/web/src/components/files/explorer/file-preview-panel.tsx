@@ -18,6 +18,7 @@ import {
   ArrowUp,
   Copy,
   FileText,
+  FileImage,
   FolderInput,
   Info,
   MoreHorizontal,
@@ -26,9 +27,19 @@ import {
   PinOff,
   Share2,
   Trash2,
+  XCircle,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { IndexeddbPersistence } from "y-indexeddb";
+import * as Y from "yjs";
 import AvenireEditor from "@/components/editor";
 import { PropertiesTable } from "@/components/editor/properties-table";
 import type {
@@ -51,14 +62,22 @@ import {
   releaseMediaPlaybackPrime,
 } from "@/lib/file-preview-cache";
 import {
+  arePageMetadataStatesEqual,
+  EMPTY_PAGE_METADATA_STATE,
+  type PageMetadataState,
+  normalizePageMetadataState,
+  resolvePageDocument,
   splitFrontmatterDocument,
-  stripFrontmatter,
   updateContentWithFrontmatter,
 } from "@/lib/frontmatter";
 import {
   buildProgressivePlaybackSource,
   buildVideoPlaybackDescriptor,
 } from "@/lib/media-playback";
+import {
+  readWorkspaceMarkdownCache,
+  writeWorkspaceMarkdownCache,
+} from "@/lib/workspace-markdown-cache";
 
 const PDFViewer = dynamic(() => import("@/components/files/pdf-viewer"), {
   loading: () => (
@@ -106,6 +125,7 @@ interface FilePreviewPanelProps {
   }>;
   filePathById: Map<string, string>;
   workspaceMembers: WorkspaceMemberRecord[];
+  startBannerUpload: (...args: any[]) => Promise<any>;
   startUpload: (...args: any[]) => Promise<any>;
   loadShareSuggestions: (q: string, cb: (s: ShareSuggestion[]) => void) => void;
 }
@@ -129,6 +149,7 @@ export function FilePreviewPanel({
   isCurrentPinned,
   currentInfoEntries,
   wikiMarkdownFiles,
+  startBannerUpload,
   startUpload,
   loadShareSuggestions,
 }: FilePreviewPanelProps) {
@@ -141,13 +162,23 @@ export function FilePreviewPanel({
   const [noteSaveState, setNoteSaveState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
+  const [notePage, setNotePage] = useState<PageMetadataState>(
+    EMPTY_PAGE_METADATA_STATE
+  );
+  const [notePageOriginal, setNotePageOriginal] = useState<PageMetadataState>(
+    EMPTY_PAGE_METADATA_STATE
+  );
+  const [noteRemoteUpdatedAt, setNoteRemoteUpdatedAt] = useState<string | null>(
+    null
+  );
+  const [noteBannerUploadBusy, setNoteBannerUploadBusy] = useState(false);
   const [videoLoadFailed, setVideoLoadFailed] = useState(false);
   const [audioLoadFailed, setAudioLoadFailed] = useState(false);
   const [mediaStreamFailed, setMediaStreamFailed] = useState(false);
-  const lastLoadedMarkdownFileRef = useRef<{
-    id: string;
-    content: string;
-  } | null>(null);
+  const noteBannerInputRef = useRef<HTMLInputElement | null>(null);
+  const noteDraftDocRef = useRef<Y.Doc | null>(null);
+  const noteDraftTextRef = useRef<Y.Text | null>(null);
+  const markdownDraftRef = useRef("");
 
   const activeFileIsMarkdown = useMemo(
     () => detectPreviewKind(activeFile).isMarkdown,
@@ -157,6 +188,105 @@ export function FilePreviewPanel({
   const activeFileSourceUrl = activeFileIsNote
     ? `/api/workspaces/${workspaceUuid}/files/${activeFile.id}/stream`
     : activeFile.storageUrl;
+  const activePageFromFile = useMemo(
+    () => activeFile.page ?? EMPTY_PAGE_METADATA_STATE,
+    [activeFile.page]
+  );
+  const activeFileUpdatedAt = activeFile.updatedAt ?? null;
+
+  useEffect(() => {
+    markdownDraftRef.current = markdownDraft;
+  }, [markdownDraft]);
+
+  useEffect(() => {
+    if (!(workspaceUuid && activeFileIsNote)) {
+      noteDraftDocRef.current = null;
+      noteDraftTextRef.current = null;
+      return;
+    }
+
+    const noteRevision = noteRemoteUpdatedAt ?? activeFileUpdatedAt ?? "unknown";
+    const persistenceKey = [
+      "avenire",
+      "note-draft",
+      workspaceUuid,
+      activeFile.id,
+      noteRevision,
+    ].join(":");
+
+    const doc = new Y.Doc();
+    const text = doc.getText("markdown");
+    const persistence = new IndexeddbPersistence(persistenceKey, doc);
+    noteDraftDocRef.current = doc;
+    noteDraftTextRef.current = text;
+
+    let cancelled = false;
+    const applyText = () => {
+      if (cancelled) {
+        return;
+      }
+      const nextDraft = text.toString();
+      if (nextDraft === markdownDraftRef.current) {
+        return;
+      }
+      setMarkdownDraft(nextDraft);
+    };
+
+    const initialize = () => {
+      if (cancelled) {
+        return;
+      }
+      const persistedDraft = text.toString();
+      if (persistedDraft.length > 0) {
+        if (persistedDraft !== markdownDraftRef.current) {
+          setMarkdownDraft(persistedDraft);
+        }
+        return;
+      }
+      if (markdownDraftRef.current.length > 0) {
+        text.insert(0, markdownDraftRef.current);
+      }
+    };
+
+    text.observe(applyText);
+    void persistence.whenSynced.then(initialize);
+
+    return () => {
+      cancelled = true;
+      text.unobserve(applyText);
+      persistence.destroy();
+      doc.destroy();
+      if (noteDraftDocRef.current === doc) {
+        noteDraftDocRef.current = null;
+      }
+      if (noteDraftTextRef.current === text) {
+        noteDraftTextRef.current = null;
+      }
+    };
+  }, [
+    activeFile.id,
+    activeFileIsNote,
+    activeFileUpdatedAt,
+    noteRemoteUpdatedAt,
+    workspaceUuid,
+  ]);
+
+  useEffect(() => {
+    const text = noteDraftTextRef.current;
+    if (!(text && activeFileIsNote)) {
+      return;
+    }
+
+    const nextDraft = markdownDraft;
+    if (text.toString() === nextDraft) {
+      return;
+    }
+
+    text.delete(0, text.length);
+    if (nextDraft.length > 0) {
+      text.insert(0, nextDraft);
+    }
+  }, [activeFileIsNote, markdownDraft]);
 
   useEffect(() => {
     if (!(workspaceUuid && activeFile && activeFileIsMarkdown)) {
@@ -164,17 +294,21 @@ export function FilePreviewPanel({
       setMarkdownError(null);
       setMarkdownOriginal("");
       setMarkdownDraft("");
+      setNotePage(EMPTY_PAGE_METADATA_STATE);
+      setNotePageOriginal(EMPTY_PAGE_METADATA_STATE);
+      setNoteRemoteUpdatedAt(null);
       return;
     }
 
-    if (
-      lastLoadedMarkdownFileRef.current?.id === activeFile.id &&
-      lastLoadedMarkdownFileRef.current?.content
-    ) {
+    const cached = readWorkspaceMarkdownCache(workspaceUuid, activeFile.id);
+    if (cached && cached.updatedAt === activeFileUpdatedAt) {
       setMarkdownLoading(false);
       setMarkdownError(null);
-      setMarkdownOriginal(lastLoadedMarkdownFileRef.current.content);
-      setMarkdownDraft(lastLoadedMarkdownFileRef.current.content);
+      setMarkdownOriginal(cached.body);
+      setMarkdownDraft(activeFileIsNote ? cached.body : cached.content);
+      setNotePage(cached.page);
+      setNotePageOriginal(cached.page);
+      setNoteRemoteUpdatedAt(cached.updatedAt ?? activeFileUpdatedAt);
       return;
     }
 
@@ -198,12 +332,38 @@ export function FilePreviewPanel({
         if (cancelled) {
           return;
         }
-        setMarkdownOriginal(text);
-        setMarkdownDraft(text);
-        lastLoadedMarkdownFileRef.current = {
-          id: activeFile.id,
+        const resolved = resolvePageDocument({
           content: text,
-        };
+          page: activePageFromFile,
+        });
+        if (activeFileIsNote) {
+          setMarkdownOriginal(text);
+          setMarkdownDraft(resolved.body);
+          setNotePageOriginal(activePageFromFile);
+          setNotePage(resolved.page);
+          setNoteRemoteUpdatedAt(activeFileUpdatedAt);
+          writeWorkspaceMarkdownCache(workspaceUuid, activeFile.id, {
+            body: resolved.body,
+            content: text,
+            page: resolved.page,
+            updatedAt: activeFileUpdatedAt,
+          });
+        } else {
+          const parsed = splitFrontmatterDocument(text);
+          const composite = updateContentWithFrontmatter(
+            parsed.body,
+            parsed.properties
+          );
+          setMarkdownOriginal(parsed.body);
+          setMarkdownDraft(composite);
+          setNoteRemoteUpdatedAt(activeFileUpdatedAt);
+          writeWorkspaceMarkdownCache(workspaceUuid, activeFile.id, {
+            body: parsed.body,
+            content: text,
+            page: EMPTY_PAGE_METADATA_STATE,
+            updatedAt: activeFileUpdatedAt,
+          });
+        }
       })
       .catch((error) => {
         if (cancelled) {
@@ -227,21 +387,36 @@ export function FilePreviewPanel({
       cancelled = true;
       controller.abort();
     };
-  }, [activeFile, activeFileIsMarkdown, workspaceUuid]);
+  }, [
+    activeFile,
+    activeFileIsMarkdown,
+    activeFileIsNote,
+    activeFileUpdatedAt,
+    activePageFromFile,
+    workspaceUuid,
+  ]);
 
-  const markdownBody = useMemo(
-    () => stripFrontmatter(markdownDraft),
+  const markdownDocument = useMemo(
+    () => splitFrontmatterDocument(markdownDraft),
     [markdownDraft]
+  );
+  const markdownBody = activeFileIsNote ? markdownDraft : markdownDocument.body;
+  const markdownDirty = markdownBody !== markdownOriginal;
+  const notePageDirty = useMemo(
+    () => !arePageMetadataStatesEqual(notePage, notePageOriginal),
+    [notePage, notePageOriginal]
   );
 
   const handleMarkdownBodyChange = useCallback((nextBody: string) => {
+    if (activeFileIsNote) {
+      setMarkdownDraft(nextBody);
+      return;
+    }
     setMarkdownDraft((current) => {
       const { properties } = splitFrontmatterDocument(current);
       return updateContentWithFrontmatter(nextBody, properties);
     });
-  }, []);
-
-  const markdownDirty = markdownDraft !== markdownOriginal;
+  }, [activeFileIsNote]);
 
   const saveMarkdown = useCallback(async () => {
     if (!(workspaceUuid && activeFile && activeFileIsMarkdown)) {
@@ -294,11 +469,13 @@ export function FilePreviewPanel({
         throw new Error(payload.error ?? "Unable to save markdown.");
       }
 
-      setMarkdownOriginal(markdownDraft);
-      lastLoadedMarkdownFileRef.current = {
-        id: activeFile.id,
+      setMarkdownOriginal(markdownBody);
+      writeWorkspaceMarkdownCache(workspaceUuid, activeFile.id, {
+        body: markdownBody,
         content: markdownDraft,
-      };
+        page: EMPTY_PAGE_METADATA_STATE,
+        updatedAt: activeFileUpdatedAt,
+      });
     } catch (error) {
       setMarkdownError(
         error instanceof Error ? error.message : "Unable to save markdown."
@@ -310,13 +487,13 @@ export function FilePreviewPanel({
     activeFile,
     activeFileIsMarkdown,
     markdownDirty,
-    markdownDraft,
+    markdownBody,
     startUpload,
     workspaceUuid,
   ]);
 
   const saveNoteDraft = useCallback(
-    async (draft: string) => {
+    async (draft: string, page: PageMetadataState) => {
       if (!(activeFile && activeFileIsMarkdown && activeFileIsNote)) {
         return;
       }
@@ -329,8 +506,38 @@ export function FilePreviewPanel({
         const response = await fetch(`/api/notes/${activeFile.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: draft }),
+          body: JSON.stringify({
+            content: draft,
+            page,
+            updatedAt: noteRemoteUpdatedAt ?? activeFileUpdatedAt,
+          }),
         });
+
+        if (response.status === 409) {
+          const payload = (await response.json().catch(() => ({}))) as {
+            content?: string;
+            error?: string;
+            page?: PageMetadataState | null;
+            updatedAt?: string | null;
+          };
+          const remoteBody = typeof payload.content === "string" ? payload.content : draft;
+          const remotePage = normalizePageMetadataState(
+            payload.page ?? EMPTY_PAGE_METADATA_STATE
+          );
+          setMarkdownOriginal(remoteBody);
+          setMarkdownDraft(remoteBody);
+          setNotePageOriginal(remotePage);
+          setNotePage(remotePage);
+          setNoteRemoteUpdatedAt(payload.updatedAt ?? null);
+          writeWorkspaceMarkdownCache(workspaceUuid, activeFile.id, {
+            body: remoteBody,
+            content: remoteBody,
+            page: remotePage,
+            updatedAt: payload.updatedAt ?? null,
+          });
+          setNoteSaveState("error");
+          return;
+        }
 
         if (!response.ok) {
           const payload = (await response.json().catch(() => ({}))) as {
@@ -339,17 +546,33 @@ export function FilePreviewPanel({
           throw new Error(payload.error ?? "Unable to save note.");
         }
 
-        setMarkdownOriginal(draft);
-        lastLoadedMarkdownFileRef.current = {
-          id: activeFile.id,
-          content: draft,
+        const payload = (await response.json().catch(() => ({}))) as {
+          page?: PageMetadataState | null;
+          updatedAt?: string | null;
         };
+
+        setMarkdownOriginal(draft);
+        setNotePageOriginal(page);
+        setNoteRemoteUpdatedAt(payload.updatedAt ?? noteRemoteUpdatedAt ?? null);
+        writeWorkspaceMarkdownCache(workspaceUuid, activeFile.id, {
+          body: draft,
+          content: draft,
+          page,
+          updatedAt: payload.updatedAt ?? noteRemoteUpdatedAt ?? null,
+        });
         setNoteSaveState("saved");
       } catch {
         setNoteSaveState("error");
       }
     },
-    [activeFile, activeFileIsMarkdown, activeFileIsNote]
+    [
+      activeFile,
+      activeFileIsMarkdown,
+      activeFileIsNote,
+      activeFileUpdatedAt,
+      noteRemoteUpdatedAt,
+      workspaceUuid,
+    ]
   );
 
   const noteSaveTimerRef = useRef<number | null>(null);
@@ -360,7 +583,7 @@ export function FilePreviewPanel({
       return;
     }
 
-    if (!markdownDirty) {
+    if (!(markdownDirty || notePageDirty)) {
       return;
     }
 
@@ -369,7 +592,7 @@ export function FilePreviewPanel({
     }
 
     noteSaveTimerRef.current = window.setTimeout(() => {
-      void saveNoteDraft(markdownDraft);
+      void saveNoteDraft(markdownBody, notePage);
     }, 2000);
 
     return () => {
@@ -382,12 +605,17 @@ export function FilePreviewPanel({
     activeFileIsMarkdown,
     activeFileIsNote,
     markdownDirty,
-    markdownDraft,
+    markdownBody,
+    notePage,
+    notePageDirty,
     saveNoteDraft,
   ]);
 
   useEffect(() => {
     setNoteSaveState("idle");
+    setNotePage(EMPTY_PAGE_METADATA_STATE);
+    setNotePageOriginal(EMPTY_PAGE_METADATA_STATE);
+    setNoteRemoteUpdatedAt(null);
   }, [activeFile.id]);
 
   useEffect(() => {
@@ -404,6 +632,59 @@ export function FilePreviewPanel({
       window.clearTimeout(timer);
     };
   }, [noteSaveState]);
+
+  const noteBannerUrl =
+    notePage.bannerUrl?.trim() && notePage.bannerUrl.trim().length > 0
+      ? notePage.bannerUrl.trim()
+      : null;
+
+  const triggerNoteBannerPicker = useCallback(() => {
+    if (!activeFileIsNote || activeFile.readOnly || noteBannerUploadBusy) {
+      return;
+    }
+    noteBannerInputRef.current?.click();
+  }, [activeFile.readOnly, activeFileIsNote, noteBannerUploadBusy]);
+
+  const handleNoteBannerInputChange = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.currentTarget.value = "";
+
+      if (!(file && activeFileIsNote) || activeFile.readOnly) {
+        return;
+      }
+
+      setNoteBannerUploadBusy(true);
+      try {
+        const uploaded = ((await startBannerUpload([file])) ?? [])[0] as
+          | {
+              ufsUrl?: string;
+              url?: string;
+            }
+          | undefined;
+        const uploadedUrl =
+          (typeof uploaded?.ufsUrl === "string" && uploaded.ufsUrl) ||
+          (typeof uploaded?.url === "string" && uploaded.url) ||
+          null;
+
+        if (!uploadedUrl) {
+          throw new Error("Upload returned no file metadata");
+        }
+
+        setNotePage((current) => ({
+          ...current,
+          bannerUrl: uploadedUrl,
+        }));
+      } catch (error) {
+        setMarkdownError(
+          error instanceof Error ? error.message : "Unable to upload banner."
+        );
+      } finally {
+        setNoteBannerUploadBusy(false);
+      }
+    },
+    [activeFile.readOnly, activeFileIsNote, startBannerUpload]
+  );
 
   const activeMediaStreamUrl = useMemo(() => {
     if (!(activeFile && workspaceUuid)) {
@@ -713,9 +994,72 @@ export function FilePreviewPanel({
               </div>
             ) : (
               <div className="flex h-full flex-col">
+                {activeFileIsNote ? (
+                  <div className="border-border/50 border-b bg-background">
+                    <div className="group relative mx-auto w-full max-w-[50rem] overflow-hidden rounded-b-[2rem] border-x border-b border-border/60 bg-muted/30">
+                      {noteBannerUrl ? (
+                        <img
+                          alt={`${activeFile.name} banner`}
+                          className="h-40 w-full object-cover"
+                          loading="lazy"
+                          src={noteBannerUrl}
+                        />
+                      ) : (
+                        <div className="h-40 w-full bg-[#d8d1c5]" />
+                      )}
+                      <div className="absolute inset-0 bg-black/5" />
+                      <div className="absolute right-4 bottom-4 flex items-center gap-2">
+                        <Button
+                          className="h-8 rounded-full bg-background/92 px-3 text-xs shadow-sm backdrop-blur"
+                          disabled={activeFile.readOnly || noteBannerUploadBusy}
+                          onClick={triggerNoteBannerPicker}
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                        >
+                          <FileImage className="mr-1 size-3.5" />
+                          {noteBannerUploadBusy ? "Uploading..." : "Change banner"}
+                        </Button>
+                        <Button
+                          className="h-8 rounded-full bg-background/92 px-3 text-xs shadow-sm backdrop-blur"
+                          disabled={
+                            activeFile.readOnly ||
+                            noteBannerUploadBusy ||
+                            !noteBannerUrl
+                          }
+                          onClick={() => {
+                            setNotePage((current) => ({
+                              ...current,
+                              bannerUrl: null,
+                            }));
+                          }}
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                        >
+                          <XCircle className="mr-1 size-3.5" />
+                          Reset banner
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                 <PropertiesTable
-                  content={markdownDraft}
-                  onChange={setMarkdownDraft}
+                  onChange={(properties) => {
+                    if (activeFileIsNote) {
+                      setNotePage((current) => ({
+                        ...current,
+                        properties,
+                      }));
+                      return;
+                    }
+                    setMarkdownDraft((current) =>
+                      updateContentWithFrontmatter(markdownBody, properties)
+                    );
+                  }}
+                  properties={
+                    activeFileIsNote ? notePage.properties : markdownDocument.properties
+                  }
                 />
                 <AvenireEditor
                   defaultValue={markdownBody}
@@ -726,8 +1070,18 @@ export function FilePreviewPanel({
                   }}
                   saveState={activeFile.isNote ? noteSaveState : undefined}
                   scrollContainerRef={filePreviewScrollRef}
+                  workspaceUuid={workspaceUuid}
                   wikiPages={wikiMarkdownFiles}
                 />
+                {activeFileIsNote ? (
+                  <input
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleNoteBannerInputChange}
+                    ref={noteBannerInputRef}
+                    type="file"
+                  />
+                ) : null}
               </div>
             )}
           </div>

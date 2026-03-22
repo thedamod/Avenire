@@ -18,6 +18,7 @@ type ExpandableTabsProps = {
   value?: string | null
   defaultValue?: string | null
   onValueChange?: (value: string | null) => void
+  onItemHover?: (item: ExpandableTabItem) => void
   allowDeselect?: boolean
   className?: string
   persistenceKey?: string
@@ -43,6 +44,7 @@ export function ExpandableTabs({
   value,
   defaultValue = null,
   onValueChange,
+  onItemHover,
   allowDeselect = true,
   className,
   persistenceKey,
@@ -150,6 +152,8 @@ export function ExpandableTabs({
             tabIndex={isSelected || (currentValue === null && index === 0) ? 0 : -1}
             disabled={item.disabled}
             onClick={() => onSelect(item.value)}
+            onFocus={() => onItemHover?.(item)}
+            onMouseEnter={() => onItemHover?.(item)}
             onKeyDown={(event) => onKeyDown(event, index)}
             className={cn(
               "text-sidebar-foreground ring-sidebar-ring focus-visible:ring-2 relative inline-flex flex-1 items-center justify-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium outline-hidden transition-colors",

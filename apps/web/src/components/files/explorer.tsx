@@ -80,6 +80,7 @@ import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
+import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FileCard,
@@ -94,10 +95,7 @@ import {
 } from "@/components/files/stylized-search-bar";
 import { useFileSelection } from "@/hooks/use-file-selection";
 import { useFileDragDrop } from "@/hooks/use-file-drag-drop";
-import {
-  getWarmState,
-  isFileOpenedCached,
-} from "@/lib/file-preview-cache";
+import { getWarmState, isFileOpenedCached } from "@/lib/file-preview-cache";
 import {
   type FrontmatterProperties,
   parseFrontmatter,
@@ -123,6 +121,13 @@ import {
   readWorkspaceTreeCache,
   writeWorkspaceTreeCache,
 } from "@/lib/workspace-tree-cache";
+import {
+  invalidateWorkspaceFolderCache,
+  readWorkspaceFolderCache,
+  writeWorkspaceFolderCache,
+} from "@/lib/workspace-folder-cache";
+import { invalidateWorkspaceMarkdownCache } from "@/lib/workspace-markdown-cache";
+import { readCachedWorkspaces } from "@/lib/dashboard-browser-cache";
 import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
 import {
   detectPreviewKind,
@@ -223,6 +228,12 @@ interface DedupeLookupResponse {
     deduped: boolean;
     file?: { id?: string };
   }>;
+}
+
+interface FilesInvalidationEventPayload {
+  folderId?: string | null;
+  reason?: string;
+  workspaceUuid?: string;
 }
 
 interface WebkitFileSystemEntry {
@@ -989,7 +1000,7 @@ export function FileExplorer({
     }
 
     return base.filter((file) => {
-      const frontmatter = frontmatterByFileId[file.id];
+      const frontmatter = file.page?.properties ?? frontmatterByFileId[file.id];
       if (!frontmatter) {
         return false;
       }
@@ -1397,8 +1408,19 @@ export function FileExplorer({
         return;
       }
       const silent = options?.silent ?? false;
+      const cached = readWorkspaceFolderCache<FolderRecord, FileRecord>(
+        workspaceUuid,
+        currentFolderId
+      );
 
-      if (!silent) {
+      if (cached) {
+        setLoading(false);
+        setFolders(cached.folders);
+        setFiles(cached.files);
+        setBreadcrumbs(cached.ancestors);
+      }
+
+      if (!silent && !cached) {
         setLoading(true);
       }
       try {
@@ -1417,11 +1439,24 @@ export function FileExplorer({
           ancestors?: FolderRecord[];
         };
 
-        setFolders(payload.folders ?? []);
-        setFiles(payload.files ?? []);
-        setBreadcrumbs(payload.ancestors ?? []);
+        const nextFolders = payload.folders ?? [];
+        const nextFiles = payload.files ?? [];
+        const nextAncestors = payload.ancestors ?? [];
+
+        setFolders(nextFolders);
+        setFiles(nextFiles);
+        setBreadcrumbs(nextAncestors);
+        writeWorkspaceFolderCache<FolderRecord, FileRecord>(
+          workspaceUuid,
+          currentFolderId,
+          {
+            ancestors: nextAncestors,
+            files: nextFiles,
+            folders: nextFolders,
+          }
+        );
       } finally {
-        if (!silent) {
+        if (!silent && !cached) {
           setLoading(false);
         }
       }
@@ -1484,6 +1519,27 @@ export function FileExplorer({
   }, [workspaceUuid]);
 
   useEffect(() => {
+    if (!(workspaceUuid && currentFolderId)) {
+      setFolders([]);
+      setFiles([]);
+      setBreadcrumbs([]);
+      return;
+    }
+
+    const cached = readWorkspaceFolderCache<FolderRecord, FileRecord>(
+      workspaceUuid,
+      currentFolderId
+    );
+    if (!cached) {
+      return;
+    }
+
+    setFolders(cached.folders);
+    setFiles(cached.files);
+    setBreadcrumbs(cached.ancestors);
+  }, [currentFolderId, workspaceUuid]);
+
+  useEffect(() => {
     void loadFolder();
   }, [loadFolder]);
 
@@ -1536,6 +1592,14 @@ export function FileExplorer({
 
       for (const file of missing.slice(0, 60)) {
         loadedFrontmatterFileIdsRef.current.add(file.id);
+        const pageProperties =
+          file.page?.properties && Object.keys(file.page.properties).length > 0
+            ? file.page.properties
+            : null;
+        if (pageProperties) {
+          loadedEntries.push([file.id, pageProperties]);
+          continue;
+        }
         try {
           const response = await fetch(
             `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`,
@@ -1579,8 +1643,19 @@ export function FileExplorer({
       return;
     }
 
-    void (async () => {
+    const cachedWorkspace = readCachedWorkspaces()?.find(
+      (workspace) => workspace.workspaceId === workspaceUuid
+    );
+    if (cachedWorkspace?.name) {
+      setWorkspaceName(cachedWorkspace.name);
+    }
+
+    (async () => {
       try {
+        if (cachedWorkspace?.name) {
+          return;
+        }
+
         const response = await fetch("/api/workspaces/list", {
           cache: "no-store",
         });
@@ -1602,7 +1677,7 @@ export function FileExplorer({
       } catch {
         // ignore
       }
-    })();
+    })().catch(() => undefined);
   }, [workspaceUuid]);
 
   useEffect(() => {
@@ -1751,7 +1826,19 @@ export function FileExplorer({
           cleanupCurrent();
           scheduleReconnect();
         };
-        eventSource.addEventListener("files.invalidate", () => {
+        eventSource.addEventListener("files.invalidate", (event) => {
+          const detail = (() => {
+            try {
+              return JSON.parse(
+                (event as MessageEvent<string>).data
+              ) as FilesInvalidationEventPayload | null;
+            } catch {
+              return null;
+            }
+          })();
+
+          invalidateWorkspaceFolderCache(workspaceUuid, detail?.folderId);
+          invalidateWorkspaceMarkdownCache(workspaceUuid);
           refreshDataDebounced();
         });
       } catch {
@@ -3314,7 +3401,6 @@ export function FileExplorer({
     setEditDialog(null);
   };
 
-
   const copyFileShareLink = useCallback(
     async (file: FileRecord) => {
       if (!workspaceUuid || file.readOnly) {
@@ -3430,40 +3516,40 @@ export function FileExplorer({
     [workspaceUuid]
   );
 
-  const downloadFileDirect = useCallback(async (file: FileRecord) => {
-    try {
-      const sourceUrl = file.isNote
-        ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
-        : file.storageUrl;
-      const response = await fetch(sourceUrl);
-      if (!response.ok) {
-        throw new Error("Download failed");
+  const downloadFileDirect = useCallback(
+    async (file: FileRecord) => {
+      try {
+        const sourceUrl = file.isNote
+          ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
+          : file.storageUrl;
+        const response = await fetch(sourceUrl);
+        if (!response.ok) {
+          throw new Error("Download failed");
+        }
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(objectUrl);
+      } catch {
+        const fallbackUrl = file.isNote
+          ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
+          : file.storageUrl;
+        window.open(fallbackUrl, "_blank", "noopener,noreferrer");
       }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = file.name;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch {
-      const fallbackUrl = file.isNote
-        ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
-        : file.storageUrl;
-      window.open(fallbackUrl, "_blank", "noopener,noreferrer");
-    }
-  }, [workspaceUuid]);
-
-  const handleApplyWorkspaceFilter = useCallback(
-    (itemIds: string[] | null) => {
-      setVectorFilteredIds(
-        itemIds && itemIds.length > 0 ? new Set(itemIds) : null
-      );
     },
-    []
+    [workspaceUuid]
   );
+
+  const handleApplyWorkspaceFilter = useCallback((itemIds: string[] | null) => {
+    setVectorFilteredIds(
+      itemIds && itemIds.length > 0 ? new Set(itemIds) : null
+    );
+  }, []);
 
   const handleSearch = useCallback(
     (_searchQuery: string, results: WorkspaceSearchResult[]) => {
@@ -3515,6 +3601,7 @@ export function FileExplorer({
         wikiMarkdownFiles={wikiMarkdownFiles}
         filePathById={filePathById}
         workspaceMembers={workspaceMembers}
+        startBannerUpload={startBannerUpload}
         startUpload={startUpload}
         loadShareSuggestions={loadShareSuggestions}
       />
@@ -3686,91 +3773,91 @@ export function FileExplorer({
                   <Share2 className="size-3.5" />
                   Share
                 </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger
+                    disabled={isAtWorkspaceRoot || !currentFolder}
+                  >
+                    <FolderInput className="size-3.5" />
+                    Move To
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {allFolders
+                      .filter(
+                        (folder) =>
+                          currentFolder &&
+                          folder.id !== currentFolder.id &&
+                          !folder.readOnly
+                      )
+                      .slice(0, 20)
+                      .map((folder) => (
+                        <DropdownMenuItem
+                          key={folder.id}
+                          onClick={() => {
+                            if (currentFolder) {
+                              void moveFolder(currentFolder.id, folder.id);
+                            }
+                          }}
+                        >
+                          {folder.name}
+                        </DropdownMenuItem>
+                      ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuItem
                   disabled={isAtWorkspaceRoot || !currentFolder}
+                  onClick={() => {
+                    if (currentFolder) {
+                      void downloadItemArchive({
+                        id: currentFolder.id,
+                        kind: "folder",
+                        name: currentFolder.name,
+                      });
+                    }
+                  }}
                 >
-                  <FolderInput className="size-3.5" />
-                  Move To
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  {allFolders
-                    .filter(
-                      (folder) =>
-                        currentFolder &&
-                        folder.id !== currentFolder.id &&
-                        !folder.readOnly
-                    )
-                    .slice(0, 20)
-                    .map((folder) => (
-                      <DropdownMenuItem
-                        key={folder.id}
-                        onClick={() => {
-                          if (currentFolder) {
-                            void moveFolder(currentFolder.id, folder.id);
-                          }
-                        }}
+                  <ArrowDownToLine className="size-3.5" />
+                  Download (as Zip)
+                </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Info className="size-3.5" />
+                    Information
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-72">
+                    {currentInfoEntries.map((entry) => (
+                      <div
+                        className="flex items-start justify-between gap-3 px-2 py-1.5 text-xs"
+                        key={entry.label}
                       >
-                        {folder.name}
-                      </DropdownMenuItem>
+                        <span className="text-muted-foreground">
+                          {entry.label}
+                        </span>
+                        <span className="max-w-[12rem] text-right text-foreground">
+                          {entry.value}
+                        </span>
+                      </div>
                     ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void downloadItemArchive({
-                      id: currentFolder.id,
-                      kind: "folder",
-                      name: currentFolder.name,
-                    });
-                  }
-                }}
-              >
-                <ArrowDownToLine className="size-3.5" />
-                Download (as Zip)
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <Info className="size-3.5" />
-                  Information
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-72">
-                  {currentInfoEntries.map((entry) => (
-                    <div
-                      className="flex items-start justify-between gap-3 px-2 py-1.5 text-xs"
-                      key={entry.label}
-                    >
-                      <span className="text-muted-foreground">
-                        {entry.label}
-                      </span>
-                      <span className="max-w-[12rem] text-right text-foreground">
-                        {entry.value}
-                      </span>
-                    </div>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={isAtWorkspaceRoot || !currentFolder}
-                onClick={() => {
-                  if (currentFolder) {
-                    void deleteSelectionItems([
-                      { id: currentFolder.id, kind: "folder" },
-                    ]);
-                  }
-                }}
-                variant="destructive"
-              >
-                <Trash2 className="size-3.5" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  disabled={isAtWorkspaceRoot || !currentFolder}
+                  onClick={() => {
+                    if (currentFolder) {
+                      void deleteSelectionItems([
+                        { id: currentFolder.id, kind: "folder" },
+                      ]);
+                    }
+                  }}
+                  variant="destructive"
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-      </div>
       </div>
 
       <div className="px-4 pt-0 pb-4">
@@ -3781,7 +3868,8 @@ export function FileExplorer({
                 <img
                   alt={`${currentFolder.name} banner`}
                   className="h-full w-full object-cover"
-                  loading="lazy"
+                  fetchPriority="high"
+                  loading="eager"
                   src={currentFolderBannerUrl}
                 />
                 {bannerUploadBusy ? (
@@ -3891,50 +3979,62 @@ export function FileExplorer({
                 {currentLocationTitle}
               </h2>
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    className="rounded-md"
-                    size="icon-sm"
-                    type="button"
-                    variant="outline"
-                  />
-                }
+            {isMobile ? (
+              <Button
+                className="rounded-md"
+                onClick={() => setMobileCreateMenuOpen(true)}
+                size="icon-sm"
+                type="button"
+                variant="outline"
               >
                 <Plus className="size-3.5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-44">
-                <DropdownMenuItem
-                  disabled={isCurrentFolderReadOnly}
-                  onClick={() => openCreateNoteDialog(currentFolderId)}
+              </Button>
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      className="rounded-md"
+                      size="icon-sm"
+                      type="button"
+                      variant="outline"
+                    />
+                  }
                 >
-                  <FileText className="size-3.5" />
-                  New note
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={isCurrentFolderReadOnly}
-                  onClick={() => openCreateFolderDialog(currentFolderId)}
-                >
-                  <Folder className="size-3.5" />
-                  New folder
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={isCurrentFolderReadOnly}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="size-3.5" />
-                  Upload file
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={isCurrentFolderReadOnly}
-                  onClick={() => folderInputRef.current?.click()}
-                >
-                  <FilePlus2 className="size-3.5" />
-                  Upload folder
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  <Plus className="size-3.5" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-44">
+                  <DropdownMenuItem
+                    disabled={isCurrentFolderReadOnly}
+                    onClick={() => openCreateNoteDialog(currentFolderId)}
+                  >
+                    <FileText className="size-3.5" />
+                    New note
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={isCurrentFolderReadOnly}
+                    onClick={() => openCreateFolderDialog(currentFolderId)}
+                  >
+                    <Folder className="size-3.5" />
+                    New folder
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={isCurrentFolderReadOnly}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="size-3.5" />
+                    Upload file
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={isCurrentFolderReadOnly}
+                    onClick={() => folderInputRef.current?.click()}
+                  >
+                    <FilePlus2 className="size-3.5" />
+                    Upload folder
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <DropdownMenu>
@@ -4132,8 +4232,11 @@ export function FileExplorer({
                       ))}
                     </div>
                   ) : (
-                    <div
+                    <motion.div
+                      animate={{ opacity: 1, y: 0 }}
                       className="relative min-h-[calc(100vh-14rem)]"
+                      initial={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.22, ease: "easeOut" }}
                       onPointerDown={handleMobileCanvasPointerDown}
                       ref={gridRef}
                     >
@@ -4150,7 +4253,9 @@ export function FileExplorer({
                               : "";
                           return (
                             <ContextMenu key={folder.id}>
-                              <ContextMenuTrigger {...({ disabled: isMobile } as any)}>
+                              <ContextMenuTrigger
+                                {...({ disabled: isMobile } as any)}
+                              >
                                 <Card
                                   className={cn(
                                     "group relative cursor-pointer overflow-hidden rounded-2xl border border-transparent bg-transparent p-2 ring-0 transition",
@@ -4187,7 +4292,10 @@ export function FileExplorer({
                                     );
                                   }}
                                   onPointerDown={(event) => {
-                                    if (isMobile && event.pointerType === "touch") {
+                                    if (
+                                      isMobile &&
+                                      event.pointerType === "touch"
+                                    ) {
                                       beginMobileItemLongPress(folder.id);
                                     }
                                   }}
@@ -4414,7 +4522,9 @@ export function FileExplorer({
                             fileKind === "sheet" ? "document" : fileKind;
                           return (
                             <ContextMenu key={file.id}>
-                              <ContextMenuTrigger {...({ disabled: isMobile } as any)}>
+                              <ContextMenuTrigger
+                                {...({ disabled: isMobile } as any)}
+                              >
                                 <Card
                                   className={cn(
                                     "group grid-card-item relative cursor-pointer overflow-hidden rounded-2xl border border-transparent bg-transparent p-2 ring-0 transition",
@@ -4446,7 +4556,10 @@ export function FileExplorer({
                                     );
                                   }}
                                   onPointerDown={(event) => {
-                                    if (isMobile && event.pointerType === "touch") {
+                                    if (
+                                      isMobile &&
+                                      event.pointerType === "touch"
+                                    ) {
                                       beginMobileItemLongPress(file.id);
                                     }
                                   }}
@@ -4767,7 +4880,10 @@ export function FileExplorer({
                                   );
                                 }}
                                 onPointerDown={(event) => {
-                                  if (isMobile && event.pointerType === "touch") {
+                                  if (
+                                    isMobile &&
+                                    event.pointerType === "touch"
+                                  ) {
                                     beginMobileItemLongPress(file.id);
                                   }
                                 }}
@@ -4825,45 +4941,47 @@ export function FileExplorer({
                           }}
                         />
                       ) : null}
-                    </div>
+                    </motion.div>
                   )}
                 </div>
               </div>
             </ContextMenuTrigger>
-            <ContextMenuContent>
-              <ContextMenuItem
-                disabled={isCurrentFolderReadOnly}
-                onClick={() => openCreateNoteDialog(currentFolderId)}
-              >
-                <FileText className="size-3.5" />
-                New note
-              </ContextMenuItem>
-              <ContextMenuItem
-                disabled={isCurrentFolderReadOnly}
-                onClick={() => openCreateFolderDialog(currentFolderId)}
-              >
-                <Plus className="size-3.5" />
-                New folder
-              </ContextMenuItem>
-              <ContextMenuItem
-                disabled={isCurrentFolderReadOnly}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload className="size-3.5" />
-                Upload file
-              </ContextMenuItem>
-              <ContextMenuItem
-                disabled={isCurrentFolderReadOnly}
-                onClick={() => folderInputRef.current?.click()}
-              >
-                <FilePlus2 className="size-3.5" />
-                Upload folder
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => void loadFolder()}>
-                <ArrowUpDown className="size-3.5" />
-                Refresh
-              </ContextMenuItem>
-            </ContextMenuContent>
+            {!isMobile ? (
+              <ContextMenuContent>
+                <ContextMenuItem
+                  disabled={isCurrentFolderReadOnly}
+                  onClick={() => openCreateNoteDialog(currentFolderId)}
+                >
+                  <FileText className="size-3.5" />
+                  New note
+                </ContextMenuItem>
+                <ContextMenuItem
+                  disabled={isCurrentFolderReadOnly}
+                  onClick={() => openCreateFolderDialog(currentFolderId)}
+                >
+                  <Plus className="size-3.5" />
+                  New folder
+                </ContextMenuItem>
+                <ContextMenuItem
+                  disabled={isCurrentFolderReadOnly}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="size-3.5" />
+                  Upload file
+                </ContextMenuItem>
+                <ContextMenuItem
+                  disabled={isCurrentFolderReadOnly}
+                  onClick={() => folderInputRef.current?.click()}
+                >
+                  <FilePlus2 className="size-3.5" />
+                  Upload folder
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => void loadFolder()}>
+                  <ArrowUpDown className="size-3.5" />
+                  Refresh
+                </ContextMenuItem>
+              </ContextMenuContent>
+            ) : null}
           </ContextMenu>
         </div>
       </div>
@@ -5005,7 +5123,8 @@ export function FileExplorer({
                 if (mobileConfirmAction === "delete") {
                   void deleteSelectionItems(items);
                 } else {
-                  const parentFolderId = breadcrumbs[breadcrumbs.length - 2]?.id;
+                  const parentFolderId =
+                    breadcrumbs[breadcrumbs.length - 2]?.id;
                   if (parentFolderId) {
                     void moveItemsToFolder(
                       Array.from(selection.selectedIds),
@@ -5017,7 +5136,9 @@ export function FileExplorer({
                 setMobileConfirmAction(null);
               }}
               type="button"
-              variant={mobileConfirmAction === "delete" ? "destructive" : "default"}
+              variant={
+                mobileConfirmAction === "delete" ? "destructive" : "default"
+              }
             >
               Confirm
             </Button>

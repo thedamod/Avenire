@@ -33,6 +33,7 @@ import { Textarea } from "@avenire/ui/components/textarea";
 import { cn } from "@avenire/ui/lib/utils";
 import { BookOpenCheck, Pause, Pencil, Plus, Trash2 } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { motion } from "motion/react";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { Markdown } from "@/components/chat/markdown";
 import { WorkspaceHeader } from "@/components/dashboard/workspace-header";
@@ -436,7 +437,7 @@ export function FlashcardSetDetail({
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-none flex-col gap-4 px-4 py-4 md:px-6">
-        <WorkspaceHeader>
+        <WorkspaceHeader leadingIcon={<BookOpenCheck className="size-3.5" />}>
           <div className="min-w-0">
             <p className="truncate font-medium text-foreground text-sm">
               Flashcards
@@ -446,7 +447,12 @@ export function FlashcardSetDetail({
             </p>
           </div>
         </WorkspaceHeader>
-        <Card className="shadow-none">
+        <motion.div
+          animate={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+        >
+          <Card className="shadow-none">
           <CardHeader className="gap-3 border-border/70 border-b pb-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="space-y-1.5">
@@ -793,25 +799,21 @@ export function FlashcardSetDetail({
                       disabled={busy || !studyRevealed}
                       label="1 · Again"
                       onClick={() => submitReview("again")}
-                      tone="again"
                     />
                     <RatingButton
                       disabled={busy || !studyRevealed}
                       label="2 · Hard"
                       onClick={() => submitReview("hard")}
-                      tone="hard"
                     />
                     <RatingButton
                       disabled={busy || !studyRevealed}
                       label="3 · Good"
                       onClick={() => submitReview("good")}
-                      tone="good"
                     />
                     <RatingButton
                       disabled={busy || !studyRevealed}
                       label="4 · Easy"
                       onClick={() => submitReview("easy")}
-                      tone="easy"
                     />
                   </div>
                 </div>
@@ -917,7 +919,8 @@ export function FlashcardSetDetail({
               </Table>
             </ScrollArea>
           </CardContent>
-        </Card>
+          </Card>
+        </motion.div>
       </div>
     </div>
   );
@@ -927,34 +930,16 @@ function RatingButton({
   disabled,
   label,
   onClick,
-  tone,
 }: {
   disabled?: boolean;
   label: string;
   onClick: () => void;
-  tone: "again" | "hard" | "good" | "easy";
 }) {
-  let toneClass =
-    "border-emerald-200/70 text-emerald-700 hover:bg-emerald-200/40 dark:border-emerald-400/30 dark:text-emerald-200 dark:hover:bg-emerald-500/10";
-
-  if (tone === "again") {
-    toneClass =
-      "border-rose-200/70 text-rose-700 hover:bg-rose-200/40 dark:border-rose-400/30 dark:text-rose-200 dark:hover:bg-rose-500/10";
-  } else if (tone === "hard") {
-    toneClass =
-      "border-orange-200/70 text-orange-700 hover:bg-orange-200/40 dark:border-orange-400/30 dark:text-orange-200 dark:hover:bg-orange-500/10";
-  } else if (tone === "good") {
-    toneClass =
-      "border-teal-200/70 text-teal-700 hover:bg-teal-200/40 dark:border-teal-400/30 dark:text-teal-200 dark:hover:bg-teal-500/10";
-  }
-
   return (
     <Button
       className={cn(
-        "h-auto min-h-10 flex-col items-start justify-center rounded-[1.1rem] border px-3 py-2 text-left text-xs leading-tight transition-colors sm:min-h-12 sm:px-4 sm:py-3 sm:text-sm",
-        disabled
-          ? "border-border/40 bg-muted/10 text-muted-foreground"
-          : toneClass
+        "h-auto min-h-10 flex-col items-start justify-center rounded-[1.1rem] border border-border/70 bg-background px-3 py-2 text-left text-xs leading-tight text-foreground transition-colors hover:bg-muted/20 sm:min-h-12 sm:px-4 sm:py-3 sm:text-sm",
+        disabled && "bg-muted/10 text-muted-foreground hover:bg-muted/10"
       )}
       disabled={disabled}
       onClick={onClick}

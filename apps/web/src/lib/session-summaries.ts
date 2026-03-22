@@ -3,6 +3,8 @@ import type { UIMessage } from "@avenire/ai/message-types";
 import { apollo } from "@avenire/ai/models";
 import {
   createSessionSummary,
+  getLatestSessionSummaryForChat,
+  getRecentRelevantSessionSummary,
   listSessionSummariesForUser,
   type SessionSummaryRecord,
   upsertMisconception,
@@ -459,3 +461,8 @@ export function buildRecentSessionSummaryContext(
     .filter(Boolean)
     .join(" ");
 }
+
+export {
+  getLatestSessionSummaryForChat,
+  getRecentRelevantSessionSummary,
+};

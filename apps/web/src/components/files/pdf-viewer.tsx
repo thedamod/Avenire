@@ -1,27 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SearchResult } from "@anaralabs/lector";
 import {
   AnnotationLayer,
   CanvasLayer,
   calculateHighlightRects,
+  HighlightLayer,
   Page,
   Pages,
   Root,
-  useSearch,
   TextLayer,
-  Thumbnail,
-  Thumbnails,
-  HighlightLayer,
   usePdf,
   usePdfJump,
+  useSearch,
 } from "@anaralabs/lector";
-import type { SearchResult } from "@anaralabs/lector";
+import type { PDFPageProxy } from "pdfjs-dist";
 import { GlobalWorkerOptions } from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { Button } from "@avenire/ui/components/button";
 import { Input } from "@avenire/ui/components/input";
-import { ScrollArea } from "@avenire/ui/components/scroll-area";
 import { Separator } from "@avenire/ui/components/separator";
 import { cn } from "@avenire/ui/lib/utils";
 import {
@@ -33,11 +30,208 @@ import {
   Plus,
   Printer,
 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.mjs",
   import.meta.url,
 ).toString();
+
+const THUMBNAIL_GAP = 12;
+const THUMBNAIL_OVERSCAN_PX = 480;
+
+function PdfSidebarThumbnail({
+  isActive,
+  pageNumber,
+  pageProxy,
+  width,
+  height,
+  onClick,
+}: {
+  isActive: boolean;
+  pageNumber: number;
+  pageProxy: PDFPageProxy;
+  width: number;
+  height: number;
+  onClick: (pageNumber: number) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const renderTaskRef = useRef<{ cancel: () => void | Promise<void> } | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const render = async () => {
+      try {
+        renderTaskRef.current?.cancel();
+
+        const viewport = pageProxy.getViewport({ scale: 1 });
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const scale = Math.min(width / viewport.width, height / viewport.height) * dpr;
+        const scaledViewport = pageProxy.getViewport({ scale });
+
+        canvas.width = Math.max(1, Math.floor(scaledViewport.width));
+        canvas.height = Math.max(1, Math.floor(scaledViewport.height));
+
+        const context = canvas.getContext("2d");
+        if (!context) {
+          return;
+        }
+
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+
+        const renderTask = pageProxy.render({
+          canvas,
+          canvasContext: context,
+          viewport: scaledViewport,
+        }) as { cancel: () => void | Promise<void>; promise: Promise<void> };
+        renderTaskRef.current = renderTask;
+        await renderTask.promise;
+      } catch (error) {
+        if (!(cancelled || (error instanceof Error && error.name === "RenderingCancelledException"))) {
+          console.error("Failed to render PDF thumbnail:", error);
+        }
+      }
+    };
+
+    render().catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      renderTaskRef.current?.cancel();
+      renderTaskRef.current = null;
+    };
+  }, [height, pageProxy, width]);
+
+  return (
+    <button
+      aria-current={isActive ? "page" : undefined}
+      className={cn(
+        "group flex w-full flex-col gap-2 rounded-lg border bg-card p-2 text-left shadow-sm transition",
+        isActive
+          ? "border-ring ring-1 ring-ring/30"
+          : "border-border/60 hover:border-ring/60",
+      )}
+      onClick={() => onClick(pageNumber)}
+      type="button"
+    >
+      <div
+        className="relative flex w-full items-center justify-center overflow-hidden rounded-md bg-muted/40"
+        style={{ height }}
+      >
+        <canvas className="h-full w-auto max-w-full object-contain" ref={canvasRef} />
+        <div className="pointer-events-none absolute top-2 left-2 rounded-full border border-border/60 bg-background/90 px-2 py-0.5 font-medium text-[11px] text-muted-foreground shadow-sm">
+          {pageNumber}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function PdfThumbnailSidebar({
+  currentPage,
+  pageProxies,
+}: {
+  currentPage: number;
+  pageProxies: PDFPageProxy[];
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const { jumpToPage } = usePdfJump();
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+
+    const updateSize = () => {
+      setViewportHeight(el.clientHeight);
+      setViewportWidth(el.clientWidth);
+    };
+
+    updateSize();
+
+    const resizeObserver = new ResizeObserver(updateSize);
+    resizeObserver.observe(el);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
+
+  const thumbnails = useMemo(() => {
+    const contentWidth = Math.max(viewportWidth - 16, 120);
+    let top = 0;
+
+    return pageProxies
+      .map((pageProxy, index) => {
+        const viewport = pageProxy.getViewport({ scale: 1 });
+        const height = Math.max(
+          132,
+          Math.round((contentWidth * viewport.height) / Math.max(viewport.width, 1)),
+        );
+        const item = {
+          height,
+          index,
+          pageNumber: index + 1,
+          pageProxy,
+          top,
+          width: contentWidth,
+        };
+        top += height + THUMBNAIL_GAP;
+        return item;
+      })
+      .filter((item) => item.pageProxy);
+  }, [pageProxies, viewportWidth]);
+
+  const lastThumbnail = thumbnails.at(-1);
+  const totalHeight = lastThumbnail ? lastThumbnail.top + lastThumbnail.height : 0;
+
+  const visibleThumbnails = useMemo(() => {
+    const start = Math.max(0, scrollTop - THUMBNAIL_OVERSCAN_PX);
+    const end = scrollTop + viewportHeight + THUMBNAIL_OVERSCAN_PX;
+    return thumbnails.filter((item) => item.top <= end && item.top + item.height >= start);
+  }, [scrollTop, thumbnails, viewportHeight]);
+
+  return (
+    <aside className="flex h-full min-h-0 w-[min(18rem,85vw)] overflow-hidden border-border border-r bg-muted/20">
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="border-border/70 border-b px-3 py-2 font-medium text-muted-foreground text-xs">
+          Thumbnails
+        </div>
+        <div
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+          ref={scrollRef}
+        >
+          <div className="relative" style={{ height: totalHeight + 24 }}>
+            {visibleThumbnails.map((item) => (
+              <div className="absolute right-2 left-2" key={item.pageNumber} style={{ top: item.top + 12 }}>
+                <PdfSidebarThumbnail
+                  height={item.height}
+                  isActive={currentPage === item.pageNumber}
+                  onClick={(pageNumber) => jumpToPage(pageNumber, { behavior: "auto" })}
+                  pageNumber={item.pageNumber}
+                  pageProxy={item.pageProxy}
+                  width={item.width}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
 
 function PDFViewerContent({
   source,
@@ -53,6 +247,7 @@ function PDFViewerContent({
   const currentPage = usePdf((state) => state.currentPage);
   const totalPages = usePdf((state) => state.pdfDocumentProxy?.numPages ?? 0);
   const pdfProxy = usePdf((state) => state.pdfDocumentProxy);
+  const pageProxies = usePdf((state) => state.pageProxies ?? []);
   const updateZoom = usePdf((state) => state.updateZoom);
   const zoomLevel = usePdf((state) => state.zoom);
   const { jumpToPage } = usePdfJump();
@@ -200,7 +395,7 @@ function PDFViewerContent({
   }, [currentPage, jumpToPage]);
 
   const goToNextPage = useCallback(() => {
-    if (!currentPage || !totalPages) {
+    if (!(currentPage && totalPages)) {
       return;
     }
     jumpToPage(Math.min(totalPages, currentPage + 1));
@@ -293,7 +488,7 @@ function PDFViewerContent({
       }
     };
 
-    void applyHighlight();
+    applyHighlight().catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -415,25 +610,12 @@ function PDFViewerContent({
       </div>
 
       <div className="flex min-h-0 flex-1 bg-background">
-        <aside
-          className={cn(
-            "overflow-hidden border-border transition-[width] duration-300",
-            showThumbnails ? "w-56 border-r bg-muted/20" : "w-0",
-          )}
-        >
-          <ScrollArea className="h-full px-2 py-3">
-            <Thumbnails className="flex flex-col gap-3 px-1">
-              <Thumbnail className="w-full rounded-md border border-border bg-card shadow-sm transition hover:border-ring" />
-            </Thumbnails>
-          </ScrollArea>
-        </aside>
+        {showThumbnails ? (
+          <PdfThumbnailSidebar currentPage={currentPage || 1} pageProxies={pageProxies} />
+        ) : null}
 
         <div className="min-h-0 flex-1 bg-muted/30">
-          <Pages
-            className={cn(
-              "h-full w-full overflow-y-scroll overflow-x-hidden p-4 text-foreground sm:p-6"
-            )}
-          >
+          <Pages className={cn("h-full w-full overflow-x-hidden overflow-y-scroll p-4 text-foreground sm:p-6")}>
             <Page className="mx-auto w-fit rounded-md border border-border/40 bg-white shadow-sm">
               <CanvasLayer />
               <TextLayer />

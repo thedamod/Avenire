@@ -1,14 +1,29 @@
 import type { Metadata, Route } from "next";
-import { auth } from "@avenire/auth/server";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { cache } from "react";
+import { FileExplorer } from "@/components/files/explorer";
 import {
   getFileAssetById,
   getFolderWithAncestors,
   userCanAccessWorkspace,
 } from "@/lib/file-data";
-import { FileExplorer } from "@/components/files/explorer";
 import { buildPageMetadata } from "@/lib/page-metadata";
+import { getRouteSession } from "@/lib/workspace-route-context";
+
+const canAccessWorkspace = cache(async (userId: string, workspaceUuid: string) =>
+  userCanAccessWorkspace(userId, workspaceUuid)
+);
+
+const getFolderContext = cache(
+  async (userId: string, workspaceUuid: string, folderUuid: string) => {
+    const canAccess = await canAccessWorkspace(userId, workspaceUuid);
+    if (!canAccess) {
+      return null;
+    }
+
+    return getFolderWithAncestors(workspaceUuid, folderUuid, userId);
+  }
+);
 
 export async function generateMetadata({
   params,
@@ -17,13 +32,13 @@ export async function generateMetadata({
   params: Promise<{ workspaceUuid: string; folderUuid: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<Metadata> {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getRouteSession();
   if (!session?.user) {
     return buildPageMetadata({ title: "Files" });
   }
 
   const { workspaceUuid, folderUuid } = await params;
-  const canAccess = await userCanAccessWorkspace(session.user.id, workspaceUuid);
+  const canAccess = await canAccessWorkspace(session.user.id, workspaceUuid);
   if (!canAccess) {
     return buildPageMetadata({ title: "Files" });
   }
@@ -40,7 +55,11 @@ export async function generateMetadata({
     }
   }
 
-  const folder = await getFolderWithAncestors(workspaceUuid, folderUuid, session.user.id);
+  const folder = await getFolderContext(
+    session.user.id,
+    workspaceUuid,
+    folderUuid
+  );
   return buildPageMetadata({
     title: folder?.folder?.name ?? "Files",
   });
@@ -51,14 +70,14 @@ export default async function DashboardWorkspaceFolderPage({
 }: {
   params: Promise<{ workspaceUuid: string; folderUuid: string }>;
 }) {
-  const session = await auth.api.getSession({ headers: await headers() });
+  const session = await getRouteSession();
 
   if (!session?.user) {
     redirect("/login");
   }
 
   const { workspaceUuid, folderUuid } = await params;
-  const canAccess = await userCanAccessWorkspace(session.user.id, workspaceUuid);
+  const canAccess = await canAccessWorkspace(session.user.id, workspaceUuid);
 
   if (!canAccess) {
     redirect("/workspace" as Route);

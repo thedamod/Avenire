@@ -61,6 +61,7 @@ export {
   softDeleteFolder,
   updateFileAsset,
   updateFileAssetStorageMetadata,
+  updateFileAssetMetadata,
   updateFolder,
   updateNoteContent,
   userCanAccessWorkspace,

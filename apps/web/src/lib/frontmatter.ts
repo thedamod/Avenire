@@ -4,6 +4,12 @@ export interface FrontmatterProperties {
   [key: string]: string | number | boolean | string[] | null;
 }
 
+export interface PageMetadataState {
+  bannerUrl: string | null;
+  icon: string | null;
+  properties: FrontmatterProperties;
+}
+
 export interface ParsedFrontmatter {
   hasFrontmatter: boolean;
   properties: FrontmatterProperties;
@@ -15,11 +21,142 @@ export interface FrontmatterDocument {
   properties: FrontmatterProperties;
 }
 
+export interface ResolvedPageDocument {
+  body: string;
+  hasLegacyFrontmatter: boolean;
+  page: PageMetadataState;
+}
+
+export const EMPTY_PAGE_METADATA_STATE: PageMetadataState = {
+  bannerUrl: null,
+  icon: null,
+  properties: {},
+};
+
+function isFrontmatterScalar(
+  value: unknown
+): value is string | number | boolean | string[] | null {
+  if (value === null) {
+    return true;
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) => typeof entry === "string" && entry.trim().length > 0
+    )
+  );
+}
+
+export function normalizeFrontmatterProperties(
+  value: unknown
+): FrontmatterProperties {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) {
+    return {};
+  }
+
+  const entries: Array<
+    readonly [string, string | number | boolean | string[] | null]
+  > = [];
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey || !isFrontmatterScalar(entry)) {
+      continue;
+    }
+    if (Array.isArray(entry)) {
+      entries.push([
+        normalizedKey,
+        entry.map((item) => item.trim()).filter(Boolean),
+      ]);
+      continue;
+    }
+    if (typeof entry === "string") {
+      const trimmed = entry.trim();
+      entries.push([normalizedKey, trimmed.length > 0 ? trimmed : null]);
+      continue;
+    }
+    entries.push([normalizedKey, entry]);
+  }
+
+  return Object.fromEntries(entries);
+}
+
+export function normalizePageMetadataState(value: unknown): PageMetadataState {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) {
+    return EMPTY_PAGE_METADATA_STATE;
+  }
+
+  const record = value as Record<string, unknown>;
+  const bannerUrl =
+    typeof record.bannerUrl === "string" && record.bannerUrl.trim().length > 0
+      ? record.bannerUrl.trim()
+      : null;
+  const icon =
+    typeof record.icon === "string" && record.icon.trim().length > 0
+      ? record.icon.trim()
+      : null;
+
+  return {
+    bannerUrl,
+    icon,
+    properties: normalizeFrontmatterProperties(record.properties),
+  };
+}
+
+export function resolvePageDocument(input: {
+  content: string;
+  page?: unknown;
+}): ResolvedPageDocument {
+  const split = splitFrontmatterDocument(input.content);
+  const metadataPage = normalizePageMetadataState(input.page);
+  const page =
+    split.hasFrontmatter && Object.keys(split.properties).length > 0
+      ? {
+          ...metadataPage,
+          properties: split.properties,
+        }
+      : metadataPage;
+
+  return {
+    body: split.body,
+    hasLegacyFrontmatter: split.hasFrontmatter,
+    page,
+  };
+}
+
+export function areFrontmatterPropertiesEqual(
+  left: FrontmatterProperties,
+  right: FrontmatterProperties
+) {
+  return (
+    JSON.stringify(normalizeFrontmatterProperties(left)) ===
+    JSON.stringify(normalizeFrontmatterProperties(right))
+  );
+}
+
+export function arePageMetadataStatesEqual(
+  left: PageMetadataState,
+  right: PageMetadataState
+) {
+  return (
+    left.bannerUrl === right.bannerUrl &&
+    left.icon === right.icon &&
+    areFrontmatterPropertiesEqual(left.properties, right.properties)
+  );
+}
+
 export function parseFrontmatter(content: string): ParsedFrontmatter {
   try {
     const { data } = matter(content);
+    const properties = normalizeFrontmatterProperties(data);
 
-    if (Object.keys(data).length === 0) {
+    if (Object.keys(properties).length === 0) {
       return {
         properties: {},
         hasFrontmatter: false,
@@ -27,7 +164,7 @@ export function parseFrontmatter(content: string): ParsedFrontmatter {
     }
 
     return {
-      properties: data as FrontmatterProperties,
+      properties,
       hasFrontmatter: true,
     };
   } catch {
@@ -53,10 +190,11 @@ export function splitFrontmatterDocument(content: string): FrontmatterDocument {
 
   try {
     const parsed = matter(content);
+    const properties = normalizeFrontmatterProperties(parsed.data);
     return {
       body: parsed.content,
-      hasFrontmatter: Object.keys(parsed.data).length > 0,
-      properties: parsed.data as FrontmatterProperties,
+      hasFrontmatter: Object.keys(properties).length > 0,
+      properties,
     };
   } catch {
     return {
@@ -161,6 +299,7 @@ export const COMMON_PROPERTIES = [
   { key: "date", label: "Date", type: "date" },
   { key: "status", label: "Status", type: "select" },
   { key: "type", label: "Type", type: "select" },
+  { key: "archived", label: "Archived", type: "boolean" },
   { key: "author", label: "Author", type: "string" },
   { key: "description", label: "Description", type: "string" },
   { key: "priority", label: "Priority", type: "select" },

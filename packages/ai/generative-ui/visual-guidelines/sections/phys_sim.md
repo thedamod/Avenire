@@ -4,33 +4,100 @@ Use this module for simulations where motion over time is the point: orbits, pen
 
 ### Layout
 - Put the main canvas on top.
-- Put a bottom row beneath it split into two columns.
+- Put the explanation and controls beneath the canvas.
+- Stack those sections vertically on mobile.
+- Split them into two columns on wider screens.
 - Left bottom column: a short explanation, one or two sentences max.
 - Right bottom column: sliders, toggles, buttons, and live readouts.
 - Use a second canvas only when the system genuinely benefits from a companion view such as phase space or energy.
 
 ### Canonical layout
 ```html
-<div style="display:flex;flex-direction:column;gap:16px;padding:1rem 0;">
-  <div style="height:clamp(320px,55vh,560px);min-width:0;">
-    <canvas id="sim" style="width:100%;height:100%;display:block;border-radius:8px;background:var(--color-background-secondary);"></canvas>
+<div class="phys-sim-layout">
+  <div class="phys-sim-canvas">
+    <canvas id="sim"></canvas>
   </div>
 
-  <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,360px);gap:24px;align-items:start;">
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <h2 style="margin:0;font-size:22px;font-weight:500;line-height:1.2;color:var(--color-text-primary);">
-        Title
-      </h2>
-      <p style="margin:0;font-size:14px;line-height:1.65;color:var(--color-text-secondary);">
-        Short explanation.
-      </p>
+  <div class="phys-sim-bottom">
+    <div class="phys-sim-copy">
+      <h2>Title</h2>
+      <p>Short explanation.</p>
     </div>
 
-    <div style="background:var(--color-background-secondary);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:14px;">
+    <div class="phys-sim-controls">
       <!-- sliders, toggles, buttons, readouts -->
     </div>
   </div>
 </div>
+<style>
+  .phys-sim-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 1rem 0;
+  }
+
+  .phys-sim-canvas {
+    height: clamp(320px, 55vh, 560px);
+    min-width: 0;
+  }
+
+  .phys-sim-canvas canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    border-radius: 8px;
+    background: var(--color-background-secondary);
+  }
+
+  .phys-sim-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+
+  .phys-sim-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .phys-sim-copy h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--color-text-primary);
+  }
+
+  .phys-sim-copy p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--color-text-secondary);
+  }
+
+  .phys-sim-controls {
+    background: var(--color-background-secondary);
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  @media (min-width: 720px) {
+    .phys-sim-layout {
+      gap: 20px;
+    }
+
+    .phys-sim-bottom {
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+      gap: 24px;
+    }
+  }
+</style>
 ```
 
 ### Control rules

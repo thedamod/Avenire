@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@avenire/ui/components/dropdown-menu";
 import { Input } from "@avenire/ui/components/input";
+import { Checkbox } from "@avenire/ui/components/checkbox";
 import {
   Select,
   SelectContent,
@@ -21,57 +22,38 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   COMMON_PROPERTIES,
   type FrontmatterProperties,
   formatValue,
   PRIORITY_OPTIONS,
-  parseFrontmatter,
   parseValue,
   STATUS_OPTIONS,
   TYPE_OPTIONS,
-  updateContentWithFrontmatter,
 } from "@/lib/frontmatter";
 import { cn } from "@/lib/utils";
 
 interface PropertiesTableProps {
-  content: string;
   className?: string;
-  onChange: (newContent: string) => void;
+  onChange: (properties: FrontmatterProperties) => void;
+  properties: FrontmatterProperties;
 }
 
 export function PropertiesTable({
-  content,
   className,
   onChange,
+  properties,
 }: PropertiesTableProps) {
   const [isExpanded, setIsExpanded] = useState(true);
-  const [properties, setProperties] = useState<FrontmatterProperties>({});
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const contentRef = useRef(content);
-
-  useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
-
-  useEffect(() => {
-    const parsed = parseFrontmatter(content);
-    setProperties(parsed.properties);
-  }, [content]);
 
   const handlePropertyChange = useCallback(
     (key: string, value: string, type?: string) => {
-      const newProperties = {
+      onChange({
         ...properties,
         [key]: parseValue(value, type),
-      };
-      setProperties(newProperties);
-      const newContent = updateContentWithFrontmatter(
-        contentRef.current,
-        newProperties
-      );
-      onChange(newContent);
+      });
     },
     [onChange, properties]
   );
@@ -83,16 +65,10 @@ export function PropertiesTable({
         return;
       }
 
-      const newProperties = {
+      onChange({
         ...properties,
         [key]: prop.type === "array" ? [] : "",
-      };
-      setProperties(newProperties);
-      const newContent = updateContentWithFrontmatter(
-        contentRef.current,
-        newProperties
-      );
-      onChange(newContent);
+      });
       setEditingKey(key);
     },
     [onChange, properties]
@@ -101,12 +77,7 @@ export function PropertiesTable({
   const handleDeleteProperty = useCallback(
     (key: string) => {
       const { [key]: _, ...newProperties } = properties;
-      setProperties(newProperties);
-      const newContent = updateContentWithFrontmatter(
-        contentRef.current,
-        newProperties
-      );
-      onChange(newContent);
+      onChange(newProperties);
     },
     [onChange, properties]
   );
@@ -198,7 +169,18 @@ export function PropertiesTable({
               <span className="w-24 shrink-0 truncate text-muted-foreground">
                 {key}
               </span>
-              {editingKey === key || getSelectOptions(key).length === 0 ? (
+              {getPropertyType(key) === "boolean" ? (
+                <Checkbox
+                  checked={String(properties[key] ?? "").toLowerCase() === "true"}
+                  onCheckedChange={(checked) =>
+                    handlePropertyChange(
+                      key,
+                      checked === true ? "true" : "false",
+                      "boolean"
+                    )
+                  }
+                />
+              ) : editingKey === key || getSelectOptions(key).length === 0 ? (
                 <Input
                   autoFocus
                   className="h-6 text-xs"

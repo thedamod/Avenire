@@ -804,20 +804,14 @@ async function hydrateSetSummaries(
   const rows = await listAccessibleSetRows(userId, workspaceId, setId);
   const sets = rows.map((row) => row.set);
   const setIds = sets.map((row) => row.id);
-  const cards = await listCardsForSetIds(setIds);
+  const [cards, reviewTodayRows, review7dRows] = await Promise.all([
+    listCardsForSetIds(setIds),
+    listReviewLogSetIdsSince(userId, setIds, startOfDay(now)),
+    listReviewLogSetIdsSince(userId, setIds, sevenDaysAgo(now)),
+  ]);
   const states = await listReviewStatesForCardIds(
     userId,
     cards.map((card) => card.id)
-  );
-  const reviewTodayRows = await listReviewLogSetIdsSince(
-    userId,
-    setIds,
-    startOfDay(now)
-  );
-  const review7dRows = await listReviewLogSetIdsSince(
-    userId,
-    setIds,
-    sevenDaysAgo(now)
   );
 
   const reviewStates = new Map<string, FlashcardReviewStateRecord>();

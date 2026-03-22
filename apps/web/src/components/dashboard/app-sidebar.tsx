@@ -32,9 +32,7 @@ import {
   TooltipTrigger,
 } from "@avenire/ui/components/tooltip";
 import { useHotkey } from "@tanstack/react-hotkeys";
-import Fuse, { type IFuseOptions } from "fuse.js";
 import {
-  FilePlus2,
   Files,
   GitBranch,
   MessageSquare,
@@ -49,11 +47,13 @@ import {
   Waves,
 } from "lucide-react";
 import type { Route } from "next";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   type ComponentProps,
   type ComponentType,
   startTransition,
+  useDeferredValue,
   useCallback,
   useEffect,
   useMemo,
@@ -63,10 +63,6 @@ import {
 import { ChatIcon } from "@/components/chat/chat-icon";
 import { ThinkingGlyph } from "@/components/chat/thinking-indicator";
 import { NavUser } from "@/components/dashboard/nav-user";
-import { TrashDialog } from "@/components/dashboard/trash-dialog";
-import { FlashcardsSidebarPanel } from "@/components/flashcards/sidebar-panel";
-import { SettingsDialog } from "@/components/settings/settings-dialog";
-import { type TreeDataItem, TreeView } from "@/components/ui/tree-view";
 import { useHaptics } from "@/hooks/use-haptics";
 import type { ChatSummary } from "@/lib/chat-data";
 import {
@@ -78,57 +74,64 @@ import {
   type ChatStreamStatusDetail,
 } from "@/lib/chat-events";
 import { isChatIconName } from "@/lib/chat-icons";
-import {
-  readWorkspaceTreeCache,
-  writeWorkspaceTreeCache,
-} from "@/lib/workspace-tree-cache";
-import { commandPaletteActions } from "@/stores/commandPaletteStore";
 import { useDashboardOverlayStore } from "@/stores/dashboardOverlayStore";
 import { useFilesPinsStore } from "@/stores/filesPinsStore";
-import { filesUiActions, useFilesUiStore } from "@/stores/filesUiStore";
+import { filesUiActions } from "@/stores/filesUiStore";
+import {
+  readCachedChats,
+  readCachedWorkspaces,
+  writeCachedChats,
+  writeCachedWorkspaces,
+} from "@/lib/dashboard-browser-cache";
+import {
+  warmDashboardBackground,
+  warmWorkspaceSurface,
+} from "@/lib/dashboard-warmup";
+
+const FlashcardsSidebarPanel = dynamic(
+  () =>
+    import("@/components/flashcards/sidebar-panel").then((module) => ({
+      default: module.FlashcardsSidebarPanel,
+    })),
+  {
+    loading: () => (
+      <div className="absolute inset-0 flex items-start p-4">
+        <p className="text-muted-foreground text-xs">Loading flashcards...</p>
+      </div>
+    ),
+  }
+);
+
+const DeferredFilesSidebarPanel = dynamic(
+  () =>
+    import("@/components/dashboard/sidebar-files-panel").then((module) => ({
+      default: module.FilesSidebarPanel,
+    })),
+  {
+    loading: () => (
+      <div className="absolute inset-0 flex items-start p-4">
+        <p className="text-muted-foreground text-xs">Loading files...</p>
+      </div>
+    ),
+  }
+);
+
+const SettingsDialog = dynamic(() =>
+  import("@/components/settings/settings-dialog").then((module) => ({
+    default: module.SettingsDialog,
+  }))
+);
+
+const TrashDialog = dynamic(() =>
+  import("@/components/dashboard/trash-dialog").then((module) => ({
+    default: module.TrashDialog,
+  }))
+);
 
 interface DashboardSidebarUser {
   avatar?: string;
   email: string;
   name: string;
-}
-
-interface SidebarFolderNode {
-  id: string;
-  name: string;
-  parentId: string | null;
-  readOnly?: boolean;
-}
-
-interface SidebarFileNode {
-  folderId: string;
-  id: string;
-  name: string;
-  readOnly?: boolean;
-}
-
-function TreeIconImage({
-  alt,
-  className,
-  src,
-}: {
-  alt: string;
-  className?: string;
-  src: string;
-}) {
-  return <img alt={alt} aria-hidden="true" className={className} src={src} />;
-}
-
-function TreeFolderClosedIcon({ className }: { className?: string }) {
-  return (
-    <TreeIconImage alt="" className={className} src="/icons/_folder.svg" />
-  );
-}
-
-function TreeFolderOpenIcon({ className }: { className?: string }) {
-  return (
-    <TreeIconImage alt="" className={className} src="/icons/_folder_open.svg" />
-  );
 }
 
 function SectionButton({
@@ -150,55 +153,9 @@ function SectionButton({
   );
 }
 
-const imageExt = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "svg",
-  "avif",
-  "bmp",
-  "ico",
-]);
-const videoExt = new Set(["mp4", "mov", "m4v", "webm", "avi", "mkv"]);
-const audioExt = new Set(["mp3", "wav", "flac", "m4a", "aac", "ogg"]);
-const codeExt = new Set([
-  "ts",
-  "tsx",
-  "js",
-  "jsx",
-  "py",
-  "java",
-  "c",
-  "cpp",
-  "cs",
-  "go",
-  "rs",
-  "php",
-  "rb",
-  "json",
-  "yaml",
-  "yml",
-  "xml",
-  "html",
-  "css",
-  "scss",
-  "md",
-  "sql",
-]);
-const archiveExt = new Set(["zip", "rar", "7z", "tar", "gz", "bz2", "xz"]);
-const sheetExt = new Set(["csv", "xls", "xlsx"]);
 const DASHBOARD_FLASHCARDS_ROUTE_REGEX = /^\/workspace\/flashcards\/([^/?#]+)/;
 const DASHBOARD_FILES_FOLDER_ROUTE_REGEX =
   /^\/workspace\/files\/[^/]+\/folder\/([^/?#]+)/;
-const SIDEBAR_SEARCH_SCORE_MAX = 0.45;
-const SIDEBAR_SEARCH_FUSE_OPTIONS: IFuseOptions<{ name: string }> = {
-  includeScore: true,
-  ignoreLocation: true,
-  keys: ["name"],
-  threshold: 0.6,
-};
 
 function ChatListSection({
   title,
@@ -391,67 +348,6 @@ function readPreferredWorkspaceId() {
   return window.localStorage.getItem("preferredWorkspaceId");
 }
 
-function getTreeFileIcon(name: string) {
-  const ext = name.includes(".")
-    ? (name.split(".").pop()?.toLowerCase() ?? "")
-    : "";
-  const iconByExtension: Record<string, string> = {
-    astro: "/icons/astro.svg",
-    avif: "/icons/image.svg",
-    bmp: "/icons/image.svg",
-    c: "/icons/c.svg",
-    cpp: "/icons/cpp.svg",
-    css: "/icons/css.svg",
-    csv: "/icons/csv.svg",
-    gif: "/icons/image.svg",
-    go: "/icons/go.svg",
-    html: "/icons/html.svg",
-    ico: "/icons/image.svg",
-    java: "/icons/java.svg",
-    jpeg: "/icons/image.svg",
-    jpg: "/icons/image.svg",
-    js: "/icons/javascript.svg",
-    json: "/icons/json.svg",
-    jsx: "/icons/react.svg",
-    md: "/icons/markdown.svg",
-    m4a: "/icons/audio.svg",
-    mkv: "/icons/video.svg",
-    mov: "/icons/video.svg",
-    mp3: "/icons/audio.svg",
-    mp4: "/icons/video.svg",
-    pdf: "/icons/pdf.svg",
-    php: "/icons/php.svg",
-    png: "/icons/image.svg",
-    py: "/icons/python.svg",
-    rb: "/icons/ruby.svg",
-    rs: "/icons/rust.svg",
-    scss: "/icons/scss.svg",
-    sql: "/icons/database.svg",
-    svg: "/icons/svg.svg",
-    tar: "/icons/zip.svg",
-    ts: "/icons/typescript.svg",
-    tsx: "/icons/react-typescript.svg",
-    txt: "/icons/text.svg",
-    wav: "/icons/audio.svg",
-    webm: "/icons/video.svg",
-    webp: "/icons/image.svg",
-    xls: "/icons/csv.svg",
-    xlsx: "/icons/csv.svg",
-    xml: "/icons/xml.svg",
-    yaml: "/icons/yaml.svg",
-    yml: "/icons/yaml.svg",
-    zip: "/icons/zip.svg",
-  };
-
-  return (
-    <TreeIconImage
-      alt=""
-      className="size-4 shrink-0"
-      src={iconByExtension[ext] ?? "/icons/_file.svg"}
-    />
-  );
-}
-
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -489,12 +385,25 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 export function DashboardSidebar({
   user,
-  initialChats,
+  activeWorkspace,
+  initialWorkspaces = [],
+  initialChats = [],
   activeChatSlug: activeChatSlugProp,
   ...props
 }: ComponentProps<typeof Sidebar> & {
-  user: DashboardSidebarUser;
-  initialChats: ChatSummary[];
+  activeWorkspace?: {
+    name?: string;
+    rootFolderId: string;
+    workspaceId: string;
+  } | null;
+  user?: DashboardSidebarUser;
+  initialWorkspaces?: Array<{
+    workspaceId: string;
+    organizationId: string;
+    rootFolderId: string;
+    name: string;
+  }>;
+  initialChats?: ChatSummary[];
   activeChatSlug?: string;
 }) {
   const router = useRouter();
@@ -502,20 +411,22 @@ export function DashboardSidebar({
   const triggerHaptic = useHaptics();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const filesSyncVersion = useFilesUiStore((state) => state.sync.version);
-  const filesSyncWorkspaceUuid = useFilesUiStore(
-    (state) => state.sync.workspaceUuid
+  const [chats, setChats] = useState<ChatSummary[]>(
+    () =>
+      (activeWorkspace?.workspaceId
+        ? readCachedChats(activeWorkspace.workspaceId)
+        : null) ?? initialChats
   );
-  const [chats, setChats] = useState<ChatSummary[]>(initialChats);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
-  const [filesNameSearchQuery, setFilesNameSearchQuery] = useState("");
   const [editingChatSlug, setEditingChatSlug] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [pendingChatSlug, setPendingChatSlug] = useState<string | null>(null);
   const [activeChatSlugOverride, setActiveChatSlugOverride] = useState<
     string | null
   >(null);
-  const [workspaceUuid, setWorkspaceUuid] = useState<string | null>(null);
+  const [workspaceUuid, setWorkspaceUuid] = useState<string | null>(
+    activeWorkspace?.workspaceId ?? null
+  );
   const [workspaces, setWorkspaces] = useState<
     Array<{
       workspaceId: string;
@@ -523,7 +434,7 @@ export function DashboardSidebar({
       rootFolderId: string;
       name: string;
     }>
-  >([]);
+  >(() => readCachedWorkspaces() ?? initialWorkspaces);
   const [invitations, setInvitations] = useState<
     Array<{
       id: string;
@@ -539,19 +450,6 @@ export function DashboardSidebar({
   );
   const trashOpen = useDashboardOverlayStore((state) => state.trashOpen);
   const setTrashOpen = useDashboardOverlayStore((state) => state.setTrashOpen);
-  const [folderTree, setFolderTree] = useState<SidebarFolderNode[]>([]);
-  const [fileTree, setFileTree] = useState<SidebarFileNode[]>([]);
-  const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(
-    new Set()
-  );
-  const fileTreePanelRef = useRef<HTMLDivElement | null>(null);
-  const lastTreeRevealTargetRef = useRef<string | null>(null);
-  const processedSyncVersionRef = useRef(0);
-  const [sseConnected, setSseConnected] = useState(false);
-  const treeRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
-  const sseRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isChatsRoute =
     pathname === "/workspace/chats" || pathname.startsWith("/workspace/chats/");
   const activeChatSlugFromPath = useMemo(() => {
@@ -566,6 +464,10 @@ export function DashboardSidebar({
     activeChatSlugOverride ||
     activeChatSlugProp ||
     "";
+  const chatsWorkspaceRef = useRef<string | null>(
+    activeWorkspace?.workspaceId ?? null
+  );
+  const deferredChatSearchQuery = useDeferredValue(chatSearchQuery);
   const sessionCloseRef = useRef<{
     chatId: string;
     sent: boolean;
@@ -586,6 +488,38 @@ export function DashboardSidebar({
   }
   const activeView = routeView;
   const activeTabValue = activeView === "workspace" ? null : activeView;
+  const [mountedViews, setMountedViews] = useState<
+    Set<"chat" | "flashcards" | "files">
+  >(() =>
+    activeView && activeView !== "workspace" ? new Set([activeView]) : new Set()
+  );
+  const primaryChatRoute = useMemo<Route>(() => {
+    const chatSlug = activeChatSlug || chats[0]?.slug;
+    return chatSlug
+      ? (`/workspace/chats/${chatSlug}` as Route)
+      : ("/workspace/chats" as Route);
+  }, [activeChatSlug, chats]);
+  const primaryFilesRoute = useMemo<Route>(() => {
+    const activeWorkspaceSummary =
+      (workspaceUuid
+        ? workspaces.find(
+            (workspace) => workspace.workspaceId === workspaceUuid
+          )
+        : undefined) ??
+      (activeWorkspace
+        ? {
+            name: "Workspace",
+            organizationId: undefined,
+            rootFolderId: activeWorkspace.rootFolderId,
+            workspaceId: activeWorkspace.workspaceId,
+          }
+        : undefined) ??
+      workspaces[0];
+
+    return activeWorkspaceSummary
+      ? (`/workspace/files/${activeWorkspaceSummary.workspaceId}/folder/${activeWorkspaceSummary.rootFolderId}` as Route)
+      : ("/workspace/files" as Route);
+  }, [activeWorkspace, workspaceUuid, workspaces]);
   const closeMobileSidebar = useCallback(() => {
     setOpenMobile(false);
   }, [setOpenMobile]);
@@ -606,44 +540,68 @@ export function DashboardSidebar({
     return match?.[1] ?? undefined;
   }, [pathname]);
   const currentFileId = searchParams.get("file") ?? undefined;
-  const pinnedByWorkspace = useFilesPinsStore(
-    (state) => state.pinnedByWorkspace
-  );
-  const pinnedItems = useMemo(
-    () => (workspaceUuid ? (pinnedByWorkspace[workspaceUuid] ?? []) : []),
-    [pinnedByWorkspace, workspaceUuid]
-  );
-  const pinnedFolders = useMemo(
-    () =>
-      pinnedItems.filter(
-        (item) =>
-          item.kind === "folder" &&
-          folderTree.some((folder) => folder.id === item.id)
-      ),
-    [folderTree, pinnedItems]
-  );
-  const pinnedFiles = useMemo(
-    () =>
-      pinnedItems.filter(
-        (item) =>
-          item.kind === "file" && fileTree.some((file) => file.id === item.id)
-      ),
-    [fileTree, pinnedItems]
-  );
-  const expandedTreeStorageKey = useMemo(
-    () => (workspaceUuid ? `files-tree-expanded:${workspaceUuid}` : null),
-    [workspaceUuid]
-  );
-  const expandedTreePathIds = useMemo(
-    () => Array.from(expandedTreePaths),
-    [expandedTreePaths]
+  const warmWorkspaceSection = useCallback(
+    (section: "chat" | "flashcards" | "files") => {
+      if (section === "chat") {
+        router.prefetch(primaryChatRoute);
+        warmWorkspaceSurface("chat", {
+          rootFolderId: activeWorkspace?.rootFolderId ?? null,
+          workspaceUuid,
+        }).catch(() => undefined);
+        return;
+      }
+
+      if (section === "flashcards") {
+        router.prefetch("/workspace/flashcards" as Route);
+        import("@/components/flashcards/sidebar-panel").catch(
+          () => undefined
+        );
+        warmWorkspaceSurface("flashcards", {
+          rootFolderId: activeWorkspace?.rootFolderId ?? null,
+          workspaceUuid,
+        }).catch(() => undefined);
+        return;
+      }
+
+      router.prefetch(primaryFilesRoute);
+      import("@/components/dashboard/sidebar-files-panel").catch(
+        () => undefined
+      );
+      warmWorkspaceSurface("files", {
+        currentFolderId,
+        rootFolderId: activeWorkspace?.rootFolderId ?? null,
+        workspaceUuid,
+      }).catch(() => undefined);
+    },
+    [
+      activeWorkspace?.rootFolderId,
+      currentFolderId,
+      primaryChatRoute,
+      primaryFilesRoute,
+      router,
+      workspaceUuid,
+    ]
   );
 
   useEffect(() => {
-    router.prefetch("/workspace/chats" as Route);
-    router.prefetch("/workspace/flashcards" as Route);
-    router.prefetch("/workspace/files" as Route);
-  }, [router]);
+    if (
+      !activeView ||
+      activeView === "workspace" ||
+      mountedViews.has(activeView)
+    ) {
+      return;
+    }
+
+    setMountedViews((previous) => {
+      if (previous.has(activeView)) {
+        return previous;
+      }
+
+      const next = new Set(previous);
+      next.add(activeView);
+      return next;
+    });
+  }, [activeView, mountedViews]);
 
   useEffect(() => {
     const clearSessionCloseTimer = () => {
@@ -783,6 +741,9 @@ export function DashboardSidebar({
   }, [activeChatSlug, routeView]);
 
   useEffect(() => {
+    if (initialChats.length === 0) {
+      return;
+    }
     setChats((prev) => {
       if (prev === initialChats) {
         return prev;
@@ -796,6 +757,110 @@ export function DashboardSidebar({
       return initialChats;
     });
   }, [initialChats]);
+
+  useEffect(() => {
+    if (!workspaceUuid) {
+      return;
+    }
+    chatsWorkspaceRef.current = workspaceUuid;
+    const cachedChats = readCachedChats(workspaceUuid);
+    if (cachedChats) {
+      setChats(cachedChats);
+      return;
+    }
+    setChats([]);
+  }, [workspaceUuid]);
+
+  const loadChats = useCallback(async () => {
+    try {
+      const response = await fetch("/api/chat/history", {
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        return;
+      }
+      const payload = (await response.json()) as { chats?: ChatSummary[] };
+      const nextChats = payload.chats ?? [];
+      setChats(nextChats);
+      if (workspaceUuid && chatsWorkspaceRef.current === workspaceUuid) {
+        writeCachedChats(workspaceUuid, nextChats);
+      }
+    } catch {
+      // ignore
+    }
+  }, [workspaceUuid]);
+
+  useEffect(() => {
+    loadChats().catch(() => undefined);
+  }, [loadChats]);
+
+  useEffect(() => {
+    if (!workspaceUuid) {
+      return;
+    }
+    if (chatsWorkspaceRef.current !== workspaceUuid) {
+      return;
+    }
+    writeCachedChats(workspaceUuid, chats);
+  }, [chats, workspaceUuid]);
+
+  useEffect(() => {
+    if (!activeWorkspace?.workspaceId) {
+      return;
+    }
+    setWorkspaceUuid((prev) =>
+      prev === activeWorkspace.workspaceId ? prev : activeWorkspace.workspaceId
+    );
+  }, [activeWorkspace?.workspaceId]);
+
+  useEffect(() => {
+    const warmTargets = () => {
+      router.prefetch(primaryChatRoute);
+      router.prefetch("/workspace/flashcards" as Route);
+      router.prefetch(primaryFilesRoute);
+      import("@/components/dashboard/sidebar-files-panel").catch(
+        () => undefined
+      );
+      import("@/components/flashcards/sidebar-panel").catch(
+        () => undefined
+      );
+      import("@/components/settings/settings-dialog").catch(
+        () => undefined
+      );
+      import("@/components/dashboard/task-manager").catch(() => undefined);
+      import("@/components/student-calendar").catch(() => undefined);
+      warmDashboardBackground({
+        currentFolderId,
+        rootFolderId: activeWorkspace?.rootFolderId ?? null,
+        workspaceUuid,
+      }).catch(() => undefined);
+    };
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(() => {
+        warmTargets();
+      });
+      return () => {
+        window.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timeoutId = setTimeout(warmTargets, 150);
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [
+    activeWorkspace?.rootFolderId,
+    currentFolderId,
+    primaryChatRoute,
+    primaryFilesRoute,
+    router,
+    workspaceUuid,
+  ]);
 
   const pinsRehydratedRef = useRef(false);
   useEffect(() => {
@@ -837,13 +902,47 @@ export function DashboardSidebar({
     }
 
     const fallbackWorkspaceId =
+      activeWorkspace?.workspaceId ??
       chats.find((chat) => chat.workspaceId)?.workspaceId ??
       workspaces[0]?.workspaceId ??
       null;
     setWorkspaceUuid((prev) =>
       prev === fallbackWorkspaceId ? prev : fallbackWorkspaceId
     );
-  }, [activeChatSlug, chats, pathname, workspaces]);
+  }, [
+    activeChatSlug,
+    activeWorkspace?.workspaceId,
+    chats,
+    pathname,
+    workspaces,
+  ]);
+
+  useEffect(() => {
+    if (pathname !== "/workspace") {
+      return;
+    }
+
+    const preferredWorkspaceId = readPreferredWorkspaceId();
+    if (!preferredWorkspaceId) {
+      return;
+    }
+
+    const preferredWorkspace = workspaces.find(
+      (workspace) => workspace.workspaceId === preferredWorkspaceId
+    );
+    if (!preferredWorkspace) {
+      return;
+    }
+
+    if (workspaceUuid === preferredWorkspace.workspaceId) {
+      return;
+    }
+
+    setWorkspaceUuid(preferredWorkspace.workspaceId);
+    navigate(
+      `/workspace/files/${preferredWorkspace.workspaceId}/folder/${preferredWorkspace.rootFolderId}` as Route
+    );
+  }, [navigate, pathname, workspaces, workspaceUuid]);
 
   useEffect(() => {
     const onChatCreated = (event: Event) => {
@@ -948,137 +1047,27 @@ export function DashboardSidebar({
     () => sortedChats.filter((chat) => !chat.pinned),
     [sortedChats]
   );
-  const filteredChatNeedle = chatSearchQuery.trim().toLowerCase();
+  const filteredChatNeedleDeferred = deferredChatSearchQuery
+    .trim()
+    .toLowerCase();
   const filteredPinnedChats = useMemo(
     () =>
       pinnedChats.filter((chat) =>
-        filteredChatNeedle
-          ? chat.title.toLowerCase().includes(filteredChatNeedle)
+        filteredChatNeedleDeferred
+          ? chat.title.toLowerCase().includes(filteredChatNeedleDeferred)
           : true
       ),
-    [filteredChatNeedle, pinnedChats]
+    [filteredChatNeedleDeferred, pinnedChats]
   );
   const filteredOtherChats = useMemo(
     () =>
       otherChats.filter((chat) =>
-        filteredChatNeedle
-          ? chat.title.toLowerCase().includes(filteredChatNeedle)
+        filteredChatNeedleDeferred
+          ? chat.title.toLowerCase().includes(filteredChatNeedleDeferred)
           : true
       ),
-    [filteredChatNeedle, otherChats]
+    [filteredChatNeedleDeferred, otherChats]
   );
-
-  const fileSearchNeedle = filesNameSearchQuery.trim().toLowerCase();
-  const folderFuse = useMemo(
-    () => new Fuse(folderTree, SIDEBAR_SEARCH_FUSE_OPTIONS),
-    [folderTree]
-  );
-  const fileFuse = useMemo(
-    () => new Fuse(fileTree, SIDEBAR_SEARCH_FUSE_OPTIONS),
-    [fileTree]
-  );
-  const fuzzyMatchedFolders = useMemo(() => {
-    if (!fileSearchNeedle) {
-      return folderTree;
-    }
-    const exactMatches = folderTree.filter((folder) =>
-      folder.name.toLowerCase().includes(fileSearchNeedle)
-    );
-    if (fileSearchNeedle.length < 2) {
-      return exactMatches;
-    }
-    const fuzzyMatches = folderFuse
-      .search(fileSearchNeedle)
-      .filter((result) => (result.score ?? 1) <= SIDEBAR_SEARCH_SCORE_MAX)
-      .map((result) => result.item);
-    const unique = new Map<string, SidebarFolderNode>();
-    for (const match of exactMatches) {
-      unique.set(match.id, match);
-    }
-    for (const match of fuzzyMatches) {
-      unique.set(match.id, match);
-    }
-    return Array.from(unique.values());
-  }, [fileSearchNeedle, folderFuse, folderTree]);
-  const fuzzyMatchedFiles = useMemo(() => {
-    if (!fileSearchNeedle) {
-      return fileTree;
-    }
-    const exactMatches = fileTree.filter((file) =>
-      file.name.toLowerCase().includes(fileSearchNeedle)
-    );
-    if (fileSearchNeedle.length < 2) {
-      return exactMatches;
-    }
-    const fuzzyMatches = fileFuse
-      .search(fileSearchNeedle)
-      .filter((result) => (result.score ?? 1) <= SIDEBAR_SEARCH_SCORE_MAX)
-      .map((result) => result.item);
-    const unique = new Map<string, SidebarFileNode>();
-    for (const match of exactMatches) {
-      unique.set(match.id, match);
-    }
-    for (const match of fuzzyMatches) {
-      unique.set(match.id, match);
-    }
-    return Array.from(unique.values());
-  }, [fileFuse, fileSearchNeedle, fileTree]);
-
-  const filteredFileTreeState = useMemo(() => {
-    if (!fileSearchNeedle) {
-      return {
-        files: fileTree,
-        folders: folderTree,
-      };
-    }
-
-    const folderById = new Map(folderTree.map((folder) => [folder.id, folder]));
-    const allowedFolderIds = new Set<string>();
-    const allowedFileIds = new Set<string>();
-
-    for (const folder of fuzzyMatchedFolders) {
-      allowedFolderIds.add(folder.id);
-      let cursor = folder.parentId;
-      while (cursor) {
-        allowedFolderIds.add(cursor);
-        cursor = folderById.get(cursor)?.parentId ?? null;
-      }
-    }
-
-    for (const file of fuzzyMatchedFiles) {
-      allowedFileIds.add(file.id);
-      let cursor: string | null = file.folderId;
-      while (cursor) {
-        allowedFolderIds.add(cursor);
-        cursor = folderById.get(cursor)?.parentId ?? null;
-      }
-    }
-
-    return {
-      files: fileTree.filter((file) => allowedFileIds.has(file.id)),
-      folders: folderTree.filter((folder) => allowedFolderIds.has(folder.id)),
-    };
-  }, [
-    fileSearchNeedle,
-    fileTree,
-    folderTree,
-    fuzzyMatchedFiles,
-    fuzzyMatchedFolders,
-  ]);
-  const filteredPinnedFolders = useMemo(() => {
-    if (!fileSearchNeedle) {
-      return pinnedFolders;
-    }
-    const folderIdSet = new Set(fuzzyMatchedFolders.map((folder) => folder.id));
-    return pinnedFolders.filter((item) => folderIdSet.has(item.id));
-  }, [fileSearchNeedle, fuzzyMatchedFolders, pinnedFolders]);
-  const filteredPinnedFiles = useMemo(() => {
-    if (!fileSearchNeedle) {
-      return pinnedFiles;
-    }
-    const fileIdSet = new Set(fuzzyMatchedFiles.map((file) => file.id));
-    return pinnedFiles.filter((item) => fileIdSet.has(item.id));
-  }, [fileSearchNeedle, fuzzyMatchedFiles, pinnedFiles]);
 
   const navigateToFilesRoot = useCallback(async () => {
     try {
@@ -1091,7 +1080,17 @@ export function DashboardSidebar({
             (workspace) => workspace.workspaceId === preferredWorkspaceId
           )
         : undefined;
-      const targetWorkspace = preferred ?? workspaces[0];
+      const targetWorkspace =
+        preferred ??
+        (activeWorkspace
+          ? {
+              name: "Workspace",
+              organizationId: undefined,
+              rootFolderId: activeWorkspace.rootFolderId,
+              workspaceId: activeWorkspace.workspaceId,
+            }
+          : undefined) ??
+        workspaces[0];
 
       if (targetWorkspace) {
         setWorkspaceUuid(targetWorkspace.workspaceId);
@@ -1124,7 +1123,7 @@ export function DashboardSidebar({
     } catch {
       router.push("/workspace/files" as Route);
     }
-  }, [router, workspaces]);
+  }, [activeWorkspace, router, workspaces]);
 
   const loadWorkspaces = useCallback(async () => {
     try {
@@ -1142,7 +1141,9 @@ export function DashboardSidebar({
           name: string;
         }>;
       };
-      setWorkspaces(payload.workspaces ?? []);
+      const nextWorkspaces = payload.workspaces ?? [];
+      setWorkspaces(nextWorkspaces);
+      writeCachedWorkspaces(nextWorkspaces);
     } catch {
       // ignore
     }
@@ -1151,14 +1152,6 @@ export function DashboardSidebar({
   useEffect(() => {
     void loadWorkspaces();
   }, [loadWorkspaces]);
-
-  useEffect(() => {
-    commandPaletteActions.setFileIndex({
-      workspaceUuid,
-      folders: folderTree,
-      files: fileTree,
-    });
-  }, [fileTree, folderTree, workspaceUuid]);
 
   const activeOrgSyncRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1211,56 +1204,34 @@ export function DashboardSidebar({
     void loadInvitations();
   }, [loadInvitations]);
 
-  const loadWorkspaceTree = useCallback(async (workspaceId: string) => {
-    const cached = readWorkspaceTreeCache<SidebarFolderNode, SidebarFileNode>(
-      workspaceId
-    );
-    if (cached) {
-      setFolderTree(cached.folders);
-      setFileTree(cached.files);
-    }
-
-    try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/tree`, {
-        cache: "no-store",
-      });
-      if (!response.ok) {
+  useEffect(() => {
+    const onWorkspaceInvalidated = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          kind?: string;
+          workspaceUuid?: string;
+        }>
+      ).detail;
+      if (!detail?.workspaceUuid || detail.workspaceUuid !== workspaceUuid) {
         return;
       }
-      const payload = (await response.json()) as {
-        folders?: SidebarFolderNode[];
-        files?: SidebarFileNode[];
-      };
-      setFolderTree(payload.folders ?? []);
-      setFileTree(
-        (payload.files ?? []).map((file) => ({
-          id: file.id,
-          name: file.name,
-          folderId: file.folderId,
-          readOnly: file.readOnly,
-        }))
-      );
-      writeWorkspaceTreeCache<SidebarFolderNode, SidebarFileNode>(workspaceId, {
-        files: payload.files ?? [],
-        folders: payload.folders ?? [],
-      });
-    } catch {
-      // ignore
-    }
-  }, []);
 
-  const refreshWorkspaceTreeDebounced = useCallback(
-    (workspaceId: string) => {
-      if (treeRefreshDebounceRef.current) {
-        clearTimeout(treeRefreshDebounceRef.current);
+      if (detail.kind === "chat") {
+        void loadChats();
       }
+    };
 
-      treeRefreshDebounceRef.current = setTimeout(() => {
-        void loadWorkspaceTree(workspaceId);
-      }, 150);
-    },
-    [loadWorkspaceTree]
-  );
+    window.addEventListener(
+      "avenire:workspace-data-invalidated",
+      onWorkspaceInvalidated
+    );
+    return () => {
+      window.removeEventListener(
+        "avenire:workspace-data-invalidated",
+        onWorkspaceInvalidated
+      );
+    };
+  }, [loadChats, workspaceUuid]);
 
   useEffect(() => {
     if (!pathname.startsWith("/workspace/files")) {
@@ -1279,260 +1250,6 @@ export function DashboardSidebar({
       prev === currentWorkspace ? prev : currentWorkspace
     );
   }, [pathname]);
-
-  const loadedWorkspaceRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!workspaceUuid) {
-      return;
-    }
-    if (loadedWorkspaceRef.current === workspaceUuid) {
-      return;
-    }
-    loadedWorkspaceRef.current = workspaceUuid;
-    void loadWorkspaceTree(workspaceUuid);
-  }, [loadWorkspaceTree, workspaceUuid]);
-
-  const prevWorkspaceUuidRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!expandedTreeStorageKey) {
-      return;
-    }
-    if (prevWorkspaceUuidRef.current !== expandedTreeStorageKey) {
-      prevWorkspaceUuidRef.current = expandedTreeStorageKey;
-      setExpandedTreePaths(new Set());
-    }
-  }, [expandedTreeStorageKey]);
-
-  useEffect(() => {
-    if (!expandedTreeStorageKey) {
-      return;
-    }
-    window.localStorage.setItem(
-      expandedTreeStorageKey,
-      JSON.stringify(Array.from(expandedTreePaths))
-    );
-  }, [expandedTreePaths, expandedTreeStorageKey]);
-
-  useEffect(() => {
-    if (activeView !== "files" || folderTree.length === 0) {
-      return;
-    }
-
-    const foldersById = new Map(
-      folderTree.map((folder) => [folder.id, folder])
-    );
-    const nextExpanded = new Set(
-      folderTree.filter((folder) => !folder.parentId).map((folder) => folder.id)
-    );
-
-    const expandAncestors = (folderId: string) => {
-      let cursor = foldersById.get(folderId);
-      while (cursor) {
-        nextExpanded.add(cursor.id);
-        if (!cursor.parentId) {
-          break;
-        }
-        cursor = foldersById.get(cursor.parentId);
-      }
-    };
-
-    if (currentFolderId) {
-      expandAncestors(currentFolderId);
-    }
-
-    if (currentFileId) {
-      const file = fileTree.find((entry) => entry.id === currentFileId);
-      if (file?.folderId) {
-        expandAncestors(file.folderId);
-      }
-    }
-
-    setExpandedTreePaths((previous) => {
-      const merged = new Set([...previous, ...nextExpanded]);
-      if (
-        merged.size === previous.size &&
-        Array.from(previous).every((id) => merged.has(id))
-      ) {
-        return previous;
-      }
-      return merged;
-    });
-  }, [activeView, currentFileId, currentFolderId, fileTree, folderTree]);
-
-  useEffect(() => {
-    if (activeView !== "files") {
-      lastTreeRevealTargetRef.current = null;
-      return;
-    }
-
-    const targetPath = currentFileId ?? currentFolderId;
-    if (!targetPath) {
-      return;
-    }
-    if (lastTreeRevealTargetRef.current === targetPath) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      const panel = fileTreePanelRef.current;
-      const target = panel?.querySelector<HTMLElement>(
-        `[data-tree-id="${targetPath}"]`
-      );
-      if (!target) {
-        return;
-      }
-      lastTreeRevealTargetRef.current = targetPath;
-      target.scrollIntoView({ block: "nearest" });
-    }, 180);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [
-    activeView,
-    currentFileId,
-    currentFolderId,
-    fileTree.length,
-    folderTree.length,
-  ]);
-
-  useEffect(() => {
-    if (activeView !== "files" || !workspaceUuid) {
-      return;
-    }
-
-    const onFocus = () => {
-      void loadWorkspaceTree(workspaceUuid);
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void loadWorkspaceTree(workspaceUuid);
-      }
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [activeView, loadWorkspaceTree, workspaceUuid]);
-
-  useEffect(() => {
-    if (activeView !== "files" || !workspaceUuid || filesSyncVersion === 0) {
-      return;
-    }
-    if (filesSyncWorkspaceUuid && filesSyncWorkspaceUuid !== workspaceUuid) {
-      return;
-    }
-    if (filesSyncVersion <= processedSyncVersionRef.current) {
-      return;
-    }
-    processedSyncVersionRef.current = filesSyncVersion;
-    refreshWorkspaceTreeDebounced(workspaceUuid);
-  }, [
-    activeView,
-    filesSyncVersion,
-    filesSyncWorkspaceUuid,
-    refreshWorkspaceTreeDebounced,
-    workspaceUuid,
-  ]);
-
-  useEffect(() => {
-    if (activeView !== "files" || !workspaceUuid) {
-      setSseConnected(false);
-      return;
-    }
-
-    let closed = false;
-    let eventSource: EventSource | null = null;
-
-    const cleanupCurrent = () => {
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (closed) {
-        return;
-      }
-
-      if (sseRetryTimerRef.current) {
-        clearTimeout(sseRetryTimerRef.current);
-      }
-
-      sseRetryTimerRef.current = setTimeout(() => {
-        void connect();
-      }, 3000);
-    };
-
-    const connect = async () => {
-      if (closed) {
-        return;
-      }
-
-      try {
-        const tokenResponse = await fetch("/api/realtime/files-token", {
-          body: JSON.stringify({ workspaceUuid }),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        });
-
-        if (!tokenResponse.ok) {
-          setSseConnected(false);
-          scheduleReconnect();
-          return;
-        }
-
-        const payload = (await tokenResponse.json()) as { token?: string };
-        if (!payload.token) {
-          setSseConnected(false);
-          scheduleReconnect();
-          return;
-        }
-
-        cleanupCurrent();
-
-        const url = new URL("/api/realtime/files", window.location.origin);
-        url.searchParams.set("workspaceUuid", workspaceUuid);
-        url.searchParams.set("token", payload.token);
-
-        eventSource = new EventSource(url.toString());
-        eventSource.onopen = () => {
-          setSseConnected(true);
-        };
-        eventSource.onerror = () => {
-          setSseConnected(false);
-          cleanupCurrent();
-          scheduleReconnect();
-        };
-        eventSource.addEventListener("files.invalidate", () => {
-          refreshWorkspaceTreeDebounced(workspaceUuid);
-        });
-      } catch {
-        setSseConnected(false);
-        scheduleReconnect();
-      }
-    };
-
-    void connect();
-
-    return () => {
-      closed = true;
-      setSseConnected(false);
-      cleanupCurrent();
-      if (sseRetryTimerRef.current) {
-        clearTimeout(sseRetryTimerRef.current);
-        sseRetryTimerRef.current = null;
-      }
-      if (treeRefreshDebounceRef.current) {
-        clearTimeout(treeRefreshDebounceRef.current);
-        treeRefreshDebounceRef.current = null;
-      }
-    };
-  }, [activeView, refreshWorkspaceTreeDebounced, workspaceUuid]);
 
   const createChat = async () => {
     navigate("/workspace/chats/new" as Route);
@@ -1689,246 +1406,6 @@ export function DashboardSidebar({
       }
     }
   };
-
-  const isFolderDescendant = useCallback(
-    (folderId: string, possibleDescendantId: string) => {
-      const byId = new Map(folderTree.map((folder) => [folder.id, folder]));
-      let cursor = byId.get(possibleDescendantId);
-      while (cursor?.parentId) {
-        if (cursor.parentId === folderId) {
-          return true;
-        }
-        cursor = byId.get(cursor.parentId);
-      }
-      return false;
-    },
-    [folderTree]
-  );
-
-  const moveTreeItem = useCallback(
-    async (
-      item: { id: string; kind: "file" | "folder" },
-      targetFolderId: string
-    ) => {
-      if (!workspaceUuid) {
-        return;
-      }
-      const targetFolder = folderTree.find(
-        (folder) => folder.id === targetFolderId
-      );
-      if (targetFolder?.readOnly) {
-        return;
-      }
-
-      if (item.kind === "folder") {
-        const sourceFolder = folderTree.find((folder) => folder.id === item.id);
-        if (sourceFolder?.readOnly) {
-          return;
-        }
-        if (
-          item.id === targetFolderId ||
-          isFolderDescendant(item.id, targetFolderId)
-        ) {
-          return;
-        }
-        await fetch(`/api/workspaces/${workspaceUuid}/folders/${item.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ parentId: targetFolderId }),
-        });
-      } else {
-        const sourceFile = fileTree.find((file) => file.id === item.id);
-        if (sourceFile?.readOnly) {
-          return;
-        }
-        await fetch(`/api/workspaces/${workspaceUuid}/files/${item.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ folderId: targetFolderId }),
-        });
-      }
-
-      await loadWorkspaceTree(workspaceUuid);
-      filesUiActions.emitSync(workspaceUuid);
-      router.refresh();
-    },
-    [
-      fileTree,
-      folderTree,
-      isFolderDescendant,
-      loadWorkspaceTree,
-      router,
-      workspaceUuid,
-    ]
-  );
-
-  const deleteTreeItems = useCallback(
-    async (items: Array<{ id: string; kind: "file" | "folder" }>) => {
-      if (!(workspaceUuid && items.length > 0)) {
-        return;
-      }
-
-      const response = await fetch(
-        `/api/workspaces/${workspaceUuid}/items/bulk`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            operation: "delete",
-            items,
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        return;
-      }
-
-      if (
-        items.some(
-          (item) =>
-            (item.kind === "file" && item.id === currentFileId) ||
-            (item.kind === "folder" && item.id === currentFolderId)
-        )
-      ) {
-        void navigateToFilesRoot();
-      }
-
-      await loadWorkspaceTree(workspaceUuid);
-      filesUiActions.emitSync(workspaceUuid);
-      router.refresh();
-    },
-    [
-      currentFileId,
-      currentFolderId,
-      loadWorkspaceTree,
-      navigateToFilesRoot,
-      router,
-      workspaceUuid,
-    ]
-  );
-
-  const sidebarTreeData = useMemo<TreeDataItem[]>(() => {
-    if (!workspaceUuid) {
-      return [];
-    }
-
-    const childrenByFolderId = new Map<string | null, TreeDataItem[]>();
-    const addChild = (parentId: string | null, item: TreeDataItem) => {
-      const existing = childrenByFolderId.get(parentId) ?? [];
-      existing.push(item);
-      childrenByFolderId.set(parentId, existing);
-    };
-
-    for (const folder of [...filteredFileTreeState.folders].sort((a, b) =>
-      a.name.localeCompare(b.name)
-    )) {
-      const folderItem: TreeDataItem = {
-        id: folder.id,
-        name: folder.name,
-        draggable: !folder.readOnly,
-        droppable: !folder.readOnly,
-        icon: TreeFolderClosedIcon,
-        openIcon: TreeFolderOpenIcon,
-        selectedIcon: TreeFolderOpenIcon,
-        onClick: () => {
-          router.prefetch(
-            `/workspace/files/${workspaceUuid}/folder/${folder.id}` as Route
-          );
-          router.push(
-            `/workspace/files/${workspaceUuid}/folder/${folder.id}` as Route
-          );
-        },
-        actions: (
-          <>
-            {folder.readOnly ? null : (
-              <Button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  router.prefetch(
-                    `/workspace/files/${workspaceUuid}/folder/${folder.id}` as Route
-                  );
-                  router.push(
-                    `/workspace/files/${workspaceUuid}/folder/${folder.id}` as Route
-                  );
-                  filesUiActions.emitIntent("uploadFile");
-                }}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <FilePlus2 className="size-3.5" />
-                <span className="sr-only">Upload file</span>
-              </Button>
-            )}
-            {folder.readOnly ? null : (
-              <Button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void deleteTreeItems([{ id: folder.id, kind: "folder" }]);
-                }}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <Trash2 className="size-3.5" />
-                <span className="sr-only">Delete folder</span>
-              </Button>
-            )}
-          </>
-        ),
-      };
-      addChild(folder.parentId, folderItem);
-    }
-
-    for (const file of [...filteredFileTreeState.files].sort((a, b) =>
-      a.name.localeCompare(b.name)
-    )) {
-      const FileIcon = () => getTreeFileIcon(file.name);
-      addChild(file.folderId, {
-        id: file.id,
-        name: file.name,
-        draggable: !file.readOnly,
-        icon: FileIcon,
-        onClick: () => {
-          router.prefetch(
-            `/workspace/files/${workspaceUuid}/folder/${file.folderId}?file=${file.id}` as Route
-          );
-          router.push(
-            `/workspace/files/${workspaceUuid}/folder/${file.folderId}?file=${file.id}` as Route
-          );
-        },
-        actions: file.readOnly ? null : (
-          <Button
-            onClick={(event) => {
-              event.stopPropagation();
-              void deleteTreeItems([{ id: file.id, kind: "file" }]);
-            }}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-          >
-            <Trash2 className="size-3.5" />
-            <span className="sr-only">Delete file</span>
-          </Button>
-        ),
-      });
-    }
-
-    const attachChildren = (parentId: string | null): TreeDataItem[] =>
-      (childrenByFolderId.get(parentId) ?? []).map((item) => ({
-        ...item,
-        children: attachChildren(item.id),
-      }));
-
-    return attachChildren(null);
-  }, [
-    deleteTreeItems,
-    filteredFileTreeState.files,
-    filteredFileTreeState.folders,
-    router,
-    workspaceUuid,
-  ]);
 
   useHotkey(
     "Mod+1",
@@ -2120,13 +1597,12 @@ export function DashboardSidebar({
                 if (!nextValue) {
                   return;
                 }
-                const nextView = nextValue as
-                  | "chat"
-                  | "flashcards"
-                  | "files";
+                const nextView = nextValue as "chat" | "flashcards" | "files";
                 if (nextView === activeView) {
                   return;
                 }
+
+                warmWorkspaceSection(nextView);
 
                 if (
                   nextView === "files" &&
@@ -2157,6 +1633,11 @@ export function DashboardSidebar({
                   navigate("/workspace/chats" as Route);
                   return;
                 }
+              }}
+              onItemHover={(item) => {
+                warmWorkspaceSection(
+                  item.value as "chat" | "flashcards" | "files"
+                );
               }}
               persistenceKey="dashboard-workspace-tabs"
               value={activeTabValue}
@@ -2206,249 +1687,156 @@ export function DashboardSidebar({
                   </SidebarGroupContent>
                 </SidebarGroup>
               </div>
-            ) : activeView === "chat" ? (
-              <div className="absolute inset-0 overflow-y-auto">
-                <SidebarGroup>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      <SectionButton
-                        icon={PlusCircle}
-                        label="New Chat"
-                        onClick={() => {
-                          void triggerHaptic("selection");
-                          setEditingChatSlug(null);
-                          setEditingTitle("");
-                          void createChat();
-                        }}
-                      />
-                    </SidebarMenu>
-                    <Input
-                      className="mt-2 h-8 text-xs"
-                      onChange={(event) =>
-                        setChatSearchQuery(event.target.value)
-                      }
-                      placeholder="Search chats by title..."
-                      value={chatSearchQuery}
-                    />
-                  </SidebarGroupContent>
-                </SidebarGroup>
-
-                <ChatListSection
-                  activeChatSlug={activeChatSlug}
-                  chats={filteredPinnedChats}
-                  editingChatSlug={editingChatSlug}
-                  editingTitle={editingTitle}
-                  hideWhenEmpty
-                  onCancelRename={() => {
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                  }}
-                  onDelete={(chatSlug) => {
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                    void deleteChat(chatSlug);
-                  }}
-                  onEditingTitleChange={setEditingTitle}
-                  onFinishRename={(chatSlug) => {
-                    void updateChat(chatSlug, { title: editingTitle });
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                  }}
-                  onSelect={(chatSlug) => {
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                    navigate(`/workspace/chats/${chatSlug}` as Route);
-                  }}
-                  onStartRename={(chat) => {
-                    setEditingChatSlug(chat.slug);
-                    setEditingTitle(chat.title);
-                  }}
-                  onTogglePin={(chatSlug, pinned) => {
-                    void updateChat(chatSlug, { pinned });
-                  }}
-                  pendingChatSlug={pendingChatSlug}
-                  title="Pinned Chats"
-                />
-
-                <ChatListSection
-                  activeChatSlug={activeChatSlug}
-                  chats={filteredOtherChats}
-                  editingChatSlug={editingChatSlug}
-                  editingTitle={editingTitle}
-                  onCancelRename={() => {
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                  }}
-                  onDelete={(chatSlug) => {
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                    void deleteChat(chatSlug);
-                  }}
-                  onEditingTitleChange={setEditingTitle}
-                  onFinishRename={(chatSlug) => {
-                    void updateChat(chatSlug, { title: editingTitle });
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                  }}
-                  onSelect={(chatSlug) => {
-                    setEditingChatSlug(null);
-                    setEditingTitle("");
-                    navigate(`/workspace/chats/${chatSlug}` as Route);
-                  }}
-                  onStartRename={(chat) => {
-                    setEditingChatSlug(chat.slug);
-                    setEditingTitle(chat.title);
-                  }}
-                  onTogglePin={(chatSlug, pinned) => {
-                    void updateChat(chatSlug, { pinned });
-                  }}
-                  pendingChatSlug={pendingChatSlug}
-                  title="Other Chats"
-                />
-              </div>
-            ) : activeView === "files" ? (
-              <div
-                className="absolute inset-0 flex flex-col overflow-hidden"
-                ref={fileTreePanelRef}
-              >
-                <SidebarGroup>
-                  <SidebarGroupLabel>Files</SidebarGroupLabel>
-                  <SidebarGroupContent>
-                    <SidebarMenu>
-                      <SectionButton
-                        icon={FilePlus2}
-                        label="New Note"
-                        onClick={() => {
-                          filesUiActions.emitIntent("newNote");
-                          void triggerHaptic("selection");
-                        }}
-                      />
-                    </SidebarMenu>
-                    <Input
-                      className="mt-2 h-8 text-xs"
-                      onChange={(event) =>
-                        setFilesNameSearchQuery(event.target.value)
-                      }
-                      placeholder="Search files by name..."
-                      value={filesNameSearchQuery}
-                    />
-                  </SidebarGroupContent>
-                </SidebarGroup>
-
-                <SidebarGroup className="min-h-0 flex-1">
-                  {workspaceUuid &&
-                  (filteredPinnedFolders.length > 0 ||
-                    filteredPinnedFiles.length > 0) ? (
-                    <>
-                      <SidebarGroupLabel>Pinned</SidebarGroupLabel>
-                      <SidebarGroupContent>
-                        <SidebarMenu>
-                          {filteredPinnedFolders.map((item) => (
-                            <SidebarMenuItem key={`pinned-folder-${item.id}`}>
-                          <SidebarMenuButton
-                            onClick={() => {
-                              router.prefetch(
-                                `/workspace/files/${item.workspaceId}/folder/${item.id}` as Route
-                              );
-                              navigate(
-                                `/workspace/files/${item.workspaceId}/folder/${item.id}` as Route
-                              );
-                            }}
-                              >
-                                <Pin className="size-4" />
-                                <span className="truncate">{item.name}</span>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          ))}
-                          {filteredPinnedFiles.map((item) => (
-                            <SidebarMenuItem key={`pinned-file-${item.id}`}>
-                              <SidebarMenuButton
-                              onClick={() => {
-                                if (!item.folderId) {
-                                  return;
-                                }
-                                router.prefetch(
-                                  `/workspace/files/${item.workspaceId}/folder/${item.folderId}?file=${item.id}` as Route
-                                );
-                                navigate(
-                                  `/workspace/files/${item.workspaceId}/folder/${item.folderId}?file=${item.id}` as Route
-                                );
-                              }}
-                              >
-                                <Pin className="size-4" />
-                                <span className="truncate">{item.name}</span>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          ))}
-                        </SidebarMenu>
-                      </SidebarGroupContent>
-                    </>
-                  ) : null}
-                  <SidebarGroupLabel>File Tree</SidebarGroupLabel>
-                  <SidebarGroupContent className="min-h-0">
-                    {workspaceUuid && folderTree.length > 0 ? (
-                      <div className="h-full overflow-y-auto pr-1">
-                        <TreeView
-                          className="rounded-xl"
-                          data={sidebarTreeData}
-                          initialExpandedItemIds={expandedTreePathIds}
-                          initialSelectedItemId={
-                            currentFileId ?? currentFolderId
-                          }
-                          onExpandedChange={(itemIds) => {
-                            setExpandedTreePaths(new Set(itemIds));
-                          }}
-                          onMoveItem={(draggedItemId, targetItemId) => {
-                            const draggedFolder = folderTree.find(
-                              (item) => item.id === draggedItemId
-                            );
-                            if (draggedFolder) {
-                              void moveTreeItem(
-                                { id: draggedItemId, kind: "folder" },
-                                targetItemId
-                              );
-                              return;
-                            }
-                            const draggedFile = fileTree.find(
-                              (item) => item.id === draggedItemId
-                            );
-                            if (draggedFile) {
-                              void moveTreeItem(
-                                { id: draggedItemId, kind: "file" },
-                                targetItemId
-                              );
-                            }
-                          }}
-                          onSelectChange={(item) => {
-                            if (!item) {
-                              return;
-                            }
-                            item.onClick?.();
+            ) : activeView ? (
+              <>
+                <div
+                  aria-hidden={activeView !== "chat"}
+                  className={
+                    mountedViews.has("chat")
+                      ? `absolute inset-0 overflow-y-auto ${
+                          activeView === "chat"
+                            ? ""
+                            : "pointer-events-none hidden"
+                        }`
+                      : "hidden"
+                  }
+                >
+                  <SidebarGroup>
+                    <SidebarGroupContent>
+                      <SidebarMenu>
+                        <SectionButton
+                          icon={PlusCircle}
+                          label="New Chat"
+                          onClick={() => {
+                            void triggerHaptic("selection");
+                            setEditingChatSlug(null);
+                            setEditingTitle("");
+                            void createChat();
                           }}
                         />
-                      </div>
-                    ) : (
-                      <SidebarMenu>
-                        <SidebarMenuItem>
-                          <SidebarMenuButton
-                            onClick={() => {
-                              void navigateToFilesRoot();
-                            }}
-                          >
-                            <Files className="size-4" />
-                            <span>Workspace</span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
                       </SidebarMenu>
-                    )}
-                  </SidebarGroupContent>
-                </SidebarGroup>
-              </div>
-            ) : activeView === "flashcards" ? (
-              <FlashcardsSidebarPanel
-                active={activeView === "flashcards"}
-                activeSetId={currentFlashcardSetId}
-              />
+                      <Input
+                        className="mt-2 h-8 text-xs"
+                        onChange={(event) =>
+                          setChatSearchQuery(event.target.value)
+                        }
+                        placeholder="Search chats by title..."
+                        value={chatSearchQuery}
+                      />
+                    </SidebarGroupContent>
+                  </SidebarGroup>
+
+                  <ChatListSection
+                    activeChatSlug={activeChatSlug}
+                    chats={filteredPinnedChats}
+                    editingChatSlug={editingChatSlug}
+                    editingTitle={editingTitle}
+                    hideWhenEmpty
+                    onCancelRename={() => {
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                    }}
+                    onDelete={(chatSlug) => {
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                      void deleteChat(chatSlug);
+                    }}
+                    onEditingTitleChange={setEditingTitle}
+                    onFinishRename={(chatSlug) => {
+                      void updateChat(chatSlug, { title: editingTitle });
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                    }}
+                    onSelect={(chatSlug) => {
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                      navigate(`/workspace/chats/${chatSlug}` as Route);
+                    }}
+                    onStartRename={(chat) => {
+                      setEditingChatSlug(chat.slug);
+                      setEditingTitle(chat.title);
+                    }}
+                    onTogglePin={(chatSlug, pinned) => {
+                      void updateChat(chatSlug, { pinned });
+                    }}
+                    pendingChatSlug={pendingChatSlug}
+                    title="Pinned Chats"
+                  />
+
+                  <ChatListSection
+                    activeChatSlug={activeChatSlug}
+                    chats={filteredOtherChats}
+                    editingChatSlug={editingChatSlug}
+                    editingTitle={editingTitle}
+                    onCancelRename={() => {
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                    }}
+                    onDelete={(chatSlug) => {
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                      void deleteChat(chatSlug);
+                    }}
+                    onEditingTitleChange={setEditingTitle}
+                    onFinishRename={(chatSlug) => {
+                      void updateChat(chatSlug, { title: editingTitle });
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                    }}
+                    onSelect={(chatSlug) => {
+                      setEditingChatSlug(null);
+                      setEditingTitle("");
+                      navigate(`/workspace/chats/${chatSlug}` as Route);
+                    }}
+                    onStartRename={(chat) => {
+                      setEditingChatSlug(chat.slug);
+                      setEditingTitle(chat.title);
+                    }}
+                    onTogglePin={(chatSlug, pinned) => {
+                      void updateChat(chatSlug, { pinned });
+                    }}
+                    pendingChatSlug={pendingChatSlug}
+                    title="Other Chats"
+                  />
+                </div>
+                <div
+                  aria-hidden={activeView !== "files"}
+                  className={
+                    mountedViews.has("files")
+                      ? `absolute inset-0 ${
+                          activeView === "files"
+                            ? ""
+                            : "pointer-events-none hidden"
+                        }`
+                      : "hidden"
+                  }
+                >
+                  <DeferredFilesSidebarPanel
+                    currentFileId={currentFileId}
+                    currentFolderId={currentFolderId}
+                    navigateToFilesRoot={navigateToFilesRoot}
+                    workspaceUuid={workspaceUuid}
+                  />
+                </div>
+                <div
+                  aria-hidden={activeView !== "flashcards"}
+                  className={
+                    mountedViews.has("flashcards")
+                      ? `absolute inset-0 ${
+                          activeView === "flashcards"
+                            ? ""
+                            : "pointer-events-none hidden"
+                        }`
+                      : "hidden"
+                  }
+                >
+                  <FlashcardsSidebarPanel
+                    active={activeView === "flashcards"}
+                    activeSetId={currentFlashcardSetId}
+                    workspaceUuid={workspaceUuid}
+                  />
+                </div>
+              </>
             ) : (
               <div className="absolute inset-0 flex items-start p-4">
                 <p className="text-muted-foreground text-xs">
@@ -2522,12 +1910,16 @@ export function DashboardSidebar({
           user={user}
           workspaces={workspaces}
         />
-        <SettingsDialog onOpenChange={setSettingsOpen} open={settingsOpen} />
-        <TrashDialog
-          onOpenChange={setTrashOpen}
-          open={trashOpen}
-          workspaceUuid={workspaceUuid}
-        />
+        {settingsOpen ? (
+          <SettingsDialog onOpenChange={setSettingsOpen} open={settingsOpen} />
+        ) : null}
+        {trashOpen ? (
+          <TrashDialog
+            onOpenChange={setTrashOpen}
+            open={trashOpen}
+            workspaceUuid={workspaceUuid}
+          />
+        ) : null}
       </SidebarFooter>
     </Sidebar>
   );

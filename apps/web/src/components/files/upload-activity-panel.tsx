@@ -12,6 +12,8 @@ import {
 } from "@/stores/filesActivityStore";
 import { filesUiActions, useFilesUiStore } from "@/stores/filesUiStore";
 
+const WORKSPACE_FILES_ROUTE_REGEX = /^\/workspace\/files\/([^/]+)/;
+
 function statusMeta(status: FilesActivityItem["status"]) {
   switch (status) {
     case "queued":
@@ -77,7 +79,7 @@ export function UploadActivityPanel() {
   const ingestionSseCursorRef = useRef<string | null>(null);
 
   const workspaceFromPath = useMemo(() => {
-    const match = pathname.match(/^\/workspace\/files\/([^/]+)/);
+    const match = pathname.match(WORKSPACE_FILES_ROUTE_REGEX);
     return match?.[1] ?? null;
   }, [pathname]);
   const isFilesRoute = pathname.startsWith("/workspace/files");
@@ -99,7 +101,7 @@ export function UploadActivityPanel() {
     : [];
 
   useEffect(() => {
-    if (!activeWorkspaceUuid || isFilesRoute) {
+    if (!(activeWorkspaceUuid && isFilesRoute)) {
       return;
     }
 
@@ -157,14 +159,14 @@ export function UploadActivityPanel() {
       }
     };
 
-    void hydrateRecentJobs();
+    hydrateRecentJobs().catch(() => undefined);
     return () => {
       cancelled = true;
     };
   }, [activeWorkspaceUuid, isFilesRoute, updateWorkspaceQueue]);
 
   useEffect(() => {
-    if (!activeWorkspaceUuid) {
+    if (!(activeWorkspaceUuid && isFilesRoute)) {
       return;
     }
 
@@ -187,11 +189,11 @@ export function UploadActivityPanel() {
         clearTimeout(ingestionSseRetryTimerRef.current);
       }
       ingestionSseRetryTimerRef.current = setTimeout(() => {
-        void connect();
+        connect();
       }, 3000);
     };
 
-    const connect = async () => {
+    const connect = () => {
       if (closed) {
         return;
       }
@@ -283,7 +285,7 @@ export function UploadActivityPanel() {
       }
     };
 
-    void connect();
+    connect();
     return () => {
       closed = true;
       cleanupCurrent();
@@ -292,7 +294,7 @@ export function UploadActivityPanel() {
         ingestionSseRetryTimerRef.current = null;
       }
     };
-  }, [activeWorkspaceUuid, updateWorkspaceQueue]);
+  }, [activeWorkspaceUuid, isFilesRoute, updateWorkspaceQueue]);
 
   useEffect(() => {
     if (queue.length === 0) {

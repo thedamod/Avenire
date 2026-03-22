@@ -33,6 +33,7 @@ import {
   type ChatStreamStatusDetail,
 } from "@/lib/chat-events";
 import { normalizeMediaType } from "@/lib/media-type";
+import { chatMessageHandoffActions } from "@/stores/chat-message-handoff-store";
 
 type ChatErrorType =
   | "NETWORK_ERROR"
@@ -92,6 +93,7 @@ export function Chat({
   );
   const router = useRouter();
   const lastCompletedMessageIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<UIMessage[]>(initialMessages);
   const pendingChatRouteRef = useRef<string | null>(null);
   const autoPromptSentRef = useRef<string | null>(null);
   const MAX_FILES = 3;
@@ -144,6 +146,9 @@ export function Chat({
         if (!(detail?.id && detail?.fromId)) {
           return;
         }
+        if (messagesRef.current.length > 0) {
+          chatMessageHandoffActions.prime(detail.id, messagesRef.current);
+        }
         setChatId(detail.id);
         pendingChatRouteRef.current = detail.id;
         window.dispatchEvent(
@@ -172,6 +177,18 @@ export function Chat({
       }
     },
   });
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    if (initialMessages.length === 0 || messages.length > 0) {
+      return;
+    }
+
+    setMessages(initialMessages);
+  }, [initialMessages, messages.length, setMessages]);
 
   useEffect(() => {
     if (id === "new") {
@@ -208,6 +225,9 @@ export function Chat({
     }
     const nextChatId = pendingChatRouteRef.current;
     const timer = window.setTimeout(() => {
+      if (messagesRef.current.length > 0) {
+        chatMessageHandoffActions.prime(nextChatId, messagesRef.current);
+      }
       router.replace(`/workspace/chats/${nextChatId}`);
       pendingChatRouteRef.current = null;
     }, 0);
@@ -246,19 +266,6 @@ export function Chat({
     }
     if (lastCompletedMessageIdRef.current === lastMessage.id) {
       return;
-    }
-
-    const isTabHidden =
-      typeof document !== "undefined" && document.visibilityState !== "visible";
-    const isWindowUnfocused =
-      typeof document !== "undefined" && !document.hasFocus();
-    const isOnChatPage =
-      typeof window !== "undefined" &&
-      window.location.pathname.startsWith("/workspace/chats");
-    const isInactive = isTabHidden || isWindowUnfocused || !isOnChatPage;
-
-    if (isInactive) {
-      toast.success("Chat response ready");
     }
 
     lastCompletedMessageIdRef.current = lastMessage.id;

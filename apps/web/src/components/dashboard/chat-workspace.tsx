@@ -20,6 +20,7 @@ import { Input } from "@avenire/ui/components/input";
 import { Label } from "@avenire/ui/components/label";
 import { Link2, MessageSquareText, Share2 } from "lucide-react";
 import { usePathname } from "next/navigation";
+import { motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Chat } from "@/components/chat/chat";
 import { ChatIcon } from "@/components/chat/chat-icon";
@@ -35,6 +36,7 @@ import {
   type ChatStreamStatusDetail,
 } from "@/lib/chat-events";
 import { isChatIconName } from "@/lib/chat-icons";
+import { chatMessageHandoffActions } from "@/stores/chat-message-handoff-store";
 import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
 import type { ShareSuggestion } from "@/types/share";
 
@@ -73,6 +75,8 @@ export function ChatWorkspace({
   const [title, setTitle] = useState(chatTitle);
   const [icon, setIcon] = useState<string | null>(chatIcon ?? null);
   const [isPending, setIsPending] = useState(false);
+  const [resolvedInitialMessages, setResolvedInitialMessages] =
+    useState(initialMessages);
 
   useEffect(() => {
     setTitle(chatTitle);
@@ -85,6 +89,21 @@ export function ChatWorkspace({
   useEffect(() => {
     setActiveChatSlug(chatSlug);
   }, [chatSlug]);
+
+  useEffect(() => {
+    if (initialMessages.length > 0) {
+      setResolvedInitialMessages(initialMessages);
+      return;
+    }
+
+    const pendingMessages = chatMessageHandoffActions.consume(chatSlug);
+    if (pendingMessages && pendingMessages.length > 0) {
+      setResolvedInitialMessages(pendingMessages);
+      return;
+    }
+
+    setResolvedInitialMessages(initialMessages);
+  }, [chatSlug, initialMessages]);
 
   useEffect(() => {
     const onChatCreated = (event: Event) => {
@@ -381,15 +400,22 @@ export function ChatWorkspace({
       </WorkspaceHeader>
 
       <div className="min-h-0 flex-1 overflow-hidden">
-        <Chat
-          id={chatSlug}
-          initialMessages={initialMessages}
-          initialPrompt={initialPrompt}
-          isReadonly={isReadonly}
-          selectedModel="apollo-apex"
-          workspaceUuid={workspaceUuid}
-          userName={userName}
-        />
+        <motion.div
+          animate={{ opacity: 1, y: 0 }}
+          className="h-full"
+          initial={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+        >
+          <Chat
+            id={chatSlug}
+            initialMessages={resolvedInitialMessages}
+            initialPrompt={initialPrompt}
+            isReadonly={isReadonly}
+            selectedModel="apollo-apex"
+            workspaceUuid={workspaceUuid}
+            userName={userName}
+          />
+        </motion.div>
       </div>
     </div>
   );

@@ -25,34 +25,51 @@ import { Textarea } from "@avenire/ui/components/textarea";
 import { BookOpenCheck, MessageSquareDashed, PlusCircle } from "lucide-react";
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
-import { startTransition, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useMemo,
+  useState,
+} from "react";
 import type { FlashcardSetSummary } from "@/lib/flashcards";
+import {
+  readCachedFlashcardSets,
+  writeCachedFlashcardSets,
+} from "@/lib/dashboard-browser-cache";
 
 export function FlashcardsSidebarPanel({
   active,
   activeSetId,
+  workspaceUuid,
 }: {
   active: boolean;
   activeSetId?: string;
+  workspaceUuid?: string | null;
 }) {
   const router = useRouter();
-  const [sets, setSets] = useState<FlashcardSetSummary[]>([]);
+  const setsWorkspaceRef = useRef<string | null>(workspaceUuid ?? null);
+  const [sets, setSets] = useState<FlashcardSetSummary[]>(() =>
+    workspaceUuid ? readCachedFlashcardSets(workspaceUuid) ?? [] : []
+  );
   const [createOpen, setCreateOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
-  useEffect(() => {
-    if (!active) {
-      return;
-    }
+  const loadSets = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!workspaceUuid) {
+        return;
+      }
 
-    const controller = new AbortController();
-    const load = async () => {
       const response = await fetch("/api/flashcards/sets", {
         cache: "no-store",
-        signal: controller.signal,
+        signal,
       });
       if (!response.ok) {
         return;
@@ -61,12 +78,70 @@ export function FlashcardsSidebarPanel({
       const payload = (await response.json()) as {
         sets?: FlashcardSetSummary[];
       };
-      setSets(payload.sets ?? []);
+      const nextSets = payload.sets ?? [];
+      setSets(nextSets);
+      if (setsWorkspaceRef.current === workspaceUuid) {
+        writeCachedFlashcardSets(workspaceUuid, nextSets);
+      }
+    },
+    [workspaceUuid]
+  );
+
+  useEffect(() => {
+    if (!(active && workspaceUuid)) {
+      return;
+    }
+
+    setsWorkspaceRef.current = workspaceUuid;
+    const cachedSets = readCachedFlashcardSets(workspaceUuid);
+    if (cachedSets) {
+      setSets(cachedSets);
+    } else {
+      setSets([]);
+    }
+
+    const controller = new AbortController();
+    loadSets(controller.signal).catch(() => undefined);
+    return () => controller.abort();
+  }, [active, loadSets, workspaceUuid]);
+
+  useEffect(() => {
+    if (!workspaceUuid) {
+      return;
+    }
+    if (setsWorkspaceRef.current !== workspaceUuid) {
+      return;
+    }
+    writeCachedFlashcardSets(workspaceUuid, sets);
+  }, [sets, workspaceUuid]);
+
+  useEffect(() => {
+    const onWorkspaceInvalidated = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        kind?: string;
+        workspaceUuid?: string;
+      }>).detail;
+      if (!detail?.workspaceUuid || detail.workspaceUuid !== workspaceUuid) {
+        return;
+      }
+      if (detail.kind !== "flashcards") {
+        return;
+      }
+
+      void loadSets().catch(() => undefined);
     };
 
-    load().catch(() => undefined);
-    return () => controller.abort();
-  }, [active]);
+    window.addEventListener(
+      "avenire:workspace-data-invalidated",
+      onWorkspaceInvalidated
+    );
+    return () => {
+      window.removeEventListener(
+        "avenire:workspace-data-invalidated",
+        onWorkspaceInvalidated
+      );
+    };
+  }, [loadSets, workspaceUuid]);
 
   const createSet = async () => {
     setBusy(true);
@@ -102,12 +177,12 @@ export function FlashcardsSidebarPanel({
   const reviewTarget =
     sets.find((set) => set.dueCount > 0 || set.newCount > 0) ?? null;
   const filteredSets = useMemo(() => {
-    const needle = searchQuery.trim().toLowerCase();
+    const needle = deferredSearchQuery.trim().toLowerCase();
     if (!needle) {
       return sets;
     }
     return sets.filter((set) => set.title.toLowerCase().includes(needle));
-  }, [searchQuery, sets]);
+  }, [deferredSearchQuery, sets]);
 
   return (
     <div className="absolute inset-0 overflow-y-auto">

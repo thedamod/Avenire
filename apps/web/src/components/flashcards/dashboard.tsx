@@ -27,9 +27,19 @@ import { BookOpenCheck, Plus } from "lucide-react";
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { startTransition, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { WorkspaceHeader } from "@/components/dashboard/workspace-header";
 import type { FlashcardDashboardRecord } from "@/lib/flashcards";
 import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
+
+interface FlashcardGenerationRequest {
+  concept: string;
+  count: number;
+  reason: string;
+  subject: string;
+  title?: string;
+  topic: string;
+}
 
 function getEnrollmentLabel(
   status: FlashcardDashboardRecord["sets"][number]["enrollmentStatus"]
@@ -45,8 +55,10 @@ function getEnrollmentLabel(
   return "Not enrolled";
 }
 export function FlashcardsDashboard({
+  generationRequest,
   initialDashboard,
 }: {
+  generationRequest: FlashcardGenerationRequest | null;
   initialDashboard: FlashcardDashboardRecord;
 }) {
   const router = useRouter();
@@ -59,8 +71,13 @@ export function FlashcardsDashboard({
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [createStatus, setCreateStatus] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationLoading, setGenerationLoading] = useState(
+    generationRequest !== null
+  );
   const [busy, setBusy] = useState(false);
   const autoOpenCreateRef = useRef(false);
+  const generationStartedRef = useRef(false);
 
   const orderedSets = dashboard.sets.slice().sort((left, right) => {
     const pressureDiff =
@@ -108,6 +125,46 @@ export function FlashcardsDashboard({
     autoOpenCreateRef.current = true;
     setCreateOpen(true);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!generationRequest || generationStartedRef.current) {
+      return;
+    }
+    generationStartedRef.current = true;
+    setGenerationLoading(true);
+    setGenerationError(null);
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/flashcards/onboarding", {
+          body: JSON.stringify(generationRequest),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(payload.error ?? "Unable to generate flashcards.");
+        }
+        const payload = (await response.json()) as {
+          set?: { id?: string };
+        };
+        const setId = payload.set?.id;
+        if (!setId) {
+          throw new Error("Flashcard generation did not return a set.");
+        }
+        startTransition(() => {
+          router.replace(`/workspace/flashcards/${setId}` as Route);
+        });
+      } catch (error) {
+        setGenerationError(
+          error instanceof Error ? error.message : "Unable to generate flashcards."
+        );
+        setGenerationLoading(false);
+      }
+    })();
+  }, [generationRequest, router]);
 
   const createSet = async () => {
     setBusy(true);
@@ -159,6 +216,7 @@ export function FlashcardsDashboard({
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-none flex-col gap-4 px-4 py-4 md:px-6">
         <WorkspaceHeader
+          leadingIcon={<BookOpenCheck className="size-3.5" />}
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -258,7 +316,67 @@ export function FlashcardsDashboard({
           </div>
         </section>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)]">
+        <AnimatePresence>
+          {generationLoading ? (
+            <motion.div
+              animate={{ opacity: 1, y: 0 }}
+              className="rounded-3xl border border-border/70 bg-background p-5 shadow-sm shadow-black/5"
+              initial={{ opacity: 0, y: 10 }}
+              key="flashcard-generation"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    Generating flashcards
+                  </p>
+                  <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                    Building your deck from onboarding
+                  </h2>
+                  <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                    The set is being generated now. Once it is ready, you will
+                    land directly in the flashcards.
+                  </p>
+                </div>
+                <div className="rounded-full border border-border/70 bg-muted/20 px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                  Loading
+                </div>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                {["Generate", "Create", "Open"].map((label, index) => (
+                  <div
+                    className="rounded-2xl border border-border/70 bg-muted/10 px-3 py-3"
+                    key={label}
+                  >
+                    <motion.div
+                      animate={{ opacity: [0.45, 1, 0.45] }}
+                      className="h-2 w-16 rounded-full bg-foreground/40"
+                      transition={{
+                        duration: 1.1,
+                        repeat: Number.POSITIVE_INFINITY,
+                        delay: index * 0.12,
+                      }}
+                    />
+                    <p className="mt-3 text-sm font-medium text-foreground">
+                      {label}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+        {generationError ? (
+          <div className="rounded-2xl border border-border/70 bg-background p-4 text-sm text-muted-foreground">
+            {generationError}
+          </div>
+        ) : null}
+
+        <motion.div
+          animate={{ opacity: 1, y: 0 }}
+          className="grid gap-4 xl:grid-cols-[minmax(18rem,0.88fr)_minmax(0,1.12fr)]"
+          initial={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
+        >
           <Card className="shadow-none">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">Decks</CardTitle>
@@ -280,7 +398,7 @@ export function FlashcardsDashboard({
                         <button
                           className={cn(
                             "flex w-full items-start justify-between gap-3 rounded-2xl border border-border/45 bg-background/80 px-3 py-3 text-left transition-colors hover:bg-muted/20",
-                            isSelected && "border-primary/35 bg-muted/25"
+                            isSelected && "border-border/70 bg-muted/20"
                           )}
                           key={set.id}
                           onClick={() => setSelectedSetId(set.id)}
@@ -449,7 +567,7 @@ export function FlashcardsDashboard({
               </CardContent>
             )}
           </Card>
-        </div>
+        </motion.div>
       </div>
     </div>
   );

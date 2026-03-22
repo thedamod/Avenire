@@ -25,16 +25,30 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const raw = payload as { emailReceipts?: unknown };
-  if (typeof raw.emailReceipts !== "boolean") {
+  const raw = payload as {
+    emailReceipts?: unknown;
+    onboardingCompleted?: unknown;
+  };
+
+  const hasEmailReceipts = typeof raw.emailReceipts === "boolean";
+  const hasOnboardingCompleted = typeof raw.onboardingCompleted === "boolean";
+  if (!hasEmailReceipts && !hasOnboardingCompleted) {
     return NextResponse.json(
-      { error: "emailReceipts must be a boolean" },
+      {
+        error:
+          "Provide at least one boolean setting: emailReceipts, onboardingCompleted",
+      },
       { status: 400 },
     );
   }
 
   const settings = await upsertUserSettings(user.id, {
-    emailReceipts: raw.emailReceipts,
+    ...(hasEmailReceipts
+      ? { emailReceipts: raw.emailReceipts as boolean }
+      : {}),
+    ...(hasOnboardingCompleted
+      ? { onboardingCompleted: raw.onboardingCompleted as boolean }
+      : {}),
   });
 
   return NextResponse.json({ settings });

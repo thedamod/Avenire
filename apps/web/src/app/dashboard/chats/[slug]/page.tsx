@@ -1,78 +1,73 @@
-import type { Metadata } from "next";
 import type { UIMessage } from "@avenire/ai/message-types";
-import { auth } from "@avenire/auth/server";
-import type { Route } from "next";
-import { headers } from "next/headers";
+import type { Metadata, Route } from "next";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import { ChatWorkspace } from "@/components/dashboard/chat-workspace";
 import {
   getChatBySlugForUser,
   getMessagesByChatSlugForUser,
 } from "@/lib/chat-data";
-import { resolveWorkspaceForUser } from "@/lib/file-data";
 import { buildPageMetadata } from "@/lib/page-metadata";
+import { getWorkspaceRouteContext } from "@/lib/workspace-route-context";
+
+const getChatRouteContext = cache(async (slug: string) => {
+  const { session, workspace } = await getWorkspaceRouteContext();
+  if (!(session?.user && workspace)) {
+    return { session: null, workspace: null, chat: null, slug };
+  }
+
+  if (slug === "new") {
+    return { session, workspace, chat: null, slug };
+  }
+
+  const chat = await getChatBySlugForUser(
+    session.user.id,
+    slug,
+    workspace.workspaceId
+  );
+
+  return { session, workspace, chat, slug };
+});
 
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user) {
-    return buildPageMetadata({ title: "Chat" });
-  }
-
   const { slug } = await params;
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const workspace = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
-  if (!workspace) {
-    return buildPageMetadata({ title: "Chat" });
+  const context = await getChatRouteContext(slug);
+
+  if (!context.chat) {
+    return buildPageMetadata({
+      title: slug === "new" ? "New Chat" : "Chat",
+    });
   }
-  if (slug === "new") {
-    return buildPageMetadata({ title: "New Chat" });
-  }
-  const chat = await getChatBySlugForUser(session.user.id, slug, workspace.workspaceId);
 
   return buildPageMetadata({
-    title: chat?.title?.trim() || "Chat",
+    title: context.chat.title,
   });
 }
 
 export default async function DashboardChatPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const session = await auth.api.getSession({ headers: await headers() });
-
-  if (!session?.user) {
-    redirect("/login");
-  }
-
   const { slug } = await params;
-  const query = await searchParams;
-  const initialPrompt =
-    typeof query.prompt === "string" ? query.prompt.trim() : "";
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const workspace = await resolveWorkspaceForUser(session.user.id, activeOrganizationId);
-  if (!workspace) {
+  const { session, workspace } = await getWorkspaceRouteContext();
+
+  if (!(session?.user && workspace)) {
     redirect("/workspace" as Route);
   }
 
   if (slug === "new") {
     return (
       <ChatWorkspace
+        chatIcon={null}
         chatSlug="new"
         chatTitle="New Chat"
-        chatIcon={null}
         initialMessages={[]}
-        initialPrompt={initialPrompt || null}
+        initialPrompt={null}
         isReadonly={false}
         userName={session.user.name ?? undefined}
         workspaceUuid={workspace.workspaceId}
@@ -91,9 +86,9 @@ export default async function DashboardChatPage({
 
   return (
     <ChatWorkspace
+      chatIcon={chat.icon ?? null}
       chatSlug={chat.slug}
       chatTitle={chat.title}
-      chatIcon={chat.icon ?? null}
       initialMessages={(initialMessages ?? []) as UIMessage[]}
       initialPrompt={null}
       isReadonly={Boolean(chat.readOnly)}

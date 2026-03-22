@@ -1,6 +1,6 @@
 "use client";
 
-import { authClient } from "@avenire/auth/client";
+import { authClient, useSession } from "@avenire/auth/client";
 import {
   Avatar,
   AvatarFallback,
@@ -43,8 +43,6 @@ import {
   Plus,
   UserPlus,
 } from "lucide-react";
-import type { Route } from "next";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { SensitiveText } from "@/components/shared/sensitive-text";
 import { useHaptics } from "@/hooks/use-haptics";
@@ -88,7 +86,7 @@ export function NavUser({
   onAcceptInvitation,
   onDeclineInvitation,
 }: {
-  user: {
+  user?: {
     name: string;
     email: string;
     avatar?: string;
@@ -101,16 +99,28 @@ export function NavUser({
   onAcceptInvitation?: (invitationId: string) => Promise<void> | void;
   onDeclineInvitation?: (invitationId: string) => Promise<void> | void;
 }) {
+  const { data: session } = useSession();
+  const resolvedUser = user ?? (session?.user
+    ? {
+        avatar: session.user.image ?? undefined,
+        email: session.user.email,
+        name: session.user.name ?? "User",
+      }
+    : {
+        email: "signed-out@local",
+        name: "Account",
+      });
   const { isMobile } = useSidebar();
-  const router = useRouter();
   const triggerHaptic = useHaptics();
   const fallbackAvatar = useMemo(
-    () => getFacehashUrl(user.name || user.email),
-    [user.name, user.email]
+    () => getFacehashUrl(resolvedUser.name || resolvedUser.email),
+    [resolvedUser.name, resolvedUser.email]
   );
   const privacyMode = usePrivacyMode();
-  const initials = getInitials(user.name || user.email || "User");
-  const [avatarSrc, setAvatarSrc] = useState(user.avatar || fallbackAvatar);
+  const initials = getInitials(resolvedUser.name || resolvedUser.email || "User");
+  const [avatarSrc, setAvatarSrc] = useState(
+    resolvedUser.avatar || fallbackAvatar
+  );
   const [avatarErrored, setAvatarErrored] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState("");
@@ -119,11 +129,21 @@ export function NavUser({
     string | null
   >(null);
 
+  const handleSignOut = async () => {
+    try {
+      await authClient.signOut();
+    } catch (error) {
+      console.error("Failed to sign out", error);
+    } finally {
+      window.location.assign("/login");
+    }
+  };
+
   useEffect(() => {
     if (!avatarErrored) {
-      setAvatarSrc(user.avatar || fallbackAvatar);
+      setAvatarSrc(resolvedUser.avatar || fallbackAvatar);
     }
-  }, [avatarErrored, fallbackAvatar, user.avatar]);
+  }, [avatarErrored, fallbackAvatar, resolvedUser.avatar]);
 
   const activeWorkspace = useMemo(
     () =>
@@ -132,6 +152,7 @@ export function NavUser({
       ) ?? null,
     [activeWorkspaceId, workspaces]
   );
+  const activeWorkspaceLabel = activeWorkspace?.name ?? "Active workspace";
 
   return (
     <>
@@ -149,7 +170,7 @@ export function NavUser({
               >
                 <Avatar className="h-8 w-8 rounded-lg">
                   <AvatarImage
-                    alt={user.name}
+                    alt={resolvedUser.name}
                     onError={() => {
                       setAvatarErrored(true);
                       setAvatarSrc(fallbackAvatar);
@@ -164,12 +185,12 @@ export function NavUser({
                   <SensitiveText
                     className="truncate font-medium"
                     privacyMode={privacyMode}
-                    value={user.name}
+                    value={resolvedUser.name}
                   />
                   <SensitiveText
                     className="truncate text-xs"
                     privacyMode={privacyMode}
-                    value={user.email}
+                    value={resolvedUser.email}
                   />
                 </div>
                 <ChevronsUpDown className="ml-auto size-4" />
@@ -187,7 +208,7 @@ export function NavUser({
                       <div className="min-w-0 flex-1">
                         <p className="truncate">Switch Workspace</p>
                         <p className="truncate text-[10px] text-muted-foreground">
-                          {activeWorkspace?.name ?? "No active workspace"}
+                          {activeWorkspaceLabel}
                         </p>
                       </div>
                     </DropdownMenuSubTrigger>
@@ -282,15 +303,7 @@ export function NavUser({
                 <DropdownMenuItem
                   onSelect={() => {
                     void triggerHaptic("selection");
-                    void (async () => {
-                      try {
-                        await authClient.signOut();
-                      } catch (error) {
-                        console.error("Failed to sign out", error);
-                      } finally {
-                        router.push("/login" as Route);
-                      }
-                    })();
+                    void handleSignOut();
                   }}
                 >
                   <LogOut />

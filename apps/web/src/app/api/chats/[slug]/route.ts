@@ -9,6 +9,7 @@ import {
   isChatOwnerForUser,
   updateChatForUser
 } from "@/lib/chat-data";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
 async function getSessionUser() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -69,6 +70,18 @@ export async function PATCH(
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
   }
 
+  if (updated.workspaceId) {
+    void publishWorkspaceStreamEvent({
+      workspaceUuid: updated.workspaceId,
+      type: "chat.invalidate",
+      payload: {
+        action: "updated",
+        chatSlug: updated.slug,
+        workspaceUuid: updated.workspaceId,
+      },
+    });
+  }
+
   return NextResponse.json({ chat: updated });
 }
 
@@ -94,6 +107,18 @@ export async function POST(
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
   }
 
+  if (chat.workspaceId) {
+    void publishWorkspaceStreamEvent({
+      workspaceUuid: chat.workspaceId,
+      type: "chat.invalidate",
+      payload: {
+        action: "created",
+        chatSlug: chat.slug,
+        workspaceUuid: chat.workspaceId,
+      },
+    });
+  }
+
   return NextResponse.json({ chat }, { status: 201 });
 }
 
@@ -117,6 +142,18 @@ export async function DELETE(
 
   if (!deleted) {
     return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+  }
+
+  if (existing?.workspaceId) {
+    void publishWorkspaceStreamEvent({
+      workspaceUuid: existing.workspaceId,
+      type: "chat.invalidate",
+      payload: {
+        action: "deleted",
+        chatSlug: existing.slug,
+        workspaceUuid: existing.workspaceId,
+      },
+    });
   }
 
   return NextResponse.json({ ok: true });

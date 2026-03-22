@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { reviewFlashcardForUser } from "@/lib/flashcards";
 import "@/lib/learning-automation";
 import { getWorkspaceContextForUser } from "@/lib/workspace";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
 export async function POST(request: Request) {
   const ctx = await getWorkspaceContextForUser();
@@ -33,6 +34,16 @@ export async function POST(request: Request) {
   if (!result) {
     return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
+
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: ctx.workspace.workspaceId,
+    type: "flashcards.invalidate",
+    payload: {
+      action: "reviewed",
+      cardId: body.cardId,
+      workspaceUuid: ctx.workspace.workspaceId,
+    },
+  });
 
   return NextResponse.json(result);
 }

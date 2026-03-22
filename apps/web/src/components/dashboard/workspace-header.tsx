@@ -12,6 +12,7 @@ import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
 interface WorkspaceHeaderProps {
   actions?: ReactNode;
   className?: string;
+  leadingIcon?: ReactNode;
   homeHref?: string;
   children?: ReactNode;
 }
@@ -20,6 +21,7 @@ export function WorkspaceHeader({
   actions,
   className,
   children,
+  leadingIcon,
   homeHref = "/workspace",
 }: WorkspaceHeaderProps) {
   const router = useRouter();
@@ -44,7 +46,12 @@ export function WorkspaceHeader({
     >
       <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 px-4 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <SidebarTrigger className="rounded-md md:hidden" />
+          <SidebarTrigger className="rounded-md" />
+          {leadingIcon ? (
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-muted-foreground">
+              {leadingIcon}
+            </div>
+          ) : null}
           <Button
             aria-label="Go back"
             className="rounded-md"

@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { createChatForUser } from "@/lib/chat-data";
 import { resolveWorkspaceForUser } from "@/lib/file-data";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
 async function getSessionUser() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -26,6 +27,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
   }
   const chat = await createChatForUser(session.user.id, workspace.workspaceId, body.title);
+
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: workspace.workspaceId,
+    type: "chat.invalidate",
+    payload: {
+      action: "created",
+      workspaceUuid: workspace.workspaceId,
+    },
+  });
 
   return NextResponse.json({ chat }, { status: 201 });
 }

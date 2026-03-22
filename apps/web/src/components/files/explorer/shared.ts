@@ -1,3 +1,4 @@
+import type { FrontmatterProperties } from "@/lib/frontmatter";
 import type { VideoDeliveryRecord } from "@/lib/file-data";
 import type { ShareSuggestion } from "@/types/share";
 
@@ -19,6 +20,7 @@ export interface FolderRecord {
 
 export interface FileRecord {
   createdAt: string;
+  metadata?: Record<string, unknown>;
   folderId: string;
   id: string;
   name: string;
@@ -31,6 +33,11 @@ export interface FileRecord {
   isShared?: boolean;
   readOnly?: boolean;
   sourceWorkspaceId?: string;
+  page?: {
+    bannerUrl: string | null;
+    icon: string | null;
+    properties: FrontmatterProperties;
+  } | null;
   updatedAt?: string;
   updatedBy?: string | null;
   uploadedBy?: string;

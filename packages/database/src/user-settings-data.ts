@@ -4,16 +4,19 @@ import { userSettings } from "./schema";
 
 export interface UserSettingsRecord {
   emailReceipts: boolean;
+  onboardingCompleted: boolean;
 }
 
 const DEFAULT_USER_SETTINGS: UserSettingsRecord = {
   emailReceipts: true,
+  onboardingCompleted: false,
 };
 
 export async function getUserSettings(userId: string): Promise<UserSettingsRecord> {
   const [settings] = await db
     .select({
       emailReceipts: userSettings.emailReceipts,
+      onboardingCompleted: userSettings.onboardingCompleted,
     })
     .from(userSettings)
     .where(eq(userSettings.userId, userId))
@@ -25,6 +28,7 @@ export async function getUserSettings(userId: string): Promise<UserSettingsRecor
 
   return {
     emailReceipts: settings.emailReceipts,
+    onboardingCompleted: settings.onboardingCompleted,
   };
 }
 
@@ -34,17 +38,25 @@ export async function upsertUserSettings(
 ): Promise<UserSettingsRecord> {
   const now = new Date();
   const hasValidEmailReceipts = typeof updates.emailReceipts === "boolean";
+  const hasValidOnboardingCompleted =
+    typeof updates.onboardingCompleted === "boolean";
 
   const insertValues: typeof userSettings.$inferInsert = {
     userId,
     createdAt: now,
     updatedAt: now,
     ...(hasValidEmailReceipts ? { emailReceipts: updates.emailReceipts } : {}),
+    ...(hasValidOnboardingCompleted
+      ? { onboardingCompleted: updates.onboardingCompleted }
+      : {}),
   };
 
   const conflictSet: Partial<typeof userSettings.$inferInsert> = {
     updatedAt: now,
     ...(hasValidEmailReceipts ? { emailReceipts: updates.emailReceipts } : {}),
+    ...(hasValidOnboardingCompleted
+      ? { onboardingCompleted: updates.onboardingCompleted }
+      : {}),
   };
 
   const [settings] = await db
@@ -56,9 +68,11 @@ export async function upsertUserSettings(
     })
     .returning({
       emailReceipts: userSettings.emailReceipts,
+      onboardingCompleted: userSettings.onboardingCompleted,
     });
 
   return {
     emailReceipts: settings.emailReceipts,
+    onboardingCompleted: settings.onboardingCompleted,
   };
 }

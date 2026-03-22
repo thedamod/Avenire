@@ -696,6 +696,9 @@ export const userSettings = pgTable("user_settings", {
     .primaryKey()
     .references(() => user.id, { onDelete: "cascade" }),
   emailReceipts: boolean("email_receipts").notNull().default(true),
+  onboardingCompleted: boolean("onboarding_completed")
+    .notNull()
+    .default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),

@@ -146,8 +146,16 @@ const toAgentActivityActions = (
     .filter((item): item is ActivityAction => item !== null);
 };
 
-function AnimatedMarkdown({ content, id }: { content: string; id: string }) {
-  return <Markdown content={content} id={id} />;
+function AnimatedMarkdown({
+  content,
+  id,
+  workspaceUuid,
+}: {
+  content: string;
+  id: string;
+  workspaceUuid: string;
+}) {
+  return <Markdown content={content} id={id} workspaceUuid={workspaceUuid} />;
 }
 
 const toAttachment = (part: MessagePart): Partial<Attachment> | null => {
@@ -294,7 +302,11 @@ const PurePreviewMessage = ({
                           {part.text ?? ""}
                         </p>
                       ) : (
-                        <AnimatedMarkdown content={part.text ?? ""} id={key} />
+                        <AnimatedMarkdown
+                          content={part.text ?? ""}
+                          id={key}
+                          workspaceUuid={workspaceUuid}
+                        />
                       )}
                     </div>
                   </div>

@@ -27,10 +27,13 @@ import type { Route } from "next";
 import { usePathname, useRouter } from "next/navigation";
 import { startTransition, useEffect, useMemo, useState } from "react";
 import type { WorkspaceSearchResult } from "@/components/files/stylized-search-bar";
-import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
+import {
+  commandPaletteActions,
+  useCommandPaletteStore,
+} from "@/stores/commandPaletteStore";
 import { useDashboardOverlayStore } from "@/stores/dashboardOverlayStore";
-import { quickCaptureActions } from "@/stores/quickCaptureStore";
 import { filesUiActions } from "@/stores/filesUiStore";
+import { quickCaptureActions } from "@/stores/quickCaptureStore";
 
 type PaletteItemType = "file" | "folder";
 
@@ -42,6 +45,48 @@ type PaletteItem = {
   folderId?: string;
 };
 
+function FilePickerPreview() {
+  return (
+    <div className="flex h-full flex-col gap-3 border-border/60 bg-muted/10 p-4">
+      <div>
+        <p className="font-medium text-foreground text-sm">Preview</p>
+        <p className="mt-1 text-muted-foreground text-xs">
+          Static file preview for the current search results.
+        </p>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-border/70 bg-background p-3">
+        <div className="flex items-center gap-2">
+          <div className="flex size-8 items-center justify-center rounded-lg border border-border/70 bg-muted/40">
+            <FileText className="size-4 text-muted-foreground" />
+          </div>
+          <div className="min-w-0">
+            <p className="truncate font-medium text-foreground text-sm">
+              Selected file
+            </p>
+            <p className="truncate text-muted-foreground text-xs">
+              Preview details appear here.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-2">
+          <div className="h-32 rounded-lg border border-dashed border-border/70 bg-muted/20" />
+          <div className="space-y-2">
+            <div className="h-3 w-2/3 rounded-full bg-muted" />
+            <div className="h-3 w-5/6 rounded-full bg-muted/80" />
+            <div className="h-3 w-3/5 rounded-full bg-muted/70" />
+          </div>
+        </div>
+
+        <div className="mt-auto pt-4 text-muted-foreground text-xs">
+          Use the list on the left to open a file or folder.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const FILE_FUSE_OPTIONS = {
   includeScore: true,
   ignoreLocation: true,
@@ -50,6 +95,8 @@ const FILE_FUSE_OPTIONS = {
 };
 
 const FILE_RESULTS_LIMIT = 8;
+const FILES_ROUTE_PATTERN =
+  /^\/workspace\/files\/([^/]+)\/folder\/([^/?#]+)$/;
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -104,10 +151,12 @@ export function CommandPalette() {
   const router = useRouter();
   const pathname = usePathname();
   const setSettingsOpen = useDashboardOverlayStore((state) => state.setSettingsOpen);
-  const { workspaceUuid, folders, files } = useCommandPaletteStore();
+  const workspaceUuid = useCommandPaletteStore((state) => state.workspaceUuid);
+  const folders = useCommandPaletteStore((state) => state.folders);
+  const files = useCommandPaletteStore((state) => state.files);
+  const generalOpen = useCommandPaletteStore((state) => state.generalOpen);
+  const fileOpen = useCommandPaletteStore((state) => state.fileOpen);
 
-  const [generalOpen, setGeneralOpen] = useState(false);
-  const [fileOpen, setFileOpen] = useState(false);
   const [generalQuery, setGeneralQuery] = useState("");
   const [fileQuery, setFileQuery] = useState("");
   const [retrievalResults, setRetrievalResults] = useState<WorkspaceSearchResult[]>([]);
@@ -134,13 +183,11 @@ export function CommandPalette() {
       event.stopPropagation();
 
       if (wantsGeneral) {
-        setFileOpen(false);
-        setGeneralOpen(true);
+        commandPaletteActions.openGeneral();
         return;
       }
 
-      setGeneralOpen(false);
-      setFileOpen(true);
+      commandPaletteActions.openFiles();
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
@@ -234,6 +281,10 @@ export function CommandPalette() {
       type: "folder",
     }));
   }, [folders, folderPathById]);
+  const rootFolderId = useMemo(() => {
+    const rootFolder = folders.find((folder) => folder.parentId === null);
+    return rootFolder?.id ?? null;
+  }, [folders]);
 
   const searchItems = useMemo(
     () => [...fileItems, ...folderItems],
@@ -357,12 +408,20 @@ export function CommandPalette() {
     };
   }, [fileOpen, files, fuzzyResults.length, trimmedFileQuery, workspaceUuid]);
 
+  const currentFilesRouteMatch = pathname.match(FILES_ROUTE_PATTERN);
+  const currentFilesWorkspaceUuid = currentFilesRouteMatch?.[1] ?? null;
+  const currentFilesFolderId = currentFilesRouteMatch?.[2] ?? null;
+
   const openFilesRoute = () => {
     if (pathname.startsWith("/workspace/files")) {
       return;
     }
+    const targetRoute =
+      workspaceUuid && rootFolderId
+        ? (`/workspace/files/${workspaceUuid}/folder/${rootFolderId}` as Route)
+        : ("/workspace/files" as Route);
     startTransition(() => {
-      router.push("/workspace/files" as Route);
+      router.push(targetRoute);
     });
   };
 
@@ -383,7 +442,7 @@ export function CommandPalette() {
         `/workspace/files/${workspaceUuid}/folder/${folderId}` as Route
       );
     });
-    setFileOpen(false);
+    commandPaletteActions.close();
   };
 
   const handleOpenFile = (
@@ -395,11 +454,14 @@ export function CommandPalette() {
       return;
     }
     if (!folderId) {
-      router.prefetch(`/workspace/files/${workspaceUuid}` as Route);
+      const fallbackRoute = rootFolderId
+        ? (`/workspace/files/${workspaceUuid}/folder/${rootFolderId}` as Route)
+        : (`/workspace/files/${workspaceUuid}` as Route);
+      router.prefetch(fallbackRoute);
       startTransition(() => {
-        router.push(`/workspace/files/${workspaceUuid}` as Route);
+        router.push(fallbackRoute);
       });
-      setFileOpen(false);
+      commandPaletteActions.close();
       return;
     }
 
@@ -414,9 +476,16 @@ export function CommandPalette() {
     router.prefetch(targetRoute);
 
     startTransition(() => {
-      router.push(targetRoute);
+      if (
+        currentFilesWorkspaceUuid === workspaceUuid &&
+        currentFilesFolderId === folderId
+      ) {
+        router.replace(targetRoute);
+      } else {
+        router.push(targetRoute);
+      }
     });
-    setFileOpen(false);
+    commandPaletteActions.close();
   };
 
   const generalItems = [
@@ -427,7 +496,7 @@ export function CommandPalette() {
       icon: Settings,
       onSelect: () => {
         setSettingsOpen(true);
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
     {
@@ -437,8 +506,7 @@ export function CommandPalette() {
       icon: Search,
       shortcut: "Ctrl+K",
       onSelect: () => {
-        setGeneralOpen(false);
-        setFileOpen(true);
+        commandPaletteActions.openFiles();
       },
     },
   ];
@@ -454,7 +522,7 @@ export function CommandPalette() {
         startTransition(() => {
           router.push("/workspace/chats/new" as Route);
         });
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
     {
@@ -465,7 +533,7 @@ export function CommandPalette() {
       shortcut: "Ctrl+Shift+T",
       onSelect: () => {
         quickCaptureActions.open("task");
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
     {
@@ -476,7 +544,7 @@ export function CommandPalette() {
       shortcut: "Ctrl+Shift+M",
       onSelect: () => {
         quickCaptureActions.open("misconception");
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
     {
@@ -488,7 +556,7 @@ export function CommandPalette() {
         startTransition(() => {
           router.push("/workspace/flashcards?create=1" as Route);
         });
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
     {
@@ -499,7 +567,7 @@ export function CommandPalette() {
       shortcut: "Ctrl+Shift+O",
       onSelect: () => {
         handleFileIntent("newNote");
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
     {
@@ -510,7 +578,7 @@ export function CommandPalette() {
       shortcut: "Ctrl+U",
       onSelect: () => {
         handleFileIntent("uploadFile");
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
     {
@@ -521,7 +589,7 @@ export function CommandPalette() {
       shortcut: "Ctrl+Shift+N",
       onSelect: () => {
         handleFileIntent("createFolder");
-        setGeneralOpen(false);
+        commandPaletteActions.close();
       },
     },
   ];
@@ -539,13 +607,18 @@ export function CommandPalette() {
       create: createItems.filter(match),
     };
   })();
-
   return (
     <>
       <CommandDialog
         className="sm:max-w-6xl lg:max-w-[88rem]"
         open={generalOpen}
-        onOpenChange={setGeneralOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            commandPaletteActions.close();
+            return;
+          }
+          commandPaletteActions.openGeneral();
+        }}
       >
         <Command className="min-h-[34rem]">
           <CommandInput
@@ -617,110 +690,131 @@ export function CommandPalette() {
       <CommandDialog
         className="sm:max-w-6xl lg:max-w-[88rem]"
         open={fileOpen}
-        onOpenChange={setFileOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            commandPaletteActions.close();
+            return;
+          }
+          commandPaletteActions.openFiles();
+        }}
       >
-        <Command className="min-h-[34rem]" shouldFilter={false}>
+        <Command className="min-h-[34rem] p-0" shouldFilter={false}>
           <CommandInput
             placeholder="Search files, folders, or content..."
             value={fileQuery}
             onValueChange={setFileQuery}
           />
-          <CommandList>
-            {!workspaceUuid ? (
-              <CommandEmpty>Open a workspace to search files.</CommandEmpty>
-            ) : (
-              <>
-                {fuzzyResults.length > 0 ? (
-                  <CommandGroup heading="Files and folders">
-                    {fuzzyResults.map((item) => (
-                      <CommandItem
-                        key={`${item.type}-${item.id}`}
-                        onSelect={() => {
-                          if (item.type === "folder") {
-                            handleOpenFolder(item.id);
-                          } else {
-                            handleOpenFile(item.id, item.folderId);
-                          }
-                        }}
-                      >
-                        {item.type === "folder" ? (
-                          <Folder className="size-3.5 text-muted-foreground" />
-                        ) : (
-                          <FileText className="size-3.5 text-muted-foreground" />
-                        )}
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-medium text-foreground">
-                            {item.name}
-                          </p>
-                          <p className="truncate text-[11px] text-muted-foreground">
-                            {item.path}
-                          </p>
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                ) : null}
-
-                {fuzzyResults.length === 0 && (isRetrieving || retrievalResults.length > 0) ? (
+          <div className="grid min-h-0 flex-1 grid-cols-1 border-t border-border/60 lg:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="min-h-0 border-border/60 lg:border-r">
+              <CommandList className="max-h-none min-h-0">
+                {!workspaceUuid ? (
+                  <CommandEmpty>Open a workspace to search files.</CommandEmpty>
+                ) : (
                   <>
-                    <CommandSeparator />
-                    <CommandGroup heading="Content search">
-                      {isRetrieving ? (
-                        <CommandItem disabled>
-                          <Search className="size-3.5 text-muted-foreground" />
-                          <span className="text-xs text-muted-foreground">
-                            Searching workspace content...
-                          </span>
-                        </CommandItem>
-                      ) : null}
-                      {retrievalResults.map((result) => {
-                        const file = files.find((entry) => entry.id === result.id);
-                        const folderPath = file ? folderPathById.get(file.folderId) ?? "" : "";
-                        const filePath = file
-                          ? folderPath
-                            ? `${folderPath}/${file.name}`
-                            : file.name
-                          : result.title;
-                        return (
+                    {fuzzyResults.length > 0 ? (
+                      <CommandGroup heading="Files and folders">
+                        {fuzzyResults.map((item) => (
                           <CommandItem
-                            key={`retrieval-${result.id}-${result.chunkId ?? "main"}`}
+                            key={`${item.type}-${item.id}`}
                             onSelect={() => {
-                              handleOpenFile(
-                                result.id,
-                                file?.folderId,
-                                { retrievalChunkId: result.chunkId ?? null }
-                              );
+                              if (item.type === "folder") {
+                                handleOpenFolder(item.id);
+                              } else {
+                                handleOpenFile(item.id, item.folderId);
+                              }
                             }}
                           >
-                            <Search className="size-3.5 text-muted-foreground" />
+                            {item.type === "folder" ? (
+                              <Folder className="size-3.5 text-muted-foreground" />
+                            ) : (
+                              <FileText className="size-3.5 text-muted-foreground" />
+                            )}
                             <div className="min-w-0">
                               <p className="truncate text-xs font-medium text-foreground">
-                                {result.title}
+                                {item.name}
                               </p>
                               <p className="truncate text-[11px] text-muted-foreground">
-                                {filePath}
-                              </p>
-                              <p className="truncate text-[11px] text-muted-foreground">
-                                {result.snippet}
+                                {item.path}
                               </p>
                             </div>
                           </CommandItem>
-                        );
-                      })}
-                    </CommandGroup>
+                        ))}
+                      </CommandGroup>
+                    ) : null}
+
+                    {fuzzyResults.length === 0 &&
+                    (isRetrieving || retrievalResults.length > 0) ? (
+                      <>
+                        <CommandSeparator />
+                        <CommandGroup heading="Content search">
+                          {isRetrieving ? (
+                            <CommandItem disabled>
+                              <Search className="size-3.5 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">
+                                Searching workspace content...
+                              </span>
+                            </CommandItem>
+                          ) : null}
+                          {retrievalResults.map((result) => {
+                            const file = files.find(
+                              (entry) => entry.id === result.id
+                            );
+                            const folderPath = file
+                              ? folderPathById.get(file.folderId) ?? ""
+                              : "";
+                            const filePath = file
+                              ? folderPath
+                                ? `${folderPath}/${file.name}`
+                                : file.name
+                              : result.title;
+                            return (
+                              <CommandItem
+                                key={`retrieval-${result.id}-${result.chunkId ?? "main"}`}
+                                onSelect={() => {
+                                  handleOpenFile(result.id, file?.folderId, {
+                                    retrievalChunkId: result.chunkId ?? null,
+                                  });
+                                }}
+                              >
+                                <Search className="size-3.5 text-muted-foreground" />
+                                <div className="min-w-0">
+                                  <p className="truncate text-xs font-medium text-foreground">
+                                    {result.title}
+                                  </p>
+                                  <p className="truncate text-[11px] text-muted-foreground">
+                                    {filePath}
+                                  </p>
+                                  <p className="truncate text-[11px] text-muted-foreground">
+                                    {result.snippet}
+                                  </p>
+                                </div>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </>
+                    ) : null}
+
+                    {trimmedFileQuery &&
+                    fuzzyResults.length === 0 &&
+                    !isRetrieving &&
+                    retrievalResults.length === 0 ? (
+                      <CommandEmpty>No matches found.</CommandEmpty>
+                    ) : null}
+
+                    {!trimmedFileQuery ? (
+                      <CommandEmpty>
+                        Type a file name, path, or topic to search.
+                      </CommandEmpty>
+                    ) : null}
                   </>
-                ) : null}
-
-                {trimmedFileQuery && fuzzyResults.length === 0 && !isRetrieving && retrievalResults.length === 0 ? (
-                  <CommandEmpty>No matches found.</CommandEmpty>
-                ) : null}
-
-                {!trimmedFileQuery ? (
-                  <CommandEmpty>Type a file name, path, or topic to search.</CommandEmpty>
-                ) : null}
-              </>
-            )}
-          </CommandList>
+                )}
+              </CommandList>
+            </div>
+            <div className="hidden min-h-0 lg:block">
+              <FilePickerPreview />
+            </div>
+          </div>
         </Command>
       </CommandDialog>
     </>

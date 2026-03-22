@@ -2,11 +2,18 @@ import { NextResponse } from "next/server";
 import {
   deleteIngestionDataForFile,
   getFileAssetById,
+  getNoteContent,
   getWorkspaceIdForFile,
+  updateFileAsset,
   updateNoteContent,
   userCanEditFile,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
+import {
+  normalizeFrontmatterProperties,
+  normalizePageMetadataState,
+  resolvePageDocument,
+} from "@/lib/frontmatter";
 import { getSessionUser } from "@/lib/workspace";
 
 export async function PATCH(
@@ -41,23 +48,91 @@ export async function PATCH(
     return NextResponse.json({ error: "Not a note" }, { status: 400 });
   }
 
+  const currentNote = await getNoteContent(noteId);
+
   const body = (await request.json().catch(() => ({}))) as {
     content?: string;
+    page?: {
+      bannerUrl?: string | null;
+      icon?: string | null;
+      properties?: Record<string, unknown>;
+    };
+    updatedAt?: string;
   };
-  const content = typeof body.content === "string" ? body.content : "";
-  const trimmed = content.trim();
+  const hasContent = typeof body.content === "string";
+  const hasPage = body.page !== undefined;
+  const expectedUpdatedAt =
+    typeof body.updatedAt === "string" && body.updatedAt.trim().length > 0
+      ? body.updatedAt
+      : null;
 
-  const updated = await updateNoteContent({
-    fileId: noteId,
-    userId: user.id,
-    content,
-  });
-
-  if (!updated) {
-    return NextResponse.json({ error: "Unable to save note" }, { status: 500 });
+  if (
+    expectedUpdatedAt &&
+    currentNote?.updatedAt &&
+    currentNote.updatedAt.toISOString() !== expectedUpdatedAt
+  ) {
+    return NextResponse.json(
+      {
+        content: currentNote.content,
+        error: "The note changed on another device. Reload before saving.",
+        page: file.page ?? null,
+        updatedAt: currentNote.updatedAt.toISOString(),
+      },
+      { status: 409 }
+    );
   }
 
-  if (!trimmed) {
+  if (!(hasContent || hasPage)) {
+    return NextResponse.json({ error: "Invalid note update" }, { status: 400 });
+  }
+
+  const resolvedDocument = hasContent
+    ? resolvePageDocument({
+        content: body.content ?? "",
+        page: file.page ?? null,
+      })
+    : null;
+  const nextContent = resolvedDocument?.body;
+  const trimmed = nextContent?.trim() ?? "";
+  const nextPage = hasPage
+    ? normalizePageMetadataState({
+        ...file.page,
+        ...body.page,
+        properties:
+          body.page?.properties === undefined
+            ? file.page?.properties ?? resolvedDocument?.page.properties ?? {}
+            : normalizeFrontmatterProperties(body.page.properties),
+      })
+    : resolvedDocument?.page ?? null;
+
+  const [updatedNote, updatedFile] = await Promise.all([
+    hasContent
+      ? updateNoteContent({
+          fileId: noteId,
+          userId: user.id,
+          content: nextContent ?? "",
+        })
+      : Promise.resolve(null),
+    nextPage
+      ? updateFileAsset(workspaceId, noteId, user.id, {
+          metadata: {
+            page: nextPage,
+          },
+        })
+      : Promise.resolve(file),
+  ]);
+
+  if (hasContent && !updatedNote) {
+    return NextResponse.json({ error: "Unable to save note" }, { status: 500 });
+  }
+  if (!updatedFile) {
+    return NextResponse.json(
+      { error: "Unable to update note metadata" },
+      { status: 500 }
+    );
+  }
+
+  if (hasContent && !trimmed) {
     await deleteIngestionDataForFile(workspaceId, noteId);
   }
 
@@ -67,5 +142,8 @@ export async function PATCH(
     reason: "file.updated",
   });
 
-  return NextResponse.json({ updatedAt: updated.updatedAt });
+  return NextResponse.json({
+    page: updatedFile.page ?? nextPage,
+    updatedAt: updatedNote?.updatedAt ?? updatedFile.updatedAt,
+  });
 }

@@ -20,6 +20,8 @@ import {
   useRef,
   useState,
 } from "react";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -28,11 +30,10 @@ import remend from "remend";
 import type { BundledLanguage } from "shiki";
 import { bundledLanguages, bundledLanguagesAlias, codeToHtml } from "shiki";
 import { MermaidDiagram } from "@/components/chat/mermaid";
+import { resolveWorkspaceFileRoute } from "@/lib/workspace-file-navigation";
 import { cn } from "@/lib/utils";
 
 import "katex/dist/katex.min.css";
-
-const WORKSPACE_FILE_OPEN_EVENT = "workspace.file.open";
 
 type MarkdownProps = {
   content: string;
@@ -40,6 +41,7 @@ type MarkdownProps = {
   parseIncompleteMarkdown?: boolean;
   className?: string;
   textSize?: "default" | "small";
+  workspaceUuid?: string;
 };
 
 const CODE_LANGUAGE_REGEX = /language-([^\s]+)/;
@@ -240,7 +242,9 @@ const MemoizedMarkdown = memo(
     parseIncompleteMarkdown = true,
     className,
     textSize = "default",
+    workspaceUuid,
   }: Omit<MarkdownProps, "id">) => {
+    const router = useRouter();
     const normalized = useMemo(
       () => (parseIncompleteMarkdown ? remend(content) : content),
       [content, parseIncompleteMarkdown]
@@ -386,10 +390,17 @@ const MemoizedMarkdown = memo(
                       if (!fileId) {
                         return;
                       }
-                      window.dispatchEvent(
-                        new CustomEvent(WORKSPACE_FILE_OPEN_EVENT, {
-                          detail: { fileId },
-                        })
+                      if (!workspaceUuid) {
+                        return;
+                      }
+
+                      void resolveWorkspaceFileRoute(workspaceUuid, fileId).then(
+                        (route) => {
+                          if (!route) {
+                            return;
+                          }
+                          router.push(route as Route);
+                        }
                       );
                     }}
                   >
@@ -475,7 +486,8 @@ const MemoizedMarkdown = memo(
     prev.content === next.content &&
     prev.parseIncompleteMarkdown === next.parseIncompleteMarkdown &&
     prev.className === next.className &&
-    prev.textSize === next.textSize
+    prev.textSize === next.textSize &&
+    prev.workspaceUuid === next.workspaceUuid
 );
 
 MemoizedMarkdown.displayName = "MemoizedMarkdown";
@@ -486,6 +498,7 @@ export const Markdown = memo(function Markdown({
   parseIncompleteMarkdown,
   className,
   textSize,
+  workspaceUuid,
 }: MarkdownProps) {
   return (
     <MemoizedMarkdown
@@ -494,6 +507,7 @@ export const Markdown = memo(function Markdown({
       parseIncompleteMarkdown={parseIncompleteMarkdown}
       className={className}
       textSize={textSize}
+      workspaceUuid={workspaceUuid}
     />
   );
 });

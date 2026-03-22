@@ -5,6 +5,7 @@ import {
   updateFlashcardSetForUser,
 } from "@/lib/flashcards";
 import { getWorkspaceContextForUser } from "@/lib/workspace";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
 export async function GET(
   _request: Request,
@@ -25,6 +26,16 @@ export async function GET(
   if (!set) {
     return NextResponse.json({ error: "Set not found" }, { status: 404 });
   }
+
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: ctx.workspace.workspaceId,
+    type: "flashcards.invalidate",
+    payload: {
+      action: "updated",
+      setId: set.id,
+      workspaceUuid: ctx.workspace.workspaceId,
+    },
+  });
 
   return NextResponse.json({ set });
 }
@@ -79,6 +90,16 @@ export async function DELETE(
   if (!archived) {
     return NextResponse.json({ error: "Set not found" }, { status: 404 });
   }
+
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: ctx.workspace.workspaceId,
+    type: "flashcards.invalidate",
+    payload: {
+      action: "deleted",
+      setId,
+      workspaceUuid: ctx.workspace.workspaceId,
+    },
+  });
 
   return NextResponse.json({ ok: true });
 }

@@ -233,10 +233,11 @@ export type ReasoningContentProps = ComponentProps<
   typeof CollapsibleContent
 > & {
   children: string;
+  workspaceUuid?: string;
 };
 
 export const ReasoningContent = memo(
-  ({ className, children, ...props }: ReasoningContentProps) => (
+  ({ className, children, workspaceUuid, ...props }: ReasoningContentProps) => (
     <CollapsibleContent
       className={cn(
         "mt-4 text-sm",
@@ -245,7 +246,11 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Markdown id={`reasoning-${children.length}`} content={children} />
+      <Markdown
+        content={children}
+        id={`reasoning-${children.length}`}
+        workspaceUuid={workspaceUuid}
+      />
     </CollapsibleContent>
   ),
 );

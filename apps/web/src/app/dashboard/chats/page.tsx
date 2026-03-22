@@ -1,27 +1,11 @@
-import { auth } from "@avenire/auth/server";
 import type { Route } from "next";
-import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { ChatWorkspace } from "@/components/dashboard/chat-workspace";
-import { resolveWorkspaceForUser } from "@/lib/file-data";
+import { requireWorkspaceRouteContext } from "@/lib/workspace-route-context";
 
 export default async function DashboardChatsIndexPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-
-  if (!session?.user) {
-    redirect("/login");
-  }
-
-  const activeOrganizationId =
-    (session as { session?: { activeOrganizationId?: string | null } }).session
-      ?.activeOrganizationId ?? null;
-  const workspace = await resolveWorkspaceForUser(
-    session.user.id,
-    activeOrganizationId
+  const { session, workspace } = await requireWorkspaceRouteContext(
+    "/workspace" as Route
   );
-  if (!workspace) {
-    redirect("/workspace" as Route);
-  }
 
   return (
     <ChatWorkspace

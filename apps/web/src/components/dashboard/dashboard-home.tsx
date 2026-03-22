@@ -33,11 +33,10 @@ import {
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { startTransition, useEffect, useMemo, useState } from "react";
 import { QuickCaptureDialog } from "@/components/dashboard/quick-capture-dialog";
-import { DashboardTaskManager } from "@/components/dashboard/task-manager";
 import { WorkspaceHeader } from "@/components/dashboard/workspace-header";
-import { StudentCalendar } from "@/components/student-calendar";
 import type { ChatSummary } from "@/lib/chat-data";
 import type { ExplorerFileRecord } from "@/lib/file-data";
 import type {
@@ -48,7 +47,39 @@ import type {
   FlashcardTaxonomy,
 } from "@/lib/flashcards";
 import type { MisconceptionRecord } from "@/lib/learning-data";
+import {
+  dashboardUiActions,
+  useDashboardUiStore,
+} from "@/stores/dashboardUiStore";
 import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
+
+const DashboardTaskManager = dynamic(
+  () =>
+    import("@/components/dashboard/task-manager").then((module) => ({
+      default: module.DashboardTaskManager,
+    })),
+  {
+    loading: () => (
+      <div className="rounded-lg border border-border/70 bg-background px-4 py-10 text-center text-muted-foreground text-sm">
+        Loading tasks...
+      </div>
+    ),
+  }
+);
+
+const StudentCalendar = dynamic(
+  () =>
+    import("@/components/student-calendar").then((module) => ({
+      default: module.StudentCalendar,
+    })),
+  {
+    loading: () => (
+      <div className="rounded-lg border border-border/70 bg-background px-4 py-10 text-center text-muted-foreground text-sm">
+        Loading calendar...
+      </div>
+    ),
+  }
+);
 
 interface DashboardHomeProps {
   activeMisconceptions: MisconceptionRecord[];
@@ -59,7 +90,10 @@ interface DashboardHomeProps {
   masterySelectedSubject: string | null;
   masterySubjects: ConceptMasterySubjectRecord[];
   studySessions: Array<{ count: number; day: string }>;
+  onboardingCompleted: boolean;
+  rootFolderId: string | null;
   userName?: string;
+  workspaceUuid: string;
   weakestConcepts: ConceptMasteryRecord[];
   weakestDrillTarget: ConceptDrillTarget | null;
 }
@@ -213,12 +247,17 @@ export function DashboardHome({
   masterySelectedSubject: _masterySelectedSubject,
   masterySubjects: _masterySubjects,
   studySessions: _studySessions,
+  onboardingCompleted: _onboardingCompleted,
+  rootFolderId: _rootFolderId,
   userName,
+  workspaceUuid: _workspaceUuid,
   weakestConcepts,
   weakestDrillTarget,
 }: DashboardHomeProps) {
   const router = useRouter();
   const recordRoute = useWorkspaceHistoryStore((state) => state.recordRoute);
+  const homeTab = useDashboardUiStore((state) => state.homeTab);
+  const insightsTab = useDashboardUiStore((state) => state.insightsTab);
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(true);
   const [selectedMisconception, setSelectedMisconception] =
@@ -441,7 +480,15 @@ export function DashboardHome({
         <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(16rem,0.6fr)_minmax(0,1.4fr)]">
           <Card className="flex h-full min-h-[30rem] flex-col overflow-hidden">
             <CardContent className="min-h-0 flex-1 overflow-y-auto pt-4">
-              <Tabs className="space-y-4" defaultValue="tasks">
+              <Tabs
+                className="space-y-4"
+                onValueChange={(value) => {
+                  if (value === "tasks" || value === "activity") {
+                    dashboardUiActions.setHomeTab(value);
+                  }
+                }}
+                value={homeTab}
+              >
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="tasks">Tasks</TabsTrigger>
                   <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -460,7 +507,19 @@ export function DashboardHome({
 
           <Card className="flex h-full min-h-[34rem] flex-col overflow-hidden">
             <CardContent className="min-h-0 flex-1 overflow-y-auto pt-4">
-              <Tabs className="space-y-4" defaultValue="weak-points">
+              <Tabs
+                className="space-y-4"
+                onValueChange={(value) => {
+                  if (
+                    value === "weak-points" ||
+                    value === "misconceptions" ||
+                    value === "upcoming"
+                  ) {
+                    dashboardUiActions.setInsightsTab(value);
+                  }
+                }}
+                value={insightsTab}
+              >
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="weak-points">Weak points</TabsTrigger>
                   <TabsTrigger value="misconceptions">

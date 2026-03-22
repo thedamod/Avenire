@@ -2,6 +2,7 @@ import { assertFlashcardTaxonomy } from "@avenire/database";
 import { NextResponse } from "next/server";
 import { createFlashcardCardForUser } from "@/lib/flashcards";
 import { getWorkspaceContextForUser } from "@/lib/workspace";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
 export async function POST(
   request: Request,
@@ -59,6 +60,17 @@ export async function POST(
   if (!card) {
     return NextResponse.json({ error: "Set not found" }, { status: 404 });
   }
+
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: ctx.workspace.workspaceId,
+    type: "flashcards.invalidate",
+    payload: {
+      action: "created",
+      cardId: card.id,
+      setId,
+      workspaceUuid: ctx.workspace.workspaceId,
+    },
+  });
 
   return NextResponse.json({ card }, { status: 201 });
 }

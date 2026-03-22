@@ -102,7 +102,10 @@ import {
   useRef,
   useState,
 } from "react";
+import { useRouter } from "next/navigation";
 import "../editor.css";
+import { resolveWorkspaceFileRoute } from "@/lib/workspace-file-navigation";
+import { commandPaletteActions } from "@/stores/commandPaletteStore";
 const lowlight = createLowlight(common);
 const MENU_OFFSET = 10;
 const VIEWPORT_PADDING = 12;
@@ -112,7 +115,6 @@ const LATEX_TOKEN_REGEX =
   /(%.*$|\\[A-Za-z]+|\\.|[{}[\]()]|[_^&]|(?:\d+\.\d+|\d+))/gm;
 const WIKI_LINK_REGEX = /\[\[([^[\]]+)\]\]/g;
 const WORKSPACE_FILE_LINK_REGEX = /^workspace-file:\/\/(.+)$/i;
-const WORKSPACE_FILE_OPEN_EVENT = "workspace.file.open";
 const TEXT_COLORS = [
   { name: "Default", value: null },
   { name: "Slate", value: "#475569" },
@@ -187,6 +189,7 @@ interface AvenireEditorProps {
   saveState?: "idle" | "saving" | "saved" | "error";
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   wikiPages: WikiPage[];
+  workspaceUuid: string;
 }
 
 const InlineMathExtension = InlineMath.extend({
@@ -619,14 +622,6 @@ function getWorkspaceFileIdFromHref(href: string | null) {
   }
 
   return match[1]?.trim() || null;
-}
-
-function openWorkspaceFileById(fileId: string) {
-  window.dispatchEvent(
-    new CustomEvent(WORKSPACE_FILE_OPEN_EVENT, {
-      detail: { fileId },
-    })
-  );
 }
 
 function getEventTargetElement(target: EventTarget | null) {
@@ -1787,8 +1782,10 @@ export default function AvenireEditor({
   onOpenWikiLink,
   saveState,
   saveMessage,
+  workspaceUuid,
 }: AvenireEditorProps) {
   const slashCommandsRef = useRef<SlashCommand[]>([]);
+  const router = useRouter();
   const wikiPagesRef = useRef<WikiPage[]>([]);
   const allWikiPagesRef = useRef<WikiPage[]>(wikiPages);
   const activeSlashIndexRef = useRef(0);
@@ -2001,7 +1998,14 @@ export default function AvenireEditor({
         const fileId = getWorkspaceFileIdFromHref(anchor.getAttribute("href"));
         if (fileId) {
           event.preventDefault();
-          openWorkspaceFileById(fileId);
+          void resolveWorkspaceFileRoute(workspaceUuid, fileId).then(
+            (route) => {
+              if (!route) {
+                return;
+              }
+              router.push(route);
+            }
+          );
           return true;
         }
 
@@ -2505,6 +2509,22 @@ export default function AvenireEditor({
     }
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey) {
+        const key = event.key.toLowerCase();
+        if (key === "k" && !event.shiftKey) {
+          event.preventDefault();
+          event.stopPropagation();
+          commandPaletteActions.openFiles();
+          return;
+        }
+        if (key === "p" && event.shiftKey) {
+          event.preventDefault();
+          event.stopPropagation();
+          commandPaletteActions.openGeneral();
+          return;
+        }
+      }
+
       const match = getSlashMatch(editor);
       const wiki = getWikiMatch(editor);
 

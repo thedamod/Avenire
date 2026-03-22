@@ -5,6 +5,7 @@ import {
   updateFlashcardCardForUser,
 } from "@/lib/flashcards";
 import { getWorkspaceContextForUser } from "@/lib/workspace";
+import { publishWorkspaceStreamEvent } from "@/lib/workspace-event-stream";
 
 export async function PATCH(
   request: Request,
@@ -56,6 +57,17 @@ export async function PATCH(
     return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
 
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: ctx.workspace.workspaceId,
+    type: "flashcards.invalidate",
+    payload: {
+      action: "updated",
+      cardId: card.id,
+      setId: card.setId,
+      workspaceUuid: ctx.workspace.workspaceId,
+    },
+  });
+
   return NextResponse.json({ card });
 }
 
@@ -78,6 +90,17 @@ export async function DELETE(
   if (!card) {
     return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
+
+  void publishWorkspaceStreamEvent({
+    workspaceUuid: ctx.workspace.workspaceId,
+    type: "flashcards.invalidate",
+    payload: {
+      action: "deleted",
+      cardId,
+      setId: card.setId,
+      workspaceUuid: ctx.workspace.workspaceId,
+    },
+  });
 
   return NextResponse.json({ ok: true });
 }

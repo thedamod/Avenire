@@ -15,6 +15,27 @@
       "when": 1773910000000,
       "tag": "0001_subject_confidence",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1774070000000,
+      "tag": "0002_onboarding_completed",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1774058001451,
+      "tag": "0003_condemned_leopardon",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1774058001452,
+      "tag": "0004_task_commitment_inbox",
+      "breakpoints": true
     }
   ]
 }

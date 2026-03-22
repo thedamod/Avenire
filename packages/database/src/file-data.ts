@@ -64,9 +64,21 @@ export interface ExplorerFileRecord {
   isShared?: boolean;
   readOnly?: boolean;
   sourceWorkspaceId?: string;
+  metadata?: Record<string, unknown>;
+  page?: FilePageRecord | null;
   videoDelivery?: VideoDeliveryRecord | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FilePageProperties {
+  [key: string]: string | number | boolean | string[] | null;
+}
+
+export interface FilePageRecord {
+  bannerUrl: string | null;
+  icon: string | null;
+  properties: FilePageProperties;
 }
 
 export type VideoDeliveryStatus = "failed" | "pending" | "ready";
@@ -274,6 +286,57 @@ function asStringArray(value: unknown) {
       typeof entry === "string" && entry.trim().length > 0
   );
   return items.length > 0 ? items : null;
+}
+
+function normalizePageProperties(value: unknown): FilePageProperties {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) {
+    return {};
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .map(([key, entry]) => {
+      if (!key.trim()) {
+        return null;
+      }
+      if (entry === null) {
+        return [key.trim(), null] as const;
+      }
+      if (
+        typeof entry === "string" ||
+        typeof entry === "number" ||
+        typeof entry === "boolean"
+      ) {
+        return [key.trim(), entry] as const;
+      }
+      const values = asStringArray(entry);
+      if (!values) {
+        return null;
+      }
+      return [key.trim(), values] as const;
+    })
+    .filter(
+      (
+        entry
+      ): entry is readonly [
+        string,
+        string | number | boolean | string[] | null,
+      ] => Boolean(entry)
+    );
+
+  return Object.fromEntries(entries);
+}
+
+function mapFilePageRecord(value: unknown): FilePageRecord | null {
+  const record = asObjectRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    bannerUrl: asNullableString(record.bannerUrl),
+    icon: asNullableString(record.icon),
+    properties: normalizePageProperties(record.properties),
+  };
 }
 
 function mapVideoDeliveryAnalysis(
@@ -504,6 +567,8 @@ function mapFile(row: typeof fileAsset.$inferSelect): ExplorerFileRecord {
     sizeBytes,
     uploadedBy: row.uploadedBy,
     updatedBy: row.updatedBy ?? null,
+    metadata: metadata ?? undefined,
+    page: mapFilePageRecord(metadata?.page),
     videoDelivery: mapVideoDeliveryRecord(metadata?.videoDelivery),
     hashComputedBy: row.hashComputedBy ?? null,
     hashVerificationStatus: row.hashVerificationStatus ?? null,
@@ -2107,7 +2172,11 @@ export async function updateFileAsset(
   workspaceId: string,
   fileId: string,
   userId: string,
-  updates: { folderId?: string; name?: string }
+  updates: {
+    folderId?: string;
+    metadata?: Record<string, unknown>;
+    name?: string;
+  }
 ) {
   if (updates.folderId) {
     const [folder] = await db
@@ -2127,6 +2196,30 @@ export async function updateFileAsset(
     }
   }
 
+  let nextMetadata: Record<string, unknown> | undefined;
+  if (updates.metadata) {
+    const [existing] = await db
+      .select({ metadata: fileAsset.metadata })
+      .from(fileAsset)
+      .where(
+        and(
+          eq(fileAsset.id, fileId),
+          eq(fileAsset.workspaceId, workspaceId),
+          isNull(fileAsset.deletedAt)
+        )
+      )
+      .limit(1);
+
+    if (!existing) {
+      return null;
+    }
+
+    nextMetadata = {
+      ...(asObjectRecord(existing.metadata) ?? {}),
+      ...updates.metadata,
+    };
+  }
+
   const [record] = await db
     .update(fileAsset)
     .set({
@@ -2134,6 +2227,7 @@ export async function updateFileAsset(
       ...(typeof updates.name === "string"
         ? { name: updates.name.trim().slice(0, 255) || "Untitled" }
         : {}),
+      ...(nextMetadata ? { metadata: nextMetadata } : {}),
       updatedBy: userId,
       updatedAt: new Date(),
     })
@@ -2211,6 +2305,31 @@ export async function updateFileAssetStorageMetadata(
       ...(typeof updates.optimizedSizeBytes === "number"
         ? { optimizedSizeBytes: updates.optimizedSizeBytes }
         : {}),
+      updatedBy: userId,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(fileAsset.id, fileId),
+        eq(fileAsset.workspaceId, workspaceId),
+        isNull(fileAsset.deletedAt)
+      )
+    )
+    .returning();
+
+  return record ? mapFile(record) : null;
+}
+
+export async function updateFileAssetMetadata(
+  workspaceId: string,
+  fileId: string,
+  userId: string,
+  updates: { metadata: Record<string, unknown> }
+) {
+  const [record] = await db
+    .update(fileAsset)
+    .set({
+      metadata: updates.metadata,
       updatedBy: userId,
       updatedAt: new Date(),
     })

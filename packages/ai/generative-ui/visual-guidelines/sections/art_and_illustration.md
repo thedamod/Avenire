@@ -3,8 +3,8 @@
 
 Use `imagine_svg`. Same technical rules (viewBox, safe area) but the aesthetic is different:
 - Fill the canvas — art should feel rich, not sparse
-- Bold colors: mix `--color-text-*` categories for variety (info blue, success green, warning amber)
-- Art is the one place custom `<style>` color blocks are fine — freestyle colors, `prefers-color-scheme` for dark mode variants if you want them
+- Bold colors: use a coherent palette deliberately. Prefer 2-3 related ramps or a tightly controlled custom palette, not a grab bag of semantic text colors.
+- Art is the one place custom `<style>` color blocks are fine, but keep the palette intentional and internally consistent. If you use freestyle colors, define a clear light/dark variant set rather than mixing unrelated hues.
 - Layer overlapping opaque shapes for depth
 - Organic forms with `<path>` curves, `<ellipse>`, `<circle>`
 - Texture via repetition (parallel lines, dots, hatching) not raster effects
