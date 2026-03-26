@@ -1,5 +1,5 @@
 <p align="center">
-<img height=80 src="https://github.com/aether6430/Avenire/blob/main/Icon.png?raw=true">
+<img height=80 src="https://github.com/thedamod/Avenire/blob/main/apps/web/public/branding/avenire-logo-full.png?raw=true">
 </p>
 
 # Avenire: Illuminate Your Learning & Research Journey
