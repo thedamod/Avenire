@@ -1,11 +1,14 @@
 import { getPostBySlug, getAllSlugs } from "@/lib/blog";
 import { Navbar } from "@/components/landing/Navbar";
 import { Footer } from "@/components/landing/Footer";
-import { MDXRemote } from "next-mdx-remote/rsc";
 import Link from "next/link";
 import Image from "next/image";
 import { notFound } from "next/navigation";
-import { Calendar, Clock, ArrowLeft, Tag } from "lucide-react";
+import Markdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import { Calendar, Clock, ArrowLeft, Tag } from "@phosphor-icons/react/ssr"
 
 export async function generateStaticParams() {
   const slugs = getAllSlugs();
@@ -31,14 +34,35 @@ function formatDate(iso: string) {
 }
 
 const mdxComponents = {
-  h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h1 className="text-3xl font-semibold text-foreground mt-10 mb-4 tracking-tight" {...props} />
+  h1: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h1
+      className="mb-4 mt-10 text-3xl font-semibold tracking-tight text-foreground"
+      {...props}
+    >
+      {children}
+    </h1>
   ),
-  h2: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h2 className="text-2xl font-semibold text-foreground mt-10 mb-3 tracking-tight" {...props} />
+  h2: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h2
+      className="mb-3 mt-10 text-2xl font-semibold tracking-tight text-foreground"
+      {...props}
+    >
+      {children}
+    </h2>
   ),
-  h3: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h3 className="text-xl font-semibold text-foreground mt-8 mb-3" {...props} />
+  h3: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h3 className="mb-3 mt-8 text-xl font-semibold text-foreground" {...props}>
+      {children}
+    </h3>
   ),
   p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p className="text-foreground/80 leading-relaxed mb-5" {...props} />
@@ -162,7 +186,13 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
 
           {/* MDX Content */}
           <div className="prose-avenire">
-            <MDXRemote source={post.content} components={mdxComponents} />
+            <Markdown
+              components={mdxComponents}
+              rehypePlugins={[rehypeKatex]}
+              remarkPlugins={[remarkGfm, remarkMath]}
+            >
+              {post.content}
+            </Markdown>
           </div>
 
           {/* Footer navigation */}

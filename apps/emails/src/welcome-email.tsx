@@ -35,7 +35,7 @@ export function WelcomeEmail({ name, dashboardUrl }: WelcomeEmailProps) {
           textAlign: "center",
         }}
       >
-        Your account is ready. Avenire keeps your files, notes, and collaboration in one calm workspace.
+        Your account is ready. Avenire keeps your manage items, notes, and collaboration in one calm workspace.
       </Text>
 
       <div
@@ -78,7 +78,7 @@ export function WelcomeEmail({ name, dashboardUrl }: WelcomeEmailProps) {
         }}
       >
         <Text style={{ color: emailColors.ink, fontSize: 15, lineHeight: "24px", margin: 0 }}>
-          Use the sidebar to switch between files, folders, chats, and workspace settings.
+          Use the sidebar to switch between manage items, folders, methods, and workspace settings.
         </Text>
       </div>
 

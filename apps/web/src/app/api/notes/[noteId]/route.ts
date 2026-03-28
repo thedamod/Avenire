@@ -3,9 +3,10 @@ import { scheduleIngestionJob } from "@avenire/ingestion/queue";
 import {
   deleteIngestionDataForFile,
   getFileAssetById,
+  isMarkdownFileRecord,
   getWorkspaceIdForFile,
   updateFileAsset,
-  updateNoteContent,
+  upsertMarkdownFileContent,
   userCanEditFile,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
@@ -45,8 +46,8 @@ export async function PATCH(
   if (!file) {
     return NextResponse.json({ error: "Note not found" }, { status: 404 });
   }
-  if (!file.isNote) {
-    return NextResponse.json({ error: "Not a note" }, { status: 400 });
+  if (!isMarkdownFileRecord(file)) {
+    return NextResponse.json({ error: "Not a markdown file" }, { status: 400 });
   }
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -79,11 +80,11 @@ export async function PATCH(
 
   const [updatedNote, updatedFile] = await Promise.all([
     hasContent
-      ? updateNoteContent({
-          baseContent: nextContent ?? "",
+      ? upsertMarkdownFileContent({
           fileId: noteId,
           userId: user.id,
           content: nextContent ?? "",
+          workspaceId,
         })
       : Promise.resolve(null),
     nextPage

@@ -1,9 +1,10 @@
+"use client"
+
 import * as React from "react"
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
-
 import { cn } from "../lib/utils"
-import { ChevronRightIcon, MoreHorizontalIcon } from "lucide-react"
+import { CaretRight as ChevronRightIcon, DotsThree as MoreHorizontalIcon } from "@phosphor-icons/react"
 
 function Breadcrumb({ className, ...props }: React.ComponentProps<"nav">) {
   return (

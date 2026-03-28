@@ -18,7 +18,7 @@ const DEFAULT_SESSION_INACTIVITY_WINDOW_MS = 30 * 60 * 1000;
 const SUMMARY_MODEL = "apollo-sprint";
 const MAX_SUMMARY_LIST_ITEMS = 12;
 const MAX_MISCONCEPTION_CANDIDATES = 3;
-const MIN_AUTOMATIC_MISCONCEPTION_CONFIDENCE = 0.8;
+const MIN_AUTOMATIC_MISCONCEPTION_CONFIDENCE = 0.92;
 const MAX_MISCONCEPTION_CONCEPT_LENGTH = 180;
 const MAX_MISCONCEPTION_REASON_LENGTH = 600;
 const MAX_MISCONCEPTION_SUBJECT_LENGTH = 120;
@@ -102,6 +102,22 @@ function extractMessageText(message: UIMessage) {
     .trim();
 }
 
+function extractUserTranscript(messages: UIMessage[]) {
+  return messages
+    .filter((message) => message.role === "user")
+    .map(extractMessageText)
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+const STRONG_MISCONCEPTION_SIGNAL_PATTERN =
+  /\b(i (?:don't|do not) understand|i'?m confused|i am confused|i thought|i assumed|i was wrong|i keep thinking|i keep getting|wrong model|wrong idea|mistaken|misunderstood|mistake|why isn't|why doesn't|does that mean|so that means|so .*? right)\b/i;
+
+function hasStrongMisconceptionEvidence(transcript: string) {
+  return STRONG_MISCONCEPTION_SIGNAL_PATTERN.test(transcript);
+}
+
 function isCompletedToolPart(
   part: UIMessage["parts"][number]
 ): part is Extract<ToolPart, { state: "output-available" }> {
@@ -183,9 +199,14 @@ function extractMisconceptions(messages: UIMessage[]) {
 async function persistAutomaticMisconceptions(input: {
   candidates: z.infer<typeof misconceptionCandidateSchema>[];
   endedAt: Date;
+  userTranscript: string;
   userId: string;
   workspaceId: string;
 }) {
+  if (!hasStrongMisconceptionEvidence(input.userTranscript)) {
+    return;
+  }
+
   const seen = new Set<string>();
   const eligibleCandidates = input.candidates.filter((candidate) => {
     if (candidate.confidence < MIN_AUTOMATIC_MISCONCEPTION_CONFIDENCE) {
@@ -339,6 +360,7 @@ export async function persistSessionSummaryForCompletedTurn(input: {
   }
 
   const transcript = buildTranscript(boundedMessages);
+  const userTranscript = extractUserTranscript(boundedMessages);
   const flashcardsCreated = extractFlashcardsCreated(boundedMessages);
   const misconceptionsDetected = extractMisconceptions(boundedMessages);
 
@@ -350,8 +372,8 @@ export async function persistSessionSummaryForCompletedTurn(input: {
       "Return concise, factual output only.",
       "Focus on concepts covered, misconceptions explicitly surfaced, and the learning outcome.",
       "Also identify the primary academic subject and a confidence score between 0 and 1.",
-      "Also infer up to three concept-level misconception candidates if the user's wording, reasoning, or repeated confusion shows a durable misunderstanding.",
-      "Be conservative. Only include a candidate when the evidence is strong enough that it should be remembered for future tutoring.",
+      "Also infer up to three concept-level misconception candidates only when the user explicitly expresses confusion, states a wrong model, or repeatedly shows the same durable misunderstanding.",
+      "Be very conservative. Do not infer a misconception from a normal question, a feature check, a single clarification, or general curiosity.",
       `Flashcards created during this window: ${flashcardsCreated}`,
       misconceptionsDetected.length > 0
         ? `Misconceptions already detected by tools: ${misconceptionsDetected.join(", ")}`
@@ -373,6 +395,7 @@ export async function persistSessionSummaryForCompletedTurn(input: {
   await persistAutomaticMisconceptions({
     candidates: normalizedCandidates,
     endedAt: input.endedAt,
+    userTranscript,
     userId: input.userId,
     workspaceId: input.workspaceId,
   });

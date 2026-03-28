@@ -4,13 +4,7 @@ import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import {
-  Download,
-  Maximize2,
-  Move,
-  RotateCcw,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
+  Download, ArrowsOutSimple as Maximize2, ArrowsOutCardinal as Move, ArrowCounterClockwise as RotateCcw, MagnifyingGlassPlus as ZoomIn, MagnifyingGlassMinus as ZoomOut } from "@phosphor-icons/react"
 
 import { Button } from "@avenire/ui/components/button";
 import {

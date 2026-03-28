@@ -3,34 +3,15 @@
 import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@avenire/ui/components/empty";
+  Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, } from "@avenire/ui/components/empty";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, } from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
 import { Label } from "@avenire/ui/components/label";
 import {
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@avenire/ui/components/sidebar";
+  SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, } from "@avenire/ui/components/sidebar";
 import { Textarea } from "@avenire/ui/components/textarea";
-import { BookOpenCheck, MessageSquareDashed, PlusCircle } from "lucide-react";
+import { BookOpenText as BookOpenCheck, ChatCenteredText as MessageSquareDashed, PlusCircle } from "@phosphor-icons/react"
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import {
@@ -195,7 +176,7 @@ export function FlashcardsSidebarPanel({
   return (
     <div className="absolute inset-0 overflow-y-auto">
       <SidebarGroup>
-        <SidebarGroupLabel>Flashcards</SidebarGroupLabel>
+        <SidebarGroupLabel>Mindset</SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -208,7 +189,7 @@ export function FlashcardsSidebarPanel({
                   <DialogHeader>
                     <DialogTitle>Create Set</DialogTitle>
                     <DialogDescription>
-                      Create a workspace-level flashcard set.
+                      Create a workspace-level mindset set.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3">
@@ -266,7 +247,7 @@ export function FlashcardsSidebarPanel({
                 onClick={() => router.push("/workspace/flashcards" as Route)}
               >
                 <MessageSquareDashed className="size-4" />
-                <span>Import From Chat</span>
+                <span>Import From Method</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
@@ -295,7 +276,7 @@ export function FlashcardsSidebarPanel({
               <EmptyContent className="max-w-none">
                 <EmptyDescription className="text-[11px] leading-relaxed">
                   {sets.length === 0
-                    ? "Create a flashcard set or import one from a chat to start studying."
+                    ? "Create a mindset set or import one from a method to start studying."
                     : "Try a shorter search or clear the filters to reveal more sets."}
                 </EmptyDescription>
               </EmptyContent>

@@ -5,7 +5,7 @@ import { Card, CardContent } from "@avenire/ui/components/card";
 import { Input } from "@avenire/ui/components/input";
 import { Label } from "@avenire/ui/components/label";
 import { cn } from "@avenire/ui/lib/utils";
-import { ArrowRight, Lock, Sparkles } from "lucide-react";
+import { ArrowRight, Lock, Sparkle as Sparkles } from "@phosphor-icons/react"
 import { useSearchParams } from "next/navigation";
 import type React from "react";
 import { useState } from "react";

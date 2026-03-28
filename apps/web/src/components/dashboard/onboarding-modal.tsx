@@ -8,16 +8,7 @@ import { Dialog, DialogContent } from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
 import { cn } from "@avenire/ui/lib/utils";
 import {
-  ArrowRight,
-  BookOpen,
-  Brain,
-  CheckCircle2,
-  FileText,
-  FlaskConical,
-  GraduationCap,
-  Upload,
-  Zap,
-} from "lucide-react";
+  ArrowRight, BookOpen, Brain, CheckCircle as CheckCircle2, FileText, Flask as FlaskConical, GraduationCap, UploadSimple as Upload, Lightning as Zap } from "@phosphor-icons/react"
 import type { FlashcardSetSummary } from "@/lib/flashcards";
 import type { MisconceptionRecord } from "@/lib/learning-data";
 import { StudentCalendar } from "@/components/student-calendar";
@@ -498,7 +489,7 @@ function UploadStep({
       </div>
 
       <Button className="w-full" onClick={onOpenFiles} type="button" variant="outline">
-        Open files workspace
+        Open manage workspace
       </Button>
     </div>
   );
@@ -575,7 +566,7 @@ function MisconceptionsStep({
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button onClick={onStartChatProbe} type="button">
-                Chat with Apollo
+                Method with Apollo
               </Button>
               <Button
                 disabled={generationStatus === "loading"}
@@ -587,7 +578,7 @@ function MisconceptionsStep({
                   ? "Generating..."
                   : generatedCards.length > 0
                     ? "Regenerate deck"
-                    : "Generate flashcards"}
+                    : "Generate mindset"}
               </Button>
             </div>
           </div>
@@ -621,7 +612,7 @@ function MisconceptionsStep({
         <div className="rounded-3xl border border-border/70 bg-background p-5 shadow-sm shadow-black/5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-medium">Generated flashcards</p>
+              <p className="text-sm font-medium">Generated mindset</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 The deck stays in onboarding, stored locally, and can be reviewed without leaving this flow.
               </p>
@@ -812,10 +803,10 @@ function DashboardStep({
           bg: "border-border/70 bg-background",
           icon: <Zap className="h-4 w-4 text-muted-foreground" />,
           sub: "Based on your FSRS schedule",
-          title: "5 flashcards due today",
+          title: "5 mindset cards due today",
         },
         {
-          action: "Open flashcards",
+          action: "Open mindset",
           bg: "border-border/70 bg-background",
           icon: <FileText className="h-4 w-4 text-muted-foreground" />,
           sub: "Electrostatics - Chapter 1",
@@ -839,7 +830,7 @@ function DashboardStep({
             onClick={
               item.title === "Fix your misconception"
                 ? onStartChatProbe
-                : item.title === "5 flashcards due today"
+                : item.title === "5 mindset cards due today"
                   ? onStartReview
                   : onOpenFlashcards
             }

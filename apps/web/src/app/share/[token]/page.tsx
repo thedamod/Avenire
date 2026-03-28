@@ -11,6 +11,11 @@ import {
   listFolderContents,
   resolveResourceShareLink,
 } from "@/lib/file-data";
+import { buildPageMetadata } from "@/lib/page-metadata";
+
+export const metadata = buildPageMetadata({
+  title: "Shared resource",
+});
 
 export default async function SharedResourcePage({
   params,
@@ -81,7 +86,7 @@ export default async function SharedResourcePage({
         <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center p-6 text-center">
           <h1 className="font-semibold text-2xl">Access denied</h1>
           <p className="mt-2 text-muted-foreground">
-            You do not have access to this chat.
+            You do not have access to this method.
           </p>
         </main>
       );
@@ -91,7 +96,7 @@ export default async function SharedResourcePage({
 
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col p-6">
-        <h1 className="mb-4 font-semibold text-2xl">Shared chat</h1>
+        <h1 className="mb-4 font-semibold text-2xl">Shared method</h1>
         <div className="space-y-3 rounded-lg border bg-card p-4">
           {messages.length === 0 ? (
             <p className="text-muted-foreground text-sm">No messages available.</p>
@@ -164,7 +169,7 @@ export default async function SharedResourcePage({
               ))}
             </ul>
           )}
-          <p className="mt-4 font-medium text-sm">Files</p>
+          <p className="mt-4 font-medium text-sm">Manage</p>
           {children.files.length === 0 ? (
             <p className="mt-1 text-muted-foreground text-sm">No files</p>
           ) : (

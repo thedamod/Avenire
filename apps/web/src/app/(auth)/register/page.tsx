@@ -1,3 +1,4 @@
+import Link from "next/link"
 import { RegisterForm } from "@avenire/auth/components/register"
 import { Card, CardContent } from "@avenire/ui/components/card"
 import { ShaderWave } from "@avenire/ui/components/shader"
@@ -18,7 +19,7 @@ export default function RegisterPage() {
             </CardContent>
           </Card>
           <div className="text-balance text-center text-xs text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:text-primary">
-            By clicking continue, you agree to our <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>.
+            By clicking continue, you agree to our <Link href="/about">Terms of Service</Link> and <Link href="/privacy">Privacy Policy</Link>.
           </div>
         </div>
       </div>

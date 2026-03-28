@@ -1,17 +1,20 @@
 "use client";
 
-import { useChat } from "@ai-sdk/react";
+import { useChat, type UseChatHelpers } from "@ai-sdk/react";
 import type { AgentActivityData, UIMessage } from "@avenire/ai/message-types";
 import { Button } from "@avenire/ui/components/button";
 import {
-  DefaultChatTransport,
-  type FileUIPart,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-} from "ai";
-import { ChevronDown } from "lucide-react";
+  DefaultChatTransport, type FileUIPart, lastAssistantMessageIsCompleteWithApprovalResponses, } from "ai";
+import { CaretDown as ChevronDown } from "@phosphor-icons/react"
 import { AnimatePresence, motion, useInView } from "motion/react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import {
@@ -46,6 +49,47 @@ interface ChatProps {
   workspaceUuid: string;
 }
 
+type SendMessageInput = Parameters<UseChatHelpers<UIMessage>["sendMessage"]>[0];
+type SendMessageOptions =
+  Parameters<UseChatHelpers<UIMessage>["sendMessage"]>[1];
+
+function createOptimisticUserMessage(
+  message: SendMessageInput
+): UIMessage | null {
+  if (!message) {
+    return null;
+  }
+
+  const text =
+    "text" in message && typeof message.text === "string" ? message.text : "";
+  const candidateFiles =
+    "files" in message && Array.isArray(message.files) ? message.files : [];
+  const files = candidateFiles.filter(
+    (file): file is FileUIPart =>
+      file.type === "file" &&
+      typeof file.url === "string" &&
+      file.url.trim().length > 0
+  );
+
+  if (text.trim().length === 0 && files.length === 0) {
+    return null;
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    role: "user",
+    parts: [
+      ...(text.trim().length > 0 ? [{ type: "text" as const, text }] : []),
+      ...files.map((file) => ({
+        type: "file" as const,
+        filename: file.filename,
+        mediaType: file.mediaType,
+        url: file.url,
+      })),
+    ],
+  } as UIMessage;
+}
+
 export function Chat({
   id,
   initialMessages,
@@ -64,6 +108,7 @@ export function Chat({
   const router = useRouter();
   const lastCompletedMessageIdRef = useRef<string | null>(null);
   const messagesRef = useRef<UIMessage[]>(initialMessages);
+  const pendingNewChatMessagesRef = useRef<UIMessage[] | null>(null);
   const pendingChatRouteRef = useRef<string | null>(null);
   const autoPromptSentRef = useRef<string | null>(null);
   const MAX_FILES = 3;
@@ -79,13 +124,6 @@ export function Chat({
       duration: 5000,
     });
   }, []);
-
-  useEffect(() => {
-    setChatId(id);
-    setAttachments([]);
-    setInput("");
-    setAgentActivity(null);
-  }, [id]);
 
   const {
     messages,
@@ -113,9 +151,7 @@ export function Chat({
         if (!(detail?.id && detail?.fromId)) {
           return;
         }
-        if (messagesRef.current.length > 0) {
-          chatMessageHandoffActions.prime(detail.id, messagesRef.current);
-        }
+        primeNewChatHandoff(detail.id);
         setChatId(detail.id);
         pendingChatRouteRef.current = detail.id;
         window.dispatchEvent(
@@ -149,6 +185,51 @@ export function Chat({
     messagesRef.current = messages;
   }, [messages]);
 
+  const primeNewChatHandoff = useCallback((nextChatId: string) => {
+    if (!nextChatId) {
+      return;
+    }
+
+    const currentMessages = messagesRef.current;
+    const pendingMessages = pendingNewChatMessagesRef.current;
+    const handoffMessages =
+      pendingMessages && pendingMessages.length > currentMessages.length
+        ? pendingMessages
+        : currentMessages.length > 0
+          ? currentMessages
+          : pendingMessages;
+
+    if (!handoffMessages || handoffMessages.length === 0) {
+      return;
+    }
+
+    chatMessageHandoffActions.prime(nextChatId, handoffMessages);
+  }, []);
+
+  const sendMessage = useCallback(
+    async (message: SendMessageInput, options?: SendMessageOptions) => {
+      if (chatId === "new") {
+        const optimisticMessage = createOptimisticUserMessage(message);
+        if (optimisticMessage) {
+          pendingNewChatMessagesRef.current = [
+            ...messagesRef.current,
+            optimisticMessage,
+          ];
+        }
+      }
+
+      try {
+        return await append(message, options);
+      } catch (error) {
+        if (chatId === "new" && !pendingChatRouteRef.current) {
+          pendingNewChatMessagesRef.current = null;
+        }
+        throw error;
+      }
+    },
+    [append, chatId]
+  );
+
   useEffect(() => {
     if (initialMessages.length === 0 || messages.length > 0) {
       return;
@@ -178,31 +259,25 @@ export function Chat({
     }
 
     autoPromptSentRef.current = prompt;
-    append({ text: prompt }).catch(() => {
+    sendMessage({ text: prompt }).catch(() => {
       autoPromptSentRef.current = null;
     });
-  }, [append, id, initialPrompt, messages.length, status]);
+  }, [id, initialPrompt, messages.length, sendMessage, status]);
 
   useEffect(() => {
-    if (status !== "ready") {
-      return;
-    }
     if (!pendingChatRouteRef.current) {
       return;
     }
-    const nextChatId = pendingChatRouteRef.current;
-    const timer = window.setTimeout(() => {
-      if (messagesRef.current.length > 0) {
-        chatMessageHandoffActions.prime(nextChatId, messagesRef.current);
-      }
-      router.replace(`/workspace/chats/${nextChatId}`);
-      pendingChatRouteRef.current = null;
-    }, 0);
 
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [router, status]);
+    const nextChatId = pendingChatRouteRef.current;
+
+    primeNewChatHandoff(nextChatId);
+    startTransition(() => {
+      router.replace(`/workspace/chats/${nextChatId}`);
+    });
+    pendingChatRouteRef.current = null;
+    pendingNewChatMessagesRef.current = null;
+  }, [chatId, primeNewChatHandoff, router]);
 
   useEffect(() => {
     if (status !== "ready") {
@@ -307,7 +382,7 @@ export function Chat({
       setMessages(preservedMessages);
 
       try {
-        await append({
+        await sendMessage({
           text: userText,
           ...(userFiles.length > 0 ? { files: userFiles } : {}),
         });
@@ -318,7 +393,7 @@ export function Chat({
         );
       }
     },
-    [append, handleError, messages, setMessages, status]
+    [handleError, messages, sendMessage, setMessages, status]
   );
 
   const handleSubmit = async (inputValue: string, files: Attachment[]) => {
@@ -361,12 +436,12 @@ export function Chat({
       });
 
     if (localFileParts.length > 0 || workspaceFileParts.length > 0) {
-      await append({
+      await sendMessage({
         text: inputValue,
         files: [...localFileParts, ...workspaceFileParts],
       });
     } else {
-      await append({ text: inputValue });
+      await sendMessage({ text: inputValue });
     }
   };
 
@@ -433,7 +508,7 @@ export function Chat({
             messagesContainerRef={messagesContainerRef}
             messagesEndRef={messagesEndRef}
             onRegenerate={regenerateFromMessage}
-            sendMessage={append}
+            sendMessage={sendMessage}
             status={status}
             userName={userName}
             workspaceUuid={workspaceUuid}
@@ -459,7 +534,7 @@ export function Chat({
                   {attachments.length === 0 && (
                     <SuggestedActions
                       onAction={(text) => {
-                        append({ text });
+                        sendMessage({ text });
                       }}
                     />
                   )}

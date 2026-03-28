@@ -3,25 +3,10 @@
 import { useChat } from "@ai-sdk/react";
 import { Button } from "@avenire/ui/components/button";
 import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@avenire/ui/components/command";
+  Command, CommandEmpty, CommandInput, CommandItem, CommandList, } from "@avenire/ui/components/command";
 import { TextStreamChatTransport, type UIMessage } from "ai";
 import {
-  ChevronRight,
-  FileAudio2,
-  FileCode2,
-  FileImage,
-  FileText,
-  FileVideo,
-  Folder,
-  Globe,
-  Sparkles,
-  X,
-} from "lucide-react";
+  CaretRight as ChevronRight, FileAudio as FileAudio2, FileCode as FileCode2, FileImage, FileText, FileVideo, Folder, Globe, Sparkle as Sparkles, X } from "@phosphor-icons/react"
 import { AnimatePresence, motion } from "motion/react";
 import {
   type CSSProperties,
@@ -33,6 +18,7 @@ import {
   useState,
 } from "react";
 import { Markdown } from "@/components/chat/markdown";
+import { ThinkingIndicator } from "@/components/chat/thinking-indicator";
 import { cn } from "@/lib/utils";
 
 export interface WorkspaceSearchItem {
@@ -621,10 +607,12 @@ const StylizedSearchBar = memo(function StylizedSearchBar({
                         {`${results.length} match${results.length === 1 ? "" : "es"} in indexed workspace content`}
                       </span>
                       {isSearching || isSummaryStreaming ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <Sparkles className="size-3.5" />
-                          Retrieving
-                        </span>
+                        <div className="inline-flex items-center gap-1.5">
+                          <ThinkingIndicator
+                            className="px-0 py-0"
+                            messages={["Retrieving", "Summarizing"]}
+                          />
+                        </div>
                       ) : null}
                     </div>
                   ) : null}
@@ -665,11 +653,22 @@ const StylizedSearchBar = memo(function StylizedSearchBar({
                                 workspaceUuid={workspaceUuid}
                               />
                             ) : (
-                              <p className="text-muted-foreground text-sm leading-6">
-                                {isSearching
-                                  ? "Searching indexed content."
-                                  : "Run a search to generate a concise answer from the best matching workspace evidence."}
-                              </p>
+                              <div className="text-muted-foreground">
+                                {isSearching ? (
+                                  <ThinkingIndicator
+                                    className="-mx-2 -my-1 px-0 py-0"
+                                    messages={[
+                                      "Searching indexed content",
+                                      "Summarizing best matches",
+                                    ]}
+                                  />
+                                ) : (
+                                  <p className="text-sm leading-6">
+                                    Run a search to generate a concise answer
+                                    from the best matching workspace evidence.
+                                  </p>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>

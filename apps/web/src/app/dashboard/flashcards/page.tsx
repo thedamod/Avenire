@@ -2,7 +2,12 @@ import type { Route } from "next";
 import { redirect } from "next/navigation";
 import { FlashcardsDashboard } from "@/components/flashcards/dashboard";
 import { getFlashcardDashboardForUser } from "@/lib/flashcards";
+import { buildPageMetadata } from "@/lib/page-metadata";
 import { requireWorkspaceRouteContext } from "@/lib/workspace-route-context";
+
+export const metadata = buildPageMetadata({
+  title: "Flashcards",
+});
 
 export default async function DashboardFlashcardsPage({
   searchParams,

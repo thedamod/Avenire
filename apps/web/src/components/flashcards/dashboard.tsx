@@ -3,31 +3,18 @@
 import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@avenire/ui/components/empty";
+  Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, } from "@avenire/ui/components/empty";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, } from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
 import { Label } from "@avenire/ui/components/label";
 import { ScrollArea } from "@avenire/ui/components/scroll-area";
 import { Textarea } from "@avenire/ui/components/textarea";
 import { cn } from "@avenire/ui/lib/utils";
-import { BookOpenCheck, Plus } from "lucide-react";
+import { BookOpenText as BookOpenCheck, Plus } from "@phosphor-icons/react"
 import type { Route } from "next";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { startTransition, useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { HeaderActions, HeaderBreadcrumbs, HeaderLeadingIcon } from "@/components/dashboard/header-portal";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -41,6 +28,33 @@ interface FlashcardGenerationRequest {
   subject: string;
   title?: string;
   topic: string;
+}
+
+async function generateOnboardingSet(
+  generationRequest: FlashcardGenerationRequest
+) {
+  const response = await fetch("/api/flashcards/onboarding", {
+    body: JSON.stringify(generationRequest),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    throw new Error(payload.error ?? "Unable to generate mindset.");
+  }
+
+  const payload = (await response.json()) as {
+    set?: { id?: string };
+  };
+  const setId = payload.set?.id;
+  if (!setId) {
+    throw new Error("Mindset generation did not return a set.");
+  }
+
+  return setId;
 }
 
 function getEnrollmentLabel(
@@ -82,20 +96,26 @@ export function FlashcardsDashboard({
   const autoOpenCreateRef = useRef(false);
   const generationStartedRef = useRef(false);
 
-  const orderedSets = dashboard.sets.slice().sort((left, right) => {
-    const pressureDiff =
-      right.dueCount + right.newCount - (left.dueCount + left.newCount);
+  const orderedSets = useMemo(
+    () =>
+      dashboard.sets.slice().sort((left, right) => {
+        const pressureDiff =
+          right.dueCount + right.newCount - (left.dueCount + left.newCount);
 
-    if (pressureDiff !== 0) {
-      return pressureDiff;
-    }
+        if (pressureDiff !== 0) {
+          return pressureDiff;
+        }
 
-    return (
-      new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-    );
-  });
-  const reviewTarget =
-    orderedSets.find((set) => set.dueCount > 0 || set.newCount > 0) ?? null;
+        return (
+          new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+        );
+      }),
+    [dashboard.sets]
+  );
+  const reviewTarget = useMemo(
+    () => orderedSets.find((set) => set.dueCount > 0 || set.newCount > 0) ?? null,
+    [orderedSets]
+  );
   const [selectedSetId, setSelectedSetId] = useState<string | null>(
     reviewTarget?.id ?? orderedSets[0]?.id ?? null
   );
@@ -111,10 +131,27 @@ export function FlashcardsDashboard({
     setSelectedSetId(reviewTarget?.id ?? orderedSets[0]?.id ?? null);
   }, [orderedSets, reviewTarget, selectedSetId]);
 
-  const selectedSet =
-    orderedSets.find((candidate) => candidate.id === selectedSetId) ?? null;
-  const selectedSnapshots = dashboard.cardSnapshots.filter(
-    (snapshot) => snapshot.card.setId === selectedSetId
+  const selectedSet = useMemo(
+    () => orderedSets.find((candidate) => candidate.id === selectedSetId) ?? null,
+    [orderedSets, selectedSetId]
+  );
+  const selectedSnapshots = useMemo(
+    () => dashboard.cardSnapshots.filter(
+      (snapshot) => snapshot.card.setId === selectedSetId
+    ),
+    [dashboard.cardSnapshots, selectedSetId]
+  );
+  const headerLeadingIcon = useMemo(
+    () => <BookOpenCheck className="size-3.5" />,
+    []
+  );
+  const headerBreadcrumbs = useMemo(
+    () => (
+      <div className="min-w-0">
+        <p className="truncate font-medium text-foreground text-sm">Mindset</p>
+      </div>
+    ),
+    []
   );
 
   useEffect(() => {
@@ -139,30 +176,13 @@ export function FlashcardsDashboard({
 
     void (async () => {
       try {
-        const response = await fetch("/api/flashcards/onboarding", {
-          body: JSON.stringify(generationRequest),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        });
-        if (!response.ok) {
-          const payload = (await response.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          throw new Error(payload.error ?? "Unable to generate flashcards.");
-        }
-        const payload = (await response.json()) as {
-          set?: { id?: string };
-        };
-        const setId = payload.set?.id;
-        if (!setId) {
-          throw new Error("Flashcard generation did not return a set.");
-        }
+        const setId = await generateOnboardingSet(generationRequest);
         startTransition(() => {
           router.replace(`/workspace/flashcards/${setId}` as Route);
         });
       } catch (error) {
         setGenerationError(
-          error instanceof Error ? error.message : "Unable to generate flashcards."
+          error instanceof Error ? error.message : "Unable to generate mindset."
         );
         setGenerationLoading(false);
       }
@@ -219,7 +239,7 @@ export function FlashcardsDashboard({
     <div className="h-full overflow-y-auto bg-background">
       <div className="flex w-full flex-col gap-4 px-4 py-4 md:px-6 lg:px-8">
         <HeaderLeadingIcon>
-          <BookOpenCheck className="size-3.5" />
+          {headerLeadingIcon}
         </HeaderLeadingIcon>
         <HeaderActions>
             <div className="flex flex-wrap items-center gap-2">
@@ -301,17 +321,13 @@ export function FlashcardsDashboard({
             </div>
         </HeaderActions>
         <HeaderBreadcrumbs>
-          <div className="min-w-0">
-            <p className="truncate font-medium text-foreground text-sm">
-              Flashcards
-            </p>
-          </div>
+          {headerBreadcrumbs}
         </HeaderBreadcrumbs>
 
         <section className="flex flex-wrap items-center justify-between gap-3 border-border/40 border-b pb-4">
           <div className="space-y-1">
             <h1 className="font-semibold text-xl tracking-tight text-foreground">
-              Flashcards
+              Mindset
             </h1>
             <p className="text-muted-foreground text-xs">
               Select a deck, check what is coming up, then jump straight into
@@ -331,14 +347,14 @@ export function FlashcardsDashboard({
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    Generating flashcards
+                    Generating mindset
                   </p>
                   <h2 className="text-lg font-semibold tracking-tight text-foreground">
                     Building your deck from onboarding
                   </h2>
                   <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
                     The set is being generated now. Once it is ready, you will
-                    land directly in the flashcards.
+                    land directly in the mindset view.
                   </p>
                 </div>
                 <div className="rounded-full bg-secondary px-3 py-1 text-xs uppercase tracking-[0.15em] text-muted-foreground">

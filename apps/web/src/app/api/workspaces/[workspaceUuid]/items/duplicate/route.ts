@@ -1,12 +1,13 @@
 import {
+  createFolder,
+  createWorkspaceNoteFile,
   getFileAssetById,
   getFolderWithAncestors,
   getNoteContent,
-  createWorkspaceNoteFile,
+  isMarkdownFileRecord,
   listWorkspaceFiles,
   listWorkspaceFolders,
   registerFileAsset,
-  createFolder,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
@@ -80,11 +81,16 @@ export async function POST(
       .map((file) => file.name);
     const duplicateName = resolveDuplicateName(siblingNames, source.name);
 
-    if (source.isNote) {
+    if (isMarkdownFileRecord(source)) {
       const note = await getNoteContent(source.id);
+      const content =
+        note?.content ??
+        (await fetch(source.storageUrl, { cache: "no-store" })
+          .then((response) => (response.ok ? response.text() : ""))
+          .catch(() => ""));
       const file = await createWorkspaceNoteFile({
-        baseContent: note?.content ?? "",
-        content: note?.content ?? "",
+        baseContent: content,
+        content,
         folderId: targetFolderId,
         name: duplicateName,
         userId: user.id,
@@ -208,11 +214,16 @@ export async function POST(
     const siblingFileNames = workspaceFiles
       .filter((entry) => entry.folderId === clonedFolderId)
       .map((entry) => entry.name);
-    if (file.isNote) {
+    if (isMarkdownFileRecord(file)) {
       const note = await getNoteContent(file.id);
+      const content =
+        note?.content ??
+        (await fetch(file.storageUrl, { cache: "no-store" })
+          .then((response) => (response.ok ? response.text() : ""))
+          .catch(() => ""));
       await createWorkspaceNoteFile({
-        baseContent: note?.content ?? "",
-        content: note?.content ?? "",
+        baseContent: content,
+        content,
         folderId: clonedFolderId,
         name: resolveDuplicateName(siblingFileNames, file.name),
         userId: user.id,

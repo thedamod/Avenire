@@ -4,18 +4,19 @@ import {
   isSharedFilesVirtualFolderId,
   userCanEditFolder,
 } from "@/lib/file-data";
-import { registerWorkspaceUploadedFile } from "@/lib/upload-registration";
+import {
+  registerWorkspaceMarkdownNote,
+  registerWorkspaceUploadedFile,
+} from "@/lib/upload-registration";
 import { scheduleAsyncVideoDeliveryOptimization } from "@/lib/video-delivery";
 import { getSessionUser } from "@/lib/workspace";
 
-const fileSchema = z.object({
+const baseFileSchema = z.object({
   clientUploadId: z.string().min(1).max(120),
   folderId: z.string().uuid(),
-  storageKey: z.string().min(1),
-  storageUrl: z.string().url(),
   name: z.string().min(1),
   mimeType: z.string().nullable().optional(),
-  sizeBytes: z.number().int().nonnegative(),
+  sizeBytes: z.number().int().nonnegative().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   contentHashSha256: z
     .string()
@@ -23,6 +24,21 @@ const fileSchema = z.object({
     .optional(),
   hashComputedBy: z.enum(["client", "server"]).optional(),
 });
+
+const uploadedFileSchema = baseFileSchema.extend({
+  content: z.undefined().optional(),
+  sizeBytes: z.number().int().nonnegative(),
+  storageKey: z.string().min(1),
+  storageUrl: z.string().url(),
+});
+
+const noteFileSchema = baseFileSchema.extend({
+  content: z.string(),
+  storageKey: z.undefined().optional(),
+  storageUrl: z.undefined().optional(),
+});
+
+const fileSchema = z.union([uploadedFileSchema, noteFileSchema]);
 
 const requestSchema = z.object({
   dedupeMode: z.enum(["allow", "skip"]).optional(),
@@ -95,20 +111,31 @@ export async function POST(
         continue;
       }
 
-      const result = await registerWorkspaceUploadedFile({
-        workspaceUuid,
-        userId: user.id,
-        folderId: fileInput.folderId,
-        storageKey: fileInput.storageKey,
-        storageUrl: fileInput.storageUrl,
-        name: fileInput.name,
-        mimeType: fileInput.mimeType,
-        sizeBytes: fileInput.sizeBytes,
-        metadata: fileInput.metadata,
-        contentHashSha256: fileInput.contentHashSha256,
-        hashComputedBy: fileInput.hashComputedBy,
-        dedupeMode,
-      });
+      const result =
+        typeof fileInput.content === "string"
+          ? await registerWorkspaceMarkdownNote({
+              content: fileInput.content,
+              dedupeMode,
+              folderId: fileInput.folderId,
+              metadata: fileInput.metadata,
+              name: fileInput.name,
+              userId: user.id,
+              workspaceUuid,
+            })
+          : await registerWorkspaceUploadedFile({
+              workspaceUuid,
+              userId: user.id,
+              folderId: fileInput.folderId,
+              storageKey: fileInput.storageKey,
+              storageUrl: fileInput.storageUrl,
+              name: fileInput.name,
+              mimeType: fileInput.mimeType,
+              sizeBytes: fileInput.sizeBytes,
+              metadata: fileInput.metadata,
+              contentHashSha256: fileInput.contentHashSha256,
+              hashComputedBy: fileInput.hashComputedBy,
+              dedupeMode,
+            });
 
       results.push({
         clientUploadId: fileInput.clientUploadId,

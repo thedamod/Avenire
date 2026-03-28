@@ -3,16 +3,11 @@
 import { Button } from "@avenire/ui/components/button";
 import { Input } from "@avenire/ui/components/input";
 import {
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@avenire/ui/components/sidebar";
+  SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, } from "@avenire/ui/components/sidebar";
 import Fuse, { type IFuseOptions } from "fuse.js";
-import { FilePlus2, Files, Pin, Trash2 } from "lucide-react";
+import { FilePlus as FilePlus2, Files, PushPin as Pin, Trash as Trash2 } from "@phosphor-icons/react"
 import type { Route } from "next";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   type ComponentType,
@@ -24,6 +19,7 @@ import {
 } from "react";
 import { type TreeDataItem, TreeView } from "@/components/ui/tree-view";
 import { useHaptics } from "@/hooks/use-haptics";
+import { cn } from "@/lib/utils";
 import {
   readWorkspaceTreeCache,
   writeWorkspaceTreeCache,
@@ -49,6 +45,12 @@ interface FilesInvalidationEventPayload {
   folderId?: string | null;
 }
 
+interface FilesRealtimeConnectionOptions {
+  onConnectedChange: (connected: boolean) => void;
+  onInvalidate: (payload: FilesInvalidationEventPayload | null) => void;
+  workspaceUuid: string;
+}
+
 const SIDEBAR_SEARCH_SCORE_MAX = 0.45;
 const SIDEBAR_SEARCH_FUSE_OPTIONS: IFuseOptions<{ name: string }> = {
   includeScore: true,
@@ -56,6 +58,59 @@ const SIDEBAR_SEARCH_FUSE_OPTIONS: IFuseOptions<{ name: string }> = {
   keys: ["name"],
   threshold: 0.6,
 };
+
+const TREE_FILE_ICON_SRC_BY_EXTENSION: Record<string, string> = {
+  astro: "/icons/astro.svg",
+  avif: "/icons/image.svg",
+  bmp: "/icons/image.svg",
+  c: "/icons/c.svg",
+  cpp: "/icons/cpp.svg",
+  css: "/icons/css.svg",
+  csv: "/icons/csv.svg",
+  gif: "/icons/image.svg",
+  go: "/icons/go.svg",
+  html: "/icons/html.svg",
+  ico: "/icons/image.svg",
+  java: "/icons/java.svg",
+  jpeg: "/icons/image.svg",
+  jpg: "/icons/image.svg",
+  js: "/icons/javascript.svg",
+  json: "/icons/json.svg",
+  jsx: "/icons/react.svg",
+  m4a: "/icons/audio.svg",
+  markdown: "/icons/markdown.svg",
+  md: "/icons/markdown.svg",
+  mkv: "/icons/video.svg",
+  mov: "/icons/video.svg",
+  mp3: "/icons/audio.svg",
+  mp4: "/icons/video.svg",
+  pdf: "/icons/pdf.svg",
+  php: "/icons/php.svg",
+  png: "/icons/image.svg",
+  py: "/icons/python.svg",
+  rb: "/icons/ruby.svg",
+  rs: "/icons/rust.svg",
+  scss: "/icons/scss.svg",
+  sql: "/icons/database.svg",
+  svg: "/icons/svg.svg",
+  tar: "/icons/zip.svg",
+  ts: "/icons/typescript.svg",
+  tsx: "/icons/react-typescript.svg",
+  txt: "/icons/text.svg",
+  wav: "/icons/audio.svg",
+  webm: "/icons/video.svg",
+  webp: "/icons/image.svg",
+  xls: "/icons/csv.svg",
+  xlsx: "/icons/csv.svg",
+  xml: "/icons/xml.svg",
+  yaml: "/icons/yaml.svg",
+  yml: "/icons/yaml.svg",
+  zip: "/icons/zip.svg",
+};
+const treeFileIconComponentCache = new Map<
+  string,
+  ComponentType<{ className?: string }>
+>();
 
 function TreeIconImage({
   alt,
@@ -67,12 +122,13 @@ function TreeIconImage({
   src: string;
 }) {
   return (
-    <img
+    <Image
       alt={alt}
       aria-hidden="true"
       className={className}
       height={16}
       src={src}
+      unoptimized
       width={16}
     />
   );
@@ -90,66 +146,136 @@ function TreeFolderOpenIcon({ className }: { className?: string }) {
   );
 }
 
-function getTreeFileIcon(name: string) {
+function getTreeFileIconSrc(name: string) {
   const ext = name.includes(".")
     ? (name.split(".").pop()?.toLowerCase() ?? "")
     : "";
-  const iconByExtension: Record<string, string> = {
-    astro: "/icons/astro.svg",
-    avif: "/icons/image.svg",
-    bmp: "/icons/image.svg",
-    c: "/icons/c.svg",
-    cpp: "/icons/cpp.svg",
-    css: "/icons/css.svg",
-    csv: "/icons/csv.svg",
-    gif: "/icons/image.svg",
-    go: "/icons/go.svg",
-    html: "/icons/html.svg",
-    ico: "/icons/image.svg",
-    java: "/icons/java.svg",
-    jpeg: "/icons/image.svg",
-    jpg: "/icons/image.svg",
-    js: "/icons/javascript.svg",
-    json: "/icons/json.svg",
-    jsx: "/icons/react.svg",
-    m4a: "/icons/audio.svg",
-    markdown: "/icons/markdown.svg",
-    md: "/icons/markdown.svg",
-    mkv: "/icons/video.svg",
-    mov: "/icons/video.svg",
-    mp3: "/icons/audio.svg",
-    mp4: "/icons/video.svg",
-    pdf: "/icons/pdf.svg",
-    php: "/icons/php.svg",
-    png: "/icons/image.svg",
-    py: "/icons/python.svg",
-    rb: "/icons/ruby.svg",
-    rs: "/icons/rust.svg",
-    scss: "/icons/scss.svg",
-    sql: "/icons/database.svg",
-    svg: "/icons/svg.svg",
-    tar: "/icons/zip.svg",
-    ts: "/icons/typescript.svg",
-    tsx: "/icons/react-typescript.svg",
-    txt: "/icons/text.svg",
-    wav: "/icons/audio.svg",
-    webm: "/icons/video.svg",
-    webp: "/icons/image.svg",
-    xls: "/icons/csv.svg",
-    xlsx: "/icons/csv.svg",
-    xml: "/icons/xml.svg",
-    yaml: "/icons/yaml.svg",
-    yml: "/icons/yaml.svg",
-    zip: "/icons/zip.svg",
-  };
+  return TREE_FILE_ICON_SRC_BY_EXTENSION[ext] ?? "/icons/_file.svg";
+}
 
-  return (
+function getTreeFileIconComponent(name: string) {
+  const iconSrc = getTreeFileIconSrc(name);
+  const cached = treeFileIconComponentCache.get(iconSrc);
+  if (cached) {
+    return cached;
+  }
+
+  const TreeFileIcon = ({ className }: { className?: string }) => (
     <TreeIconImage
       alt=""
-      className="size-4 shrink-0"
-      src={iconByExtension[ext] ?? "/icons/_file.svg"}
+      className={cn("size-4 shrink-0", className)}
+      src={iconSrc}
     />
   );
+  TreeFileIcon.displayName = `TreeFileIcon(${iconSrc})`;
+  treeFileIconComponentCache.set(iconSrc, TreeFileIcon);
+  return TreeFileIcon;
+}
+
+function createFilesRealtimeConnection({
+  onConnectedChange,
+  onInvalidate,
+  workspaceUuid,
+}: FilesRealtimeConnectionOptions) {
+  let closed = false;
+  let eventSource: EventSource | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const cleanupCurrent = () => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  };
+
+  const clearRetryTimer = () => {
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (closed) {
+      return;
+    }
+
+    clearRetryTimer();
+    retryTimer = setTimeout(() => {
+      connect().catch(() => undefined);
+    }, 3000);
+  };
+
+  const connect = async () => {
+    if (closed) {
+      return;
+    }
+
+    try {
+      const tokenResponse = await fetch("/api/realtime/files-token", {
+        body: JSON.stringify({ workspaceUuid }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+
+      if (!tokenResponse.ok) {
+        onConnectedChange(false);
+        scheduleReconnect();
+        return;
+      }
+
+      const payload = (await tokenResponse.json()) as { token?: string };
+      if (!payload.token) {
+        onConnectedChange(false);
+        scheduleReconnect();
+        return;
+      }
+
+      cleanupCurrent();
+
+      const url = new URL("/api/realtime/files", window.location.origin);
+      url.searchParams.set("workspaceUuid", workspaceUuid);
+      url.searchParams.set("token", payload.token);
+
+      eventSource = new EventSource(url.toString());
+      eventSource.onopen = () => {
+        onConnectedChange(true);
+      };
+      eventSource.onerror = () => {
+        onConnectedChange(false);
+        cleanupCurrent();
+        scheduleReconnect();
+      };
+      eventSource.addEventListener("files.invalidate", (event) => {
+        const detail = (() => {
+          try {
+            return JSON.parse((event as MessageEvent<string>).data) as
+              | FilesInvalidationEventPayload
+              | null;
+          } catch {
+            return null;
+          }
+        })();
+
+        onInvalidate(detail);
+      });
+    } catch {
+      onConnectedChange(false);
+      scheduleReconnect();
+    }
+  };
+
+  return {
+    start() {
+      connect().catch(() => undefined);
+    },
+    stop() {
+      closed = true;
+      onConnectedChange(false);
+      clearRetryTimer();
+      cleanupCurrent();
+    },
+  };
 }
 
 function SectionButton({
@@ -204,13 +330,11 @@ export function FilesSidebarPanel({
   const treeRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
-  const sseRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedWorkspaceRef = useRef<string | null>(null);
   const prevWorkspaceUuidRef = useRef<string | null>(null);
-  const expandedTreeStorageKey = useMemo(
-    () => (workspaceUuid ? `files-tree-expanded:${workspaceUuid}` : null),
-    [workspaceUuid]
-  );
+  const expandedTreeStorageKey = workspaceUuid
+    ? `files-tree-expanded:${workspaceUuid}`
+    : null;
   const expandedTreePathIds = useMemo(
     () => Array.from(expandedTreePaths),
     [expandedTreePaths]
@@ -448,101 +572,19 @@ export function FilesSidebarPanel({
       return;
     }
 
-    let closed = false;
-    let eventSource: EventSource | null = null;
-
-    const cleanupCurrent = () => {
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (closed) {
-        return;
-      }
-
-      if (sseRetryTimerRef.current) {
-        clearTimeout(sseRetryTimerRef.current);
-      }
-
-      sseRetryTimerRef.current = setTimeout(() => {
-        connect().catch(() => undefined);
-      }, 3000);
-    };
-
-    const connect = async () => {
-      if (closed) {
-        return;
-      }
-
-      try {
-        const tokenResponse = await fetch("/api/realtime/files-token", {
-          body: JSON.stringify({ workspaceUuid }),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        });
-
-        if (!tokenResponse.ok) {
-          setSseConnected(false);
-          scheduleReconnect();
-          return;
-        }
-
-        const payload = (await tokenResponse.json()) as { token?: string };
-        if (!payload.token) {
-          setSseConnected(false);
-          scheduleReconnect();
-          return;
-        }
-
-        cleanupCurrent();
-
-        const url = new URL("/api/realtime/files", window.location.origin);
-        url.searchParams.set("workspaceUuid", workspaceUuid);
-        url.searchParams.set("token", payload.token);
-
-        eventSource = new EventSource(url.toString());
-        eventSource.onopen = () => {
-          setSseConnected(true);
-        };
-        eventSource.onerror = () => {
-          setSseConnected(false);
-          cleanupCurrent();
-          scheduleReconnect();
-        };
-        eventSource.addEventListener("files.invalidate", (event) => {
-          const detail = (() => {
-            try {
-              return JSON.parse((event as MessageEvent<string>).data) as
-                | FilesInvalidationEventPayload
-                | null;
-            } catch {
-              return null;
-            }
-          })();
-
-          invalidateWorkspaceFolderCache(workspaceUuid, detail?.folderId);
-          invalidateWorkspaceMarkdownCache(workspaceUuid);
-          refreshWorkspaceTreeDebounced(workspaceUuid);
-        });
-      } catch {
-        setSseConnected(false);
-        scheduleReconnect();
-      }
-    };
-
-    connect().catch(() => undefined);
+    const connection = createFilesRealtimeConnection({
+      onConnectedChange: setSseConnected,
+      onInvalidate: (detail) => {
+        invalidateWorkspaceFolderCache(workspaceUuid, detail?.folderId);
+        invalidateWorkspaceMarkdownCache(workspaceUuid);
+        refreshWorkspaceTreeDebounced(workspaceUuid);
+      },
+      workspaceUuid,
+    });
+    connection.start();
 
     return () => {
-      closed = true;
-      setSseConnected(false);
-      cleanupCurrent();
-      if (sseRetryTimerRef.current) {
-        clearTimeout(sseRetryTimerRef.current);
-        sseRetryTimerRef.current = null;
-      }
+      connection.stop();
       if (treeRefreshDebounceRef.current) {
         clearTimeout(treeRefreshDebounceRef.current);
         treeRefreshDebounceRef.current = null;
@@ -931,7 +973,6 @@ export function FilesSidebarPanel({
     for (const file of [...filteredFileTreeState.files].sort((a, b) =>
       a.name.localeCompare(b.name)
     )) {
-      const FileIcon = () => getTreeFileIcon(file.name);
       addChild(file.folderId, {
         actions: file.readOnly ? null : (
           <Button
@@ -950,7 +991,7 @@ export function FilesSidebarPanel({
           </Button>
         ),
         draggable: !file.readOnly,
-        icon: FileIcon,
+        icon: getTreeFileIconComponent(file.name),
         id: file.id,
         name: file.name,
         onClick: () => {
@@ -982,7 +1023,7 @@ export function FilesSidebarPanel({
     >
       <SidebarGroup>
         <SidebarGroupLabel>
-          {sseConnected ? "Files Live" : "Files"}
+          {sseConnected ? "Manage Live" : "Manage"}
         </SidebarGroupLabel>
         <SidebarGroupContent>
           <SidebarMenu>
@@ -998,7 +1039,7 @@ export function FilesSidebarPanel({
           <Input
             className="mt-2 h-8 text-xs"
             onChange={(event) => setFilesNameSearchQuery(event.target.value)}
-            placeholder="Search files by name..."
+            placeholder="Search items by name..."
             value={filesNameSearchQuery}
           />
         </SidebarGroupContent>

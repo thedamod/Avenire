@@ -4,18 +4,11 @@ import type { UseChatHelpers } from "@ai-sdk/react";
 import type { UIMessage } from "@avenire/ai/message-types";
 import { Button } from "@avenire/ui/components/button";
 import {
-  Command,
-  CommandEmpty,
-  CommandItem,
-  CommandList,
-} from "@avenire/ui/components/command";
+  Command, CommandEmpty, CommandItem, CommandList, } from "@avenire/ui/components/command";
 import { Textarea } from "@avenire/ui/components/textarea";
+import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowUpIcon,
-  FileTextIcon,
-  Loader2,
-  PaperclipIcon,
-} from "lucide-react";
+  ArrowUpIcon, FileText as FileTextIcon, Paperclip as PaperclipIcon, SpinnerGap as Loader2 } from "@phosphor-icons/react"
 import { AnimatePresence, motion } from "motion/react";
 import type React from "react";
 import {
@@ -166,6 +159,29 @@ function buildWorkspaceFileIndex(input: {
   );
 }
 
+async function loadWorkspaceMentionFiles(input: {
+  signal: AbortSignal;
+  workspaceUuid: string;
+}): Promise<MentionableWorkspaceFile[]> {
+  const response = await fetch(`/api/workspaces/${input.workspaceUuid}/tree`, {
+    cache: "no-store",
+    signal: input.signal,
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as {
+    files?: WorkspaceTreeFile[];
+    folders?: WorkspaceTreeFolder[];
+  };
+  return buildWorkspaceFileIndex({
+    files: payload.files ?? [],
+    folders: payload.folders ?? [],
+  });
+}
+
 function getMentionTrigger(
   text: string,
   selectionStart: number,
@@ -229,10 +245,6 @@ function PureMultimodalInput({
   const latestInputRef = useRef(input);
   const hasHydratedInputRef = useRef(false);
   const uploadingIdsRef = useRef(new Set<string>());
-  const [workspaceFiles, setWorkspaceFiles] = useState<
-    MentionableWorkspaceFile[]
-  >([]);
-  const [workspaceFilesLoaded, setWorkspaceFilesLoaded] = useState(false);
   const [textareaSelection, setTextareaSelection] = useState({
     start: 0,
     end: 0,
@@ -289,6 +301,23 @@ function PureMultimodalInput({
       getMentionTrigger(input, textareaSelection.start, textareaSelection.end),
     [input, textareaSelection.end, textareaSelection.start]
   );
+
+  const workspaceFilesQuery = useQuery({
+    enabled: Boolean(effectiveWorkspaceUuid),
+    queryFn: ({ signal }) =>
+      effectiveWorkspaceUuid
+        ? loadWorkspaceMentionFiles({
+            signal,
+            workspaceUuid: effectiveWorkspaceUuid,
+          })
+        : Promise.resolve([]),
+    queryKey: ["workspace-mention-files", effectiveWorkspaceUuid],
+    staleTime: 30_000,
+  });
+
+  const workspaceFiles = workspaceFilesQuery.data ?? [];
+  const workspaceFilesLoaded =
+    !effectiveWorkspaceUuid || workspaceFilesQuery.isFetched;
 
   const mentionSuggestions = useMemo(() => {
     if (!mentionTrigger) {
@@ -389,10 +418,6 @@ function PureMultimodalInput({
   }, [localStorageInput, setInput]);
 
   useEffect(() => {
-    setLocalStorageInput(input);
-  }, [input, setLocalStorageInput]);
-
-  useEffect(() => {
     if (!mentionTriggerKey) {
       setDismissedMentionKey(null);
     }
@@ -427,62 +452,6 @@ function PureMultimodalInput({
       block: "nearest",
     });
   }, [highlightedMentionIndex, isMentionMenuOpen, mentionSuggestions.length]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setWorkspaceFilesLoaded(false);
-
-    if (!effectiveWorkspaceUuid) {
-      setWorkspaceFiles([]);
-      setWorkspaceFilesLoaded(true);
-      return;
-    }
-
-    const loadWorkspaceFiles = async () => {
-      try {
-        const response = await fetch(
-          `/api/workspaces/${effectiveWorkspaceUuid}/tree`,
-          {
-            cache: "no-store",
-          }
-        );
-        if (!response.ok) {
-          if (!cancelled) {
-            setWorkspaceFiles([]);
-            setWorkspaceFilesLoaded(true);
-          }
-          return;
-        }
-
-        const payload = (await response.json()) as {
-          files?: WorkspaceTreeFile[];
-          folders?: WorkspaceTreeFolder[];
-        };
-        if (cancelled) {
-          return;
-        }
-
-        setWorkspaceFiles(
-          buildWorkspaceFileIndex({
-            files: payload.files ?? [],
-            folders: payload.folders ?? [],
-          })
-        );
-        setWorkspaceFilesLoaded(true);
-      } catch {
-        if (!cancelled) {
-          setWorkspaceFiles([]);
-          setWorkspaceFilesLoaded(true);
-        }
-      }
-    };
-
-    loadWorkspaceFiles().catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [effectiveWorkspaceUuid]);
 
   const updateAttachment = useCallback(
     (id: string, update: Partial<Attachment>) => {
@@ -875,14 +844,14 @@ function PureMultimodalInput({
                               "bg-accent text-accent-foreground"
                           )}
                           key={file.id}
-                          ref={(node) => {
-                            mentionItemRefs.current[index] = node;
-                          }}
                           onMouseDown={(event) => {
                             event.preventDefault();
                           }}
                           onSelect={() => {
                             selectMention(file);
+                          }}
+                          ref={(node) => {
+                            mentionItemRefs.current[index] = node;
                           }}
                           value={file.workspacePath}
                         >
@@ -923,6 +892,7 @@ function PureMultimodalInput({
                   setDismissedMentionKey(null);
                   latestInputRef.current = nextValue;
                   setInput(nextValue);
+                  setLocalStorageInput(nextValue);
                   updateTextareaSelection(
                     event.target.selectionStart ?? 0,
                     event.target.selectionEnd ?? 0

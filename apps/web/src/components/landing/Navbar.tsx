@@ -8,7 +8,6 @@ import type { Route } from "next"
 import { AvenireMark } from "@/components/branding/AvenireMark"
 import { cn } from "@/lib/utils"
 import { Button } from "@avenire/ui/components/button"
-import { useSession } from "@avenire/auth/client"
 import {
   NavigationMenu,
   NavigationMenuContent,
@@ -18,7 +17,8 @@ import {
   NavigationMenuTrigger,
   navigationMenuTriggerStyle,
 } from "@avenire/ui/components/navigation-menu"
-import { MenuIcon, XIcon } from "lucide-react"
+import { useSession } from "@avenire/auth/client"
+import { List as MenuIcon, XIcon } from "@phosphor-icons/react"
 
 const SIGN_UP_HREF = "/waitlist"
 const SIGN_IN_HREF = "/login"
@@ -150,6 +150,7 @@ export function Navbar() {
                               src={highlightedBlog.image}
                               alt={highlightedBlog.title}
                               fill
+                              sizes="(max-width: 768px) 100vw, 280px"
                               className="object-cover"
                             />
                           </div>

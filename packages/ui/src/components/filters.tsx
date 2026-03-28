@@ -1,45 +1,19 @@
 "use client"
 
 import type React from "react"
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react"
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, } from "react"
 import { useRender } from "@base-ui/react/use-render"
 import { cva } from "class-variance-authority"
 
 import { cn } from "../lib/utils"
 import { Button } from "./button"
 import {
-  ButtonGroup,
-  ButtonGroupText,
-} from "./button-group"
+  ButtonGroup, ButtonGroupText, } from "./button-group"
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "./dropdown-menu"
+  DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger, } from "./dropdown-menu"
 import { Input } from "./input"
 import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-  InputGroupText,
-} from "./input-group"
+  InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGroupText, } from "./input-group"
 import { Kbd } from "./kbd"
 import { ScrollArea } from "./scroll-area"
 import {
@@ -47,7 +21,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "./tooltip"
-import { AlertCircleIcon, CheckIcon, XIcon } from 'lucide-react'
+import { Warning as AlertCircleIcon, CheckIcon, XIcon } from "@phosphor-icons/react"
 
 // i18n Configuration Interface
 export interface FilterI18nConfig {

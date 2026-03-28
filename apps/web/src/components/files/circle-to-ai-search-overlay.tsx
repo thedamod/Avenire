@@ -6,12 +6,7 @@ import { Input } from "@avenire/ui/components/input";
 import { ScrollArea } from "@avenire/ui/components/scroll-area";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import {
-  GripVertical,
-  Loader2,
-  SendHorizontal,
-  WandSparkles,
-  X,
-} from "lucide-react";
+  DotsSixVertical as GripVertical, SpinnerGap as Loader2, PaperPlaneRight as SendHorizontal, MagicWand as WandSparkles, X } from "@phosphor-icons/react"
 import { motion } from "motion/react";
 import {
   type ReactNode,
@@ -338,11 +333,13 @@ function SearchPopover({
   isLoading,
   loadingText,
   messages,
+  expandedHeight,
   onDraftChange,
   onDraftSubmit,
   onDragEnd,
   onDragMove,
   onDragStart,
+  viewportPosition,
   position,
   showTranscript,
   workspaceUuid,
@@ -356,11 +353,13 @@ function SearchPopover({
   isLoading: boolean;
   loadingText: string;
   messages: UIMessage[];
+  expandedHeight: number;
   onDraftChange: (value: string) => void;
   onDraftSubmit: () => void;
   onDragEnd: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onDragMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onDragStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  viewportPosition: { x: number; y: number };
   position: { x: number; y: number };
   showTranscript: boolean;
   workspaceUuid?: string;
@@ -374,16 +373,16 @@ function SearchPopover({
 
   return (
     <motion.div
-      animate={{ height: isExpanded ? 512 : 136, opacity: 1 }}
-      className="absolute z-40 w-[min(24rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-lg"
+      animate={{ height: isExpanded ? expandedHeight : 136, opacity: 1 }}
+      className="fixed z-40 w-[min(24rem,calc(100%-1rem))] overflow-hidden rounded-xl border border-border bg-card shadow-lg"
       initial={{ opacity: 0, height: 0 }}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
       onPointerMove={(event) => event.stopPropagation()}
       onPointerUp={(event) => event.stopPropagation()}
       style={{
-        left: position.x,
-        top: position.y,
+        left: viewportPosition.x,
+        top: viewportPosition.y,
       }}
       transition={{ type: "spring", damping: 28, stiffness: 320 }}
     >
@@ -560,6 +559,7 @@ export function CircleToAiSearchOverlay({
   const [error, setError] = useState<string | null>(null);
   const [panelPosition, setPanelPosition] = useState({ x: 12, y: 12 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [containerOffset, setContainerOffset] = useState({ left: 0, top: 0 });
   const inputRef = useRef<HTMLInputElement | null>(null);
   const transport = useMemo(
     () =>
@@ -573,6 +573,10 @@ export function CircleToAiSearchOverlay({
           return {
             body: {
               ...options.body,
+              id: options.id,
+              messages: options.messages,
+              trigger: options.trigger,
+              messageId: options.messageId,
               selectionBase64: snapshot?.base64 ?? null,
               selectionMediaType: snapshot?.mimeType ?? null,
             },
@@ -601,7 +605,12 @@ export function CircleToAiSearchOverlay({
   const clampPanelPosition = useCallback(
     (nextPosition: { x: number; y: number }, expanded = showTranscript) => {
       const panelWidth = Math.min(384, Math.max(0, containerSize.width - 16));
-      const panelHeight = expanded ? 512 : 136;
+      const collapsedHeight = 136;
+      const expandedHeight = Math.min(
+        512,
+        Math.max(collapsedHeight, containerSize.height - 16)
+      );
+      const panelHeight = expanded ? expandedHeight : collapsedHeight;
       const maxX = Math.max(8, containerSize.width - panelWidth - 8);
       const maxY = Math.max(8, containerSize.height - panelHeight - 8);
       return {
@@ -610,6 +619,10 @@ export function CircleToAiSearchOverlay({
       };
     },
     [containerSize.height, containerSize.width, showTranscript]
+  );
+  const expandedPanelHeight = Math.min(
+    512,
+    Math.max(136, containerSize.height - 16)
   );
 
   const activeSelection = useMemo(() => {
@@ -636,16 +649,28 @@ export function CircleToAiSearchOverlay({
     }
 
     const updateSize = () => {
+      const rect = element.getBoundingClientRect();
       setContainerSize({
         width: element.clientWidth,
         height: element.clientHeight,
+      });
+      setContainerOffset({
+        left: rect.left,
+        top: rect.top,
       });
     };
 
     updateSize();
     const observer = new ResizeObserver(updateSize);
     observer.observe(element);
-    return () => observer.disconnect();
+    const handleViewportChange = () => updateSize();
+    window.addEventListener("scroll", handleViewportChange, true);
+    window.addEventListener("resize", handleViewportChange);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("scroll", handleViewportChange, true);
+      window.removeEventListener("resize", handleViewportChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -976,6 +1001,14 @@ export function CircleToAiSearchOverlay({
     return () => window.clearTimeout(timer);
   }, [selection]);
 
+  useEffect(() => {
+    if (!selection) {
+      return;
+    }
+
+    setPanelPosition((current) => clampPanelPosition(current, showTranscript));
+  }, [clampPanelPosition, selection, showTranscript]);
+
   return (
     <div className="relative h-full min-h-0 w-full" ref={containerRef}>
       {children}
@@ -1068,12 +1101,17 @@ export function CircleToAiSearchOverlay({
                 isExpanded={showTranscript}
                 isLoading={loading}
                 loadingText="Halo is thinking through the selection..."
+                expandedHeight={expandedPanelHeight}
                 messages={messages}
                 onDraftChange={setDraft}
                 onDraftSubmit={handleDraftSubmit}
                 onDragEnd={handlePanelDragEnd}
                 onDragMove={handlePanelDragMove}
                 onDragStart={handlePanelDragStart}
+                viewportPosition={{
+                  x: containerOffset.left + panelPosition.x,
+                  y: containerOffset.top + panelPosition.y,
+                }}
                 position={panelPosition}
                 showTranscript={showTranscript}
                 workspaceUuid={workspaceUuid}

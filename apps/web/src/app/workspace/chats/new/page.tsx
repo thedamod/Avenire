@@ -3,6 +3,11 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ChatWorkspace } from "@/components/dashboard/chat-workspace";
 import { resolveWorkspaceForUser } from "@/lib/file-data";
+import { buildPageMetadata } from "@/lib/page-metadata";
+
+export const metadata = buildPageMetadata({
+  title: "New Method",
+});
 
 export default async function WorkspaceChatsNewPage({
   searchParams,
@@ -33,7 +38,7 @@ export default async function WorkspaceChatsNewPage({
     <ChatWorkspace
       chatIcon={null}
       chatSlug="new"
-      chatTitle="New Chat"
+      chatTitle="New Method"
       initialMessages={[]}
       initialPrompt={initialPrompt || null}
       isReadonly={false}

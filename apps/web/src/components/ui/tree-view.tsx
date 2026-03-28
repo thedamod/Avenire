@@ -1,11 +1,7 @@
 "use client";
 
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@avenire/ui/components/collapsible";
-import { ChevronRight, File, Folder, FolderOpen } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger, } from "@avenire/ui/components/collapsible";
+import { CaretRight as ChevronRight, File, Folder, FolderOpen } from "@phosphor-icons/react"
 import type { HTMLAttributes, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";

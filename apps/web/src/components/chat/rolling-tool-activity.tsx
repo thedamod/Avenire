@@ -2,7 +2,7 @@
 
 import type { UIMessage } from "@avenire/ai/message-types";
 import { motion, useSpring } from "framer-motion";
-import { ChevronRight } from "lucide-react";
+import { CaretRight as ChevronRight } from "@phosphor-icons/react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -758,7 +758,7 @@ function MutationBlock({ action }: { action: MutationAction }) {
         role="listitem"
         transition={{ duration: 0.28, ease: "easeOut" }}
       >
-        <span className="font-semibold text-foreground/72">Flashcards</span>
+        <span className="font-semibold text-foreground/72">Mindset</span>
         <span className="font-mono text-[12px] text-foreground/62">
           {action.value || "generating..."}
         </span>

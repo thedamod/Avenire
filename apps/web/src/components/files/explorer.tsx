@@ -45,46 +45,47 @@ import { Input } from "@avenire/ui/components/input";
 import { ButtonGroup } from "@avenire/ui/components/button-group";
 import { Skeleton } from "@avenire/ui/components/skeleton";
 import { Spinner } from "@avenire/ui/components/spinner";
+import { Textarea } from "@avenire/ui/components/textarea";
 import {
   Filters as PropertyFilters,
   type Filter,
   type FilterFieldConfig,
 } from "@avenire/ui/components/filters";
 import {
-  ArrowDownToLine,
+  DownloadSimple as ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
-  ArrowUpDown,
+  ArrowsDownUp as ArrowUpDown,
   Copy,
   Check,
   FileArchive,
-  FileAudio2,
-  FileCode2,
+  FileAudio as FileAudio2,
+  FileCode as FileCode2,
   FileImage,
-  FilePlus2,
-  FileSpreadsheet,
+  FilePlus as FilePlus2,
+  FileXls as FileSpreadsheet,
   FileText,
   FileVideo,
   Folder,
-  FolderInput,
-  Grid3X3,
+  FolderPlus as FolderInput,
+  GridFour as Grid3X3,
   House,
   Info,
-  LayoutList,
-  MoreHorizontal,
+  List as LayoutList,
+  DotsThree as MoreHorizontal,
   Pencil,
-  Pin,
-  PinOff,
+  PushPin as Pin,
+  PushPinSlash as PinOff,
   Plus,
-  RotateCcw,
-  Share2,
+  ArrowCounterClockwise as RotateCcw,
+  ShareNetwork as Share2,
   SlidersHorizontal,
-  Trash2,
-  Upload,
+  Trash as Trash2,
+  UploadSimple as Upload,
   X,
   XCircle,
-  WandSparkles,
-} from "lucide-react";
+  MagicWand as WandSparkles,
+} from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import type { Route } from "next";
 import {
@@ -93,7 +94,14 @@ import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { FilePreviewPanel } from "@/components/files/explorer/file-preview-panel";
 import { ShareDialog } from "@/components/files/explorer/share-dialog";
@@ -132,6 +140,14 @@ import {
   type WorkspacePropertyDefinition,
 } from "@/lib/frontmatter";
 import {
+  DEFAULT_NOTE_TEMPLATE,
+  getDefaultNoteTemplates,
+  getRecentNoteTemplateStorageKey,
+  getNoteTemplateStorageKey,
+  type NoteTemplate,
+} from "@/lib/note-templates";
+import { renderMarkdownNoteTemplate } from "@/lib/markdown-note-template";
+import {
   buildProgressivePlaybackSource,
   buildVideoPlaybackDescriptor,
 } from "@/lib/media-playback";
@@ -153,6 +169,8 @@ import { useFilesActivityStore } from "@/stores/filesActivityStore";
 import { filesPinsActions, useFilesPinsStore } from "@/stores/filesPinsStore";
 import { filesUiActions, useFilesUiStore } from "@/stores/filesUiStore";
 import { useHeaderStore } from "@/stores/header-store";
+import { useDashboardOverlayStore } from "@/stores/dashboardOverlayStore";
+import { useUserStore } from "@/stores/userStore";
 import { useWorkspaceHistoryStore } from "@/stores/workspaceHistoryStore";
 import { ScrollArea } from "@avenire/ui/components/scroll-area";
 
@@ -186,6 +204,75 @@ const HEADER_SEGMENT_BUTTON_CLASS =
   "h-9 rounded-none border-0 bg-transparent px-3 text-xs text-foreground shadow-none hover:bg-muted/70 disabled:bg-transparent";
 const HEADER_SEGMENT_ICON_BUTTON_CLASS =
   "h-9 w-9 rounded-none border-0 bg-transparent text-foreground shadow-none hover:bg-muted/70 disabled:bg-transparent";
+
+async function loadWorkspacePropertyDefinitions(workspaceUuid: string) {
+  const response = await fetch(
+    `/api/workspaces/${workspaceUuid}/property-registry`,
+    { cache: "no-store" }
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as { properties?: unknown };
+  return normalizePropertyDefinitions(payload.properties);
+}
+
+async function loadWorkspaceName(workspaceUuid: string) {
+  const response = await fetch("/api/workspaces/list", {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as {
+    workspaces?: Array<{
+      name: string;
+      workspaceId: string;
+    }>;
+  };
+  return (
+    (payload.workspaces ?? []).find(
+      (workspace) => workspace.workspaceId === workspaceUuid
+    )?.name ?? null
+  );
+}
+
+async function loadWorkspaceShareMembers(workspaceUuid: string) {
+  const response = await fetch(
+    `/api/workspaces/${workspaceUuid}/share/members`,
+    {
+      cache: "no-store",
+    }
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as {
+    members?: WorkspaceMemberRecord[];
+  };
+  return payload.members ?? [];
+}
+
+async function createWorkspaceFilesRealtimeToken(workspaceUuid: string) {
+  const response = await fetch("/api/realtime/files-token", {
+    body: JSON.stringify({ workspaceUuid }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as { token?: string };
+  return payload.token ?? null;
+}
 
 type PropertyFilterOperator =
   | "contains"
@@ -460,8 +547,7 @@ function MobileActionsPopover({
     [folders, kind, targetId]
   );
 
-  const actionRowClass =
-    "gap-2 text-xs";
+  const actionRowClass = "gap-2 text-xs";
 
   return (
     <DropdownMenu>
@@ -483,9 +569,7 @@ function MobileActionsPopover({
         className={cn("w-56 bg-background", COMPACT_MENU_SURFACE_CLASS)}
       >
         {onCircleToAi ? (
-          <DropdownMenuItem
-            onClick={onCircleToAi}
-          >
+          <DropdownMenuItem onClick={onCircleToAi}>
             <WandSparkles className="size-3.5" />
             Circle to AI
           </DropdownMenuItem>
@@ -526,9 +610,7 @@ function MobileActionsPopover({
               ) : null}
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={onOpenProperties}
-            >
+            <DropdownMenuItem onClick={onOpenProperties}>
               <SlidersHorizontal className="size-3.5" />
               Metadata
             </DropdownMenuItem>
@@ -536,9 +618,7 @@ function MobileActionsPopover({
         </DropdownMenuSub>
         {canEdit ? (
           <>
-            <DropdownMenuItem
-              onClick={onTogglePin}
-            >
+            <DropdownMenuItem onClick={onTogglePin}>
               {pinned ? (
                 <PinOff className="size-3.5" />
               ) : (
@@ -546,21 +626,15 @@ function MobileActionsPopover({
               )}
               {pinned ? "Unpin" : "Pin"}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={onRename}
-            >
+            <DropdownMenuItem onClick={onRename}>
               <Pencil className="size-3.5" />
               Rename
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={onDuplicate}
-            >
+            <DropdownMenuItem onClick={onDuplicate}>
               <Copy className="size-3.5" />
               Duplicate
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={onShare}
-            >
+            <DropdownMenuItem onClick={onShare}>
               <Share2 className="size-3.5" />
               Share
             </DropdownMenuItem>
@@ -594,16 +668,12 @@ function MobileActionsPopover({
                 </ScrollArea>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            <DropdownMenuItem
-              onClick={onDownload}
-            >
+            <DropdownMenuItem onClick={onDownload}>
               <ArrowDownToLine className="size-3.5" />
               Download
             </DropdownMenuItem>
             {onHardReingest ? (
-              <DropdownMenuItem
-                onClick={onHardReingest}
-              >
+              <DropdownMenuItem onClick={onHardReingest}>
                 <RotateCcw className="size-3.5" />
                 Hard Re-ingest
               </DropdownMenuItem>
@@ -642,19 +712,14 @@ function MobileActionsPopover({
             </div>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        <DropdownMenuItem
-          onClick={onMetadata}
-        >
+        <DropdownMenuItem onClick={onMetadata}>
           <SlidersHorizontal className="size-3.5" />
           Properties
         </DropdownMenuItem>
         {!readOnly ? (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-            onClick={onDelete}
-              variant="destructive"
-            >
+            <DropdownMenuItem onClick={onDelete} variant="destructive">
               <Trash2 className="size-3.5" />
               Delete
             </DropdownMenuItem>
@@ -683,7 +748,7 @@ function serializePropertyFilters(
                 .filter(Boolean)
             : [filter.value]
           : [],
-  }))
+  }));
 }
 
 function deserializePropertyFilters(
@@ -700,7 +765,7 @@ function deserializePropertyFilters(
       value:
         filter.values.length > 1
           ? filter.values.join(", ")
-          : filter.values[0] ?? "",
+          : (filter.values[0] ?? ""),
     };
   });
 }
@@ -749,6 +814,14 @@ interface UploadResultLike {
   name?: string;
   size?: number;
   ufsUrl?: string;
+}
+
+function isMarkdownUploadCandidate(file: File) {
+  const mime = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  return (
+    mime === "text/markdown" || name.endsWith(".md") || name.endsWith(".mdx")
+  );
 }
 
 interface BulkRegisterResponse {
@@ -1205,7 +1278,15 @@ export function FileExplorer({
   const [propertyFilters, setPropertyFilters] = useState<PropertyFilterState[]>(
     []
   );
-  const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
+  const [viewMode, setViewMode] = useState<"cards" | "list">(() => {
+    try {
+      return window.localStorage.getItem(FILE_EXPLORER_VIEW_MODE_KEY) === "list"
+        ? "list"
+        : "cards";
+    } catch {
+      return "cards";
+    }
+  });
   const [hoveredPreviewFileId, setHoveredPreviewFileId] = useState<
     string | null
   >(null);
@@ -1222,8 +1303,18 @@ export function FileExplorer({
     mode: "create-folder" | "create-note" | "rename-file" | "rename-folder";
     id?: string;
     parentId?: string;
+    templateId?: string;
     value: string;
   } | null>(null);
+  const [noteTemplates, setNoteTemplates] = useState<NoteTemplate[]>([]);
+  const [recentTemplateIds, setRecentTemplateIds] = useState<string[]>([]);
+  const [noteTemplateEditorOpen, setNoteTemplateEditorOpen] = useState(false);
+  const [noteTemplateDraft, setNoteTemplateDraft] = useState<NoteTemplate>({
+    bannerUrl: null,
+    content: "",
+    id: "",
+    name: "",
+  });
   const [noteCreateBusy, setNoteCreateBusy] = useState(false);
   const [mobileCreateMenuOpen, setMobileCreateMenuOpen] = useState(false);
   const [mobileConfirmAction, setMobileConfirmAction] = useState<
@@ -1231,18 +1322,13 @@ export function FileExplorer({
   >(null);
   const loadedPropertyRegistryWorkspaceRef = useRef<string | null>(null);
   const loadedCardPropertySelectionRef = useRef(false);
+  const noteTemplatesHydratedRef = useRef(false);
 
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(FILE_EXPLORER_VIEW_MODE_KEY);
-      if (saved === "list") {
-        setViewMode("list");
-      }
-    } catch {
-      // ignore localStorage errors in restricted contexts
-    }
-  }, []);
   const isMobile = useIsMobile();
+  const currentUser = useUserStore((state) => state.user);
+  const setSettingsOpen = useDashboardOverlayStore(
+    (state) => state.setSettingsOpen
+  );
 
   const { startUpload } = useUploadThing("fileExplorerUploader");
   const { startUpload: startBannerUpload } = useUploadThing("imageUploader");
@@ -1343,7 +1429,7 @@ export function FileExplorer({
   const isCurrentFolderReadOnly = Boolean(currentFolder?.readOnly);
 
   const createNote = useCallback(
-    async (parentId: string, name: string) => {
+    async (parentId: string, name: string, templateId?: string) => {
       if (!workspaceUuid) {
         return;
       }
@@ -1362,10 +1448,24 @@ export function FileExplorer({
         ? trimmedName
         : `${trimmedName}.md`;
       const noteTitle = fileName.replace(/\.mdx?$/i, "") || "Untitled";
+      const template =
+        noteTemplates.find((entry) => entry.id === templateId) ?? null;
+      const createdBy =
+        currentUser?.name?.trim() || currentUser?.email?.trim() || "";
+      const initialContent = template
+        ? renderMarkdownNoteTemplate(template.content, {
+            createdBy,
+            title: noteTitle,
+          })
+        : `# ${noteTitle}\n`;
+      const page = template
+        ? {
+            bannerUrl: template.bannerUrl ?? null,
+          }
+        : undefined;
 
       setNoteCreateBusy(true);
       try {
-        const initialContent = `# ${noteTitle}\n`;
         const response = await fetch(
           `/api/workspaces/${workspaceUuid}/files/register`,
           {
@@ -1375,7 +1475,10 @@ export function FileExplorer({
               folderId: parentId,
               name: fileName,
               content: initialContent,
-              metadata: { type: "note" },
+              metadata: {
+                type: "note",
+                ...(page ? { page } : {}),
+              },
             }),
           }
         );
@@ -1404,7 +1507,7 @@ export function FileExplorer({
         setNoteCreateBusy(false);
       }
     },
-    [noteCreateBusy, router, workspaceUuid]
+    [currentUser, noteCreateBusy, noteTemplates, router, workspaceUuid]
   );
 
   const openCreateNoteDialog = useCallback(
@@ -1423,6 +1526,157 @@ export function FileExplorer({
     },
     [isCurrentFolderReadOnly]
   );
+
+  useEffect(() => {
+    noteTemplatesHydratedRef.current = false;
+    if (!workspaceUuid) {
+      setNoteTemplates(getDefaultNoteTemplates());
+      noteTemplatesHydratedRef.current = true;
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(
+        getNoteTemplateStorageKey(workspaceUuid)
+      );
+      const recentRaw = window.localStorage.getItem(
+        getRecentNoteTemplateStorageKey(workspaceUuid)
+      );
+      const recent = Array.isArray(JSON.parse(recentRaw ?? "[]"))
+        ? (JSON.parse(recentRaw ?? "[]") as unknown[])
+            .filter((entry): entry is string => typeof entry === "string")
+            .slice(0, 6)
+        : [];
+      setRecentTemplateIds(recent);
+      if (!raw) {
+        setNoteTemplates(getDefaultNoteTemplates());
+        noteTemplatesHydratedRef.current = true;
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        setNoteTemplates(getDefaultNoteTemplates());
+        return;
+      }
+      const templates = parsed
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return null;
+          }
+          const candidate = entry as Partial<NoteTemplate>;
+          const id =
+            typeof candidate.id === "string" ? candidate.id.trim() : "";
+          const name =
+            typeof candidate.name === "string" ? candidate.name.trim() : "";
+          const content =
+            typeof candidate.content === "string"
+              ? candidate.content
+              : DEFAULT_NOTE_TEMPLATE.content;
+          const bannerUrl =
+            typeof candidate.bannerUrl === "string" &&
+            candidate.bannerUrl.trim().length > 0
+              ? candidate.bannerUrl.trim()
+              : null;
+          if (!(id && name)) {
+            return null;
+          }
+          return { id, name, content, bannerUrl } satisfies NoteTemplate;
+        })
+        .filter((entry): entry is NoteTemplate => Boolean(entry));
+      setNoteTemplates(
+        templates.length > 0 ? templates : getDefaultNoteTemplates()
+      );
+      noteTemplatesHydratedRef.current = true;
+    } catch {
+      setNoteTemplates(getDefaultNoteTemplates());
+      setRecentTemplateIds([]);
+      noteTemplatesHydratedRef.current = true;
+    }
+  }, [workspaceUuid]);
+
+  useEffect(() => {
+    if (!workspaceUuid || !noteTemplatesHydratedRef.current) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        getNoteTemplateStorageKey(workspaceUuid),
+        JSON.stringify(noteTemplates)
+      );
+      window.localStorage.setItem(
+        getRecentNoteTemplateStorageKey(workspaceUuid),
+        JSON.stringify(
+          recentTemplateIds.filter((id) =>
+            noteTemplates.some((template) => template.id === id)
+          )
+        )
+      );
+    } catch {
+      return;
+    }
+  }, [noteTemplates, recentTemplateIds, workspaceUuid]);
+
+  const openTemplateEditor = useCallback((template?: NoteTemplate | null) => {
+    const nextTemplate =
+      template ??
+      ({
+        content: DEFAULT_NOTE_TEMPLATE.content,
+        bannerUrl: null,
+        id: "",
+        name: "",
+      } satisfies NoteTemplate);
+    setNoteTemplateDraft(nextTemplate);
+    setNoteTemplateEditorOpen(true);
+  }, []);
+
+  const saveTemplateDraft = useCallback(() => {
+    const trimmedName = noteTemplateDraft.name.trim();
+    const trimmedContent = noteTemplateDraft.content.trim();
+    if (!(trimmedName && trimmedContent)) {
+      return;
+    }
+
+    const id =
+      noteTemplateDraft.id.trim() ||
+      globalThis.crypto?.randomUUID?.() ||
+      `template-${Date.now()}`;
+    const nextTemplate: NoteTemplate = {
+      bannerUrl: noteTemplateDraft.bannerUrl ?? null,
+      id,
+      name: trimmedName,
+      content: noteTemplateDraft.content,
+    };
+
+    setNoteTemplates((current) => {
+      const existingIndex = current.findIndex((item) => item.id === id);
+      if (existingIndex < 0) {
+        return [...current, nextTemplate];
+      }
+      return current.map((item) => (item.id === id ? nextTemplate : item));
+    });
+
+    setNoteTemplateEditorOpen(false);
+  }, [noteTemplateDraft, setNoteTemplates]);
+
+  const deleteTemplateDraft = useCallback(() => {
+    const id = noteTemplateDraft.id.trim();
+    if (!id) {
+      setNoteTemplateEditorOpen(false);
+      return;
+    }
+
+    setNoteTemplates((current) => {
+      const next = current.filter((template) => template.id !== id);
+      return next.length > 0 ? next : getDefaultNoteTemplates();
+    });
+
+    setRecentTemplateIds((current) =>
+      current.filter((templateId) => templateId !== id)
+    );
+    setNoteTemplateEditorOpen(false);
+  }, [noteTemplateDraft.id, setNoteTemplates]);
+
   const parentFolder = useMemo(
     () => breadcrumbs[breadcrumbs.length - 2] ?? null,
     [breadcrumbs]
@@ -1549,6 +1803,9 @@ export function FileExplorer({
         : null,
     [workspaceUuid]
   );
+  const previousCardPropertyStorageKeyRef = useRef<string | null>(
+    cardPropertyStorageKey
+  );
   const selectedCardPropertyDefinitions = useMemo(() => {
     const selectedKeys = new Set(cardPropertyKeys);
     return availablePropertyDefinitions
@@ -1566,10 +1823,11 @@ export function FileExplorer({
     );
   }, [availablePropertyDefinitions, cardFieldQuery]);
 
-  useEffect(() => {
+  if (previousCardPropertyStorageKeyRef.current !== cardPropertyStorageKey) {
+    previousCardPropertyStorageKeyRef.current = cardPropertyStorageKey;
     loadedCardPropertySelectionRef.current = false;
     setCardPropertyKeys([]);
-  }, [workspaceUuid]);
+  }
 
   useEffect(() => {
     if (!cardPropertyStorageKey || availablePropertyDefinitions.length === 0) {
@@ -2317,17 +2575,8 @@ export function FileExplorer({
     loadedPropertyRegistryWorkspaceRef.current = workspaceUuid;
     void (async () => {
       try {
-        const response = await fetch(
-          `/api/workspaces/${workspaceUuid}/property-registry`,
-          {
-            cache: "no-store",
-          }
-        );
-        if (!response.ok || cancelled) {
-          return;
-        }
-        const payload = (await response.json()) as { properties?: unknown };
-        const normalized = normalizePropertyDefinitions(payload.properties);
+        const normalized =
+          await loadWorkspacePropertyDefinitions(workspaceUuid);
         if (cancelled) {
           return;
         }
@@ -2362,23 +2611,9 @@ export function FileExplorer({
           return;
         }
 
-        const response = await fetch("/api/workspaces/list", {
-          cache: "no-store",
-        });
-        if (!response.ok) {
-          return;
-        }
-        const payload = (await response.json()) as {
-          workspaces?: Array<{
-            workspaceId: string;
-            name: string;
-          }>;
-        };
-        const activeWorkspace = (payload.workspaces ?? []).find(
-          (workspace) => workspace.workspaceId === workspaceUuid
-        );
-        if (activeWorkspace?.name) {
-          setWorkspaceName(activeWorkspace.name);
+        const name = await loadWorkspaceName(workspaceUuid);
+        if (name) {
+          setWorkspaceName(name);
         }
       } catch {
         // ignore
@@ -2393,19 +2628,8 @@ export function FileExplorer({
 
     void (async () => {
       try {
-        const response = await fetch(
-          `/api/workspaces/${workspaceUuid}/share/members`,
-          {
-            cache: "no-store",
-          }
-        );
-        if (!response.ok) {
-          return;
-        }
-        const payload = (await response.json()) as {
-          members?: WorkspaceMemberRecord[];
-        };
-        setWorkspaceMembers(payload.members ?? []);
+        const members = await loadWorkspaceShareMembers(workspaceUuid);
+        setWorkspaceMembers(members);
       } catch {
         // ignore
       }
@@ -2498,20 +2722,8 @@ export function FileExplorer({
       }
 
       try {
-        const tokenResponse = await fetch("/api/realtime/files-token", {
-          body: JSON.stringify({ workspaceUuid }),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        });
-
-        if (!tokenResponse.ok) {
-          setSseConnected(false);
-          scheduleReconnect();
-          return;
-        }
-
-        const payload = (await tokenResponse.json()) as { token?: string };
-        if (!payload.token) {
+        const token = await createWorkspaceFilesRealtimeToken(workspaceUuid);
+        if (!token) {
           setSseConnected(false);
           scheduleReconnect();
           return;
@@ -2521,7 +2733,7 @@ export function FileExplorer({
 
         const url = new URL("/api/realtime/files", window.location.origin);
         url.searchParams.set("workspaceUuid", workspaceUuid);
-        url.searchParams.set("token", payload.token);
+        url.searchParams.set("token", token);
 
         eventSource = new EventSource(url.toString());
         eventSource.onopen = () => {
@@ -2751,14 +2963,12 @@ export function FileExplorer({
     );
   }, [activeRetrievalChunkId, query, retrievalResults, workspaceUuid]);
 
-  useEffect(() => {
-    if (
-      selectedRetrievalChunkParam &&
-      selectedRetrievalChunkParam !== activeRetrievalChunkId
-    ) {
-      setActiveRetrievalChunkId(selectedRetrievalChunkParam);
-    }
-  }, [activeRetrievalChunkId, selectedRetrievalChunkParam]);
+  if (
+    selectedRetrievalChunkParam &&
+    selectedRetrievalChunkParam !== activeRetrievalChunkId
+  ) {
+    setActiveRetrievalChunkId(selectedRetrievalChunkParam);
+  }
 
   useEffect(() => {
     const processed = processedFilesIntentVersionsRef.current;
@@ -3197,11 +3407,12 @@ export function FileExplorer({
         const registerChunkSize = 40;
         type UploadPrepared = {
           candidate: UploadCandidate;
+          content?: string;
           contentHashSha256?: string;
           file: File;
           queueItemId: string;
           targetFolderId: string;
-          uploaded: UploadResultLike;
+          uploaded?: UploadResultLike;
         };
         const preparedForRegister: UploadPrepared[] = [];
         let successCount = 0;
@@ -3271,6 +3482,9 @@ export function FileExplorer({
             sizeBytes: number;
           }> = [];
           for (const entry of indexedCandidates) {
+            if (isMarkdownUploadCandidate(entry.candidate.file)) {
+              continue;
+            }
             const hashSha256 = hashByQueueId.get(entry.queueItemId);
             if (!(entry.queueItemId && hashSha256)) {
               continue;
@@ -3371,17 +3585,6 @@ export function FileExplorer({
 
           const createdFoldersForCandidate: CreatedFolder[] = [];
           try {
-            await requestUploadPreflight({
-              file: entry.candidate.file,
-              folderId: currentFolderId,
-              workspaceUuid,
-            });
-            const uploaded = ((await startUpload([entry.candidate.file])) ??
-              [])[0] as UploadResultLike | undefined;
-            if (!(uploaded?.key && uploaded.ufsUrl)) {
-              throw new Error("Upload returned no file metadata");
-            }
-
             const normalizedPath = normalizeRelativePath(
               entry.candidate.relativePath,
               entry.candidate.file
@@ -3400,14 +3603,36 @@ export function FileExplorer({
                 return task;
               })());
 
-            preparedForRegister.push({
-              candidate: entry.candidate,
-              contentHashSha256: hashByQueueId.get(entry.queueItemId),
-              file: entry.candidate.file,
-              queueItemId: entry.queueItemId,
-              targetFolderId,
-              uploaded,
-            });
+            if (isMarkdownUploadCandidate(entry.candidate.file)) {
+              preparedForRegister.push({
+                candidate: entry.candidate,
+                content: await entry.candidate.file.text(),
+                contentHashSha256: hashByQueueId.get(entry.queueItemId),
+                file: entry.candidate.file,
+                queueItemId: entry.queueItemId,
+                targetFolderId,
+              });
+            } else {
+              await requestUploadPreflight({
+                file: entry.candidate.file,
+                folderId: currentFolderId,
+                workspaceUuid,
+              });
+              const uploaded = ((await startUpload([entry.candidate.file])) ??
+                [])[0] as UploadResultLike | undefined;
+              if (!(uploaded?.key && uploaded.ufsUrl)) {
+                throw new Error("Upload returned no file metadata");
+              }
+
+              preparedForRegister.push({
+                candidate: entry.candidate,
+                contentHashSha256: hashByQueueId.get(entry.queueItemId),
+                file: entry.candidate.file,
+                queueItemId: entry.queueItemId,
+                targetFolderId,
+                uploaded,
+              });
+            }
 
             setUploadQueue((previous) =>
               previous.map((item) =>
@@ -3483,16 +3708,17 @@ export function FileExplorer({
                       : "allow",
                   files: registerChunk.map((entry) => ({
                     clientUploadId: entry.queueItemId,
+                    content: entry.content,
                     contentHashSha256: entry.contentHashSha256,
                     folderId: entry.targetFolderId,
                     hashComputedBy: entry.contentHashSha256
                       ? "client"
                       : undefined,
-                    storageKey: entry.uploaded.key,
-                    storageUrl: entry.uploaded.ufsUrl,
-                    name: entry.uploaded.name ?? entry.file.name,
-                    mimeType: entry.uploaded.contentType ?? entry.file.type,
-                    sizeBytes: entry.uploaded.size ?? entry.file.size,
+                    storageKey: entry.uploaded?.key,
+                    storageUrl: entry.uploaded?.ufsUrl,
+                    name: entry.uploaded?.name ?? entry.file.name,
+                    mimeType: entry.uploaded?.contentType ?? entry.file.type,
+                    sizeBytes: entry.uploaded?.size ?? entry.file.size,
                   })),
                 }),
               }
@@ -4166,7 +4392,11 @@ export function FileExplorer({
     }
 
     if (editDialog.mode === "create-note" && editDialog.parentId) {
-      await createNote(editDialog.parentId, editDialog.value);
+      await createNote(
+        editDialog.parentId,
+        editDialog.value,
+        editDialog.templateId
+      );
     }
 
     if (editDialog.mode === "rename-folder" && editDialog.id) {
@@ -4298,9 +4528,10 @@ export function FileExplorer({
   const downloadFileDirect = useCallback(
     async (file: FileRecord) => {
       try {
-        const sourceUrl = file.isNote
-          ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
-          : file.storageUrl;
+        const sourceUrl =
+          file.isNote || detectPreviewKind(file).isMarkdown
+            ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
+            : file.storageUrl;
         const response = await fetch(sourceUrl);
         if (!response.ok) {
           throw new Error("Download failed");
@@ -4315,9 +4546,10 @@ export function FileExplorer({
         link.remove();
         URL.revokeObjectURL(objectUrl);
       } catch {
-        const fallbackUrl = file.isNote
-          ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
-          : file.storageUrl;
+        const fallbackUrl =
+          file.isNote || detectPreviewKind(file).isMarkdown
+            ? `/api/workspaces/${workspaceUuid}/files/${file.id}/stream`
+            : file.storageUrl;
         window.open(fallbackUrl, "_blank", "noopener,noreferrer");
       }
     },
@@ -4403,14 +4635,203 @@ export function FileExplorer({
           </BreadcrumbList>
         </Breadcrumb>
       ),
-      actions: (
-        isMobile ? (
+      actions: isMobile ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                aria-label="Workspace actions"
+                className="h-9 w-9 rounded-md border border-border/60 bg-background text-foreground shadow-sm hover:bg-muted/70"
+                size="icon"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            <MoreHorizontal className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className={cn("w-56 bg-background", COMPACT_MENU_SURFACE_CLASS)}
+          >
+            <DropdownMenuItem onClick={toggleCurrentPinnedItem}>
+              {isCurrentPinned ? (
+                <PinOff className="size-3.5" />
+              ) : (
+                <Pin className="size-3.5" />
+              )}
+              {isCurrentPinned ? "Unpin" : "Pin"}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={isAtWorkspaceRoot || !currentFolder}
+              onClick={() => {
+                if (currentFolder) {
+                  setPropertiesItem({
+                    detail: "Folder",
+                    id: currentFolder.id,
+                    kind: "folder",
+                    name: currentFolder.name,
+                  });
+                  setPropertiesOpen(true);
+                }
+              }}
+            >
+              <SlidersHorizontal className="size-3.5" />
+              Properties
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={isAtWorkspaceRoot || !currentFolder}
+              onClick={() => {
+                if (currentFolder) {
+                  openRenameFolderDialog(currentFolder);
+                }
+              }}
+            >
+              <Pencil className="size-3.5" />
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={isAtWorkspaceRoot || !currentFolder}
+              onClick={() => {
+                if (currentFolder) {
+                  void duplicateItem({
+                    id: currentFolder.id,
+                    kind: "folder",
+                    parentId: currentFolder.parentId,
+                  });
+                }
+              }}
+            >
+              <Copy className="size-3.5" />
+              Duplicate
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={isAtWorkspaceRoot || !currentFolder}
+              onClick={() => {
+                if (currentFolder) {
+                  void copyFolderShareLink(currentFolder);
+                }
+              }}
+            >
+              <Share2 className="size-3.5" />
+              Share
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger
+                disabled={isAtWorkspaceRoot || !currentFolder}
+              >
+                <FolderInput className="size-3.5" />
+                Move To
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent
+                className={cn("w-56 bg-background", COMPACT_MENU_SURFACE_CLASS)}
+              >
+                {allFolders
+                  .filter(
+                    (folder) =>
+                      currentFolder &&
+                      folder.id !== currentFolder.id &&
+                      !folder.readOnly
+                  )
+                  .slice(0, 20)
+                  .map((folder) => (
+                    <DropdownMenuItem
+                      key={folder.id}
+                      onClick={() => {
+                        if (currentFolder) {
+                          void moveFolder(currentFolder.id, folder.id);
+                        }
+                      }}
+                    >
+                      {folder.name}
+                    </DropdownMenuItem>
+                  ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem
+              disabled={isAtWorkspaceRoot || !currentFolder}
+              onClick={() => {
+                if (currentFolder) {
+                  void downloadItemArchive({
+                    id: currentFolder.id,
+                    kind: "folder",
+                    name: currentFolder.name,
+                  });
+                }
+              }}
+            >
+              <ArrowDownToLine className="size-3.5" />
+              Download
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Info className="size-3.5" />
+                Metadata
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent
+                className={cn("w-56 bg-background", COMPACT_MENU_SURFACE_CLASS)}
+              >
+                {currentInfoEntries.map((entry) => (
+                  <div
+                    className="flex items-start justify-between gap-3 px-2 py-1.5 text-xs"
+                    key={entry.label}
+                  >
+                    <span className="text-muted-foreground">{entry.label}</span>
+                    <span className="max-w-[12rem] text-right text-foreground">
+                      {entry.value}
+                    </span>
+                  </div>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              disabled={isAtWorkspaceRoot || !currentFolder}
+              onClick={() => {
+                if (currentFolder) {
+                  void deleteSelectionItems([
+                    { id: currentFolder.id, kind: "folder" },
+                  ]);
+                }
+              }}
+              variant="destructive"
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <ButtonGroup className={HEADER_SEGMENTED_GROUP_CLASS}>
+          <ShareDialog
+            currentFolder={currentFolder}
+            compact
+            isAtWorkspaceRoot={isAtWorkspaceRoot}
+            loadShareSuggestions={loadShareSuggestions}
+            segmented
+            variant="folder"
+            workspaceUuid={workspaceUuid}
+          />
+          <Button
+            className={HEADER_SEGMENT_BUTTON_CLASS}
+            onClick={toggleCurrentPinnedItem}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {isCurrentPinned ? (
+              <PinOff className="size-3.5" />
+            ) : (
+              <Pin className="size-3.5" />
+            )}
+            {isCurrentPinned ? "Unpin" : "Pin"}
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
                 <Button
-                  aria-label="Workspace actions"
-                  className="h-9 w-9 rounded-md border border-border/60 bg-background text-foreground shadow-sm hover:bg-muted/70"
+                  aria-label="More actions"
+                  className={HEADER_SEGMENT_ICON_BUTTON_CLASS}
                   size="icon"
                   type="button"
                   variant="ghost"
@@ -4421,7 +4842,7 @@ export function FileExplorer({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className={cn("w-56 bg-background", COMPACT_MENU_SURFACE_CLASS)}
+              className={cn("w-52 bg-background", COMPACT_MENU_SURFACE_CLASS)}
             >
               <DropdownMenuItem onClick={toggleCurrentPinnedItem}>
                 {isCurrentPinned ? (
@@ -4578,206 +4999,7 @@ export function FileExplorer({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        ) : (
-          <ButtonGroup className={HEADER_SEGMENTED_GROUP_CLASS}>
-            <ShareDialog
-              currentFolder={currentFolder}
-              compact
-              isAtWorkspaceRoot={isAtWorkspaceRoot}
-              loadShareSuggestions={loadShareSuggestions}
-              segmented
-              variant="folder"
-              workspaceUuid={workspaceUuid}
-            />
-            <Button
-              className={HEADER_SEGMENT_BUTTON_CLASS}
-              onClick={toggleCurrentPinnedItem}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              {isCurrentPinned ? (
-                <PinOff className="size-3.5" />
-              ) : (
-                <Pin className="size-3.5" />
-              )}
-              {isCurrentPinned ? "Unpin" : "Pin"}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    aria-label="More actions"
-                    className={HEADER_SEGMENT_ICON_BUTTON_CLASS}
-                    size="icon"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                <MoreHorizontal className="size-3.5" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                className={cn("w-52 bg-background", COMPACT_MENU_SURFACE_CLASS)}
-              >
-                <DropdownMenuItem onClick={toggleCurrentPinnedItem}>
-                  {isCurrentPinned ? (
-                    <PinOff className="size-3.5" />
-                  ) : (
-                    <Pin className="size-3.5" />
-                  )}
-                  {isCurrentPinned ? "Unpin" : "Pin"}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={isAtWorkspaceRoot || !currentFolder}
-                  onClick={() => {
-                    if (currentFolder) {
-                      setPropertiesItem({
-                        detail: "Folder",
-                        id: currentFolder.id,
-                        kind: "folder",
-                        name: currentFolder.name,
-                      });
-                      setPropertiesOpen(true);
-                    }
-                  }}
-                >
-                  <SlidersHorizontal className="size-3.5" />
-                  Properties
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={isAtWorkspaceRoot || !currentFolder}
-                  onClick={() => {
-                    if (currentFolder) {
-                      openRenameFolderDialog(currentFolder);
-                    }
-                  }}
-                >
-                  <Pencil className="size-3.5" />
-                  Rename
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={isAtWorkspaceRoot || !currentFolder}
-                  onClick={() => {
-                    if (currentFolder) {
-                      void duplicateItem({
-                        id: currentFolder.id,
-                        kind: "folder",
-                        parentId: currentFolder.parentId,
-                      });
-                    }
-                  }}
-                >
-                  <Copy className="size-3.5" />
-                  Duplicate
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={isAtWorkspaceRoot || !currentFolder}
-                  onClick={() => {
-                    if (currentFolder) {
-                      void copyFolderShareLink(currentFolder);
-                    }
-                  }}
-                >
-                  <Share2 className="size-3.5" />
-                  Share
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger
-                    disabled={isAtWorkspaceRoot || !currentFolder}
-                  >
-                    <FolderInput className="size-3.5" />
-                    Move To
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent
-                    className={cn(
-                      "w-56 bg-background",
-                      COMPACT_MENU_SURFACE_CLASS
-                    )}
-                  >
-                    {allFolders
-                      .filter(
-                        (folder) =>
-                          currentFolder &&
-                          folder.id !== currentFolder.id &&
-                          !folder.readOnly
-                      )
-                      .slice(0, 20)
-                      .map((folder) => (
-                        <DropdownMenuItem
-                          key={folder.id}
-                          onClick={() => {
-                            if (currentFolder) {
-                              void moveFolder(currentFolder.id, folder.id);
-                            }
-                          }}
-                        >
-                          {folder.name}
-                        </DropdownMenuItem>
-                      ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuItem
-                  disabled={isAtWorkspaceRoot || !currentFolder}
-                  onClick={() => {
-                    if (currentFolder) {
-                      void downloadItemArchive({
-                        id: currentFolder.id,
-                        kind: "folder",
-                        name: currentFolder.name,
-                      });
-                    }
-                  }}
-                >
-                  <ArrowDownToLine className="size-3.5" />
-                  Download
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <Info className="size-3.5" />
-                    Metadata
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent
-                    className={cn(
-                      "w-56 bg-background",
-                      COMPACT_MENU_SURFACE_CLASS
-                    )}
-                  >
-                    {currentInfoEntries.map((entry) => (
-                      <div
-                        className="flex items-start justify-between gap-3 px-2 py-1.5 text-xs"
-                        key={entry.label}
-                      >
-                        <span className="text-muted-foreground">
-                          {entry.label}
-                        </span>
-                        <span className="max-w-[12rem] text-right text-foreground">
-                          {entry.value}
-                        </span>
-                      </div>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  disabled={isAtWorkspaceRoot || !currentFolder}
-                  onClick={() => {
-                    if (currentFolder) {
-                      void deleteSelectionItems([
-                        { id: currentFolder.id, kind: "folder" },
-                      ]);
-                    }
-                  }}
-                  variant="destructive"
-                >
-                  <Trash2 className="size-3.5" />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </ButtonGroup>
-        )
+        </ButtonGroup>
       ),
     });
 
@@ -4808,37 +5030,47 @@ export function FileExplorer({
 
   if (activeFile) {
     return (
-      <FilePreviewPanel
-        activeFile={activeFile}
-        activeRetrievalChunkId={activeRetrievalChunkId}
-        allFiles={allFiles}
-        allFolders={allFolders}
-        copyFileShareLink={copyFileShareLink}
-        currentFolderId={currentFolderId}
-        currentInfoEntries={currentInfoEntries}
-        deleteSelectionItems={deleteSelectionItems}
-        downloadFileDirect={downloadFileDirect}
-        downloadItemArchive={downloadItemArchive}
-        duplicateItem={duplicateItem}
-        filePathById={filePathById}
-        hardReingestFile={hardReingestFile}
-        isCurrentPinned={isCurrentPinned}
-        loadShareSuggestions={loadShareSuggestions}
-        moveFile={moveFile}
-        openFileById={openFileById}
-        openRenameFileDialog={openRenameFileDialog}
-        propertyDefinitions={availablePropertyDefinitions}
-        query={query}
-        retrievalResults={retrievalResults}
-        selectFile={selectFile}
-        setPropertyDefinitions={setPropertyDefinitions}
-        startBannerUpload={startBannerUpload}
-        startUpload={startUpload}
-        toggleCurrentPinnedItem={toggleCurrentPinnedItem}
-        wikiMarkdownFiles={wikiMarkdownFiles}
-        workspaceMembers={workspaceMembers}
-        workspaceUuid={workspaceUuid}
-      />
+      <Suspense
+        fallback={
+          <div className="flex h-full min-h-0 flex-1 items-center justify-center">
+            <div className="inline-flex items-center gap-2 text-muted-foreground text-sm">
+              <Spinner className="size-4" />
+              Loading preview...
+            </div>
+          </div>
+        }
+      >
+        <FilePreviewPanel
+          activeFile={activeFile}
+          activeRetrievalChunkId={activeRetrievalChunkId}
+          allFiles={allFiles}
+          allFolders={allFolders}
+          copyFileShareLink={copyFileShareLink}
+          currentFolderId={currentFolderId}
+          currentInfoEntries={currentInfoEntries}
+          deleteSelectionItems={deleteSelectionItems}
+          downloadFileDirect={downloadFileDirect}
+          downloadItemArchive={downloadItemArchive}
+          duplicateItem={duplicateItem}
+          filePathById={filePathById}
+          hardReingestFile={hardReingestFile}
+          isCurrentPinned={isCurrentPinned}
+          loadShareSuggestions={loadShareSuggestions}
+          moveFile={moveFile}
+          openFileById={openFileById}
+          openRenameFileDialog={openRenameFileDialog}
+          propertyDefinitions={availablePropertyDefinitions}
+          query={query}
+          retrievalResults={retrievalResults}
+          selectFile={selectFile}
+          setPropertyDefinitions={setPropertyDefinitions}
+          startBannerUpload={startBannerUpload}
+          toggleCurrentPinnedItem={toggleCurrentPinnedItem}
+          wikiMarkdownFiles={wikiMarkdownFiles}
+          workspaceMembers={workspaceMembers}
+          workspaceUuid={workspaceUuid}
+        />
+      </Suspense>
     );
   }
 
@@ -5052,73 +5284,39 @@ export function FileExplorer({
                 }
               >
                 <ArrowUpDown className="size-3.5" />
-                {getSortFieldLabel(sortState)} · {getSortDirectionLabel(sortState.direction)}
+                {getSortFieldLabel(sortState)} ·{" "}
+                {getSortDirectionLabel(sortState.direction)}
               </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className={cn("w-[220px] bg-background", COMPACT_MENU_SURFACE_CLASS)}
-            >
+              <DropdownMenuContent
+                align="end"
+                className={cn(
+                  "w-[220px] bg-background",
+                  COMPACT_MENU_SURFACE_CLASS
+                )}
+              >
                 <ScrollArea className="max-h-72">
                   <div className="p-1">
-                <DropdownMenuGroup>
-                  <DropdownMenuLabel className="px-2 py-1.5 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                    Sort options
-                  </DropdownMenuLabel>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                {[
-                  { key: "name", label: "Name" },
-                  { key: "createdAt", label: "Date created" },
-                  { key: "updatedAt", label: "Date updated" },
-                ].map((option) => (
-                  <DropdownMenuSub key={option.key}>
-                    <DropdownMenuSubTrigger>
-                      <ArrowUpDown className="size-3.5" />
-                      {option.label}
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuSubContent
-                      className={cn("w-44 bg-background", COMPACT_MENU_SURFACE_CLASS)}
-                    >
-                      {(["asc", "desc"] as const).map((direction) => (
-                        <DropdownMenuItem
-                          key={direction}
-                          onClick={() =>
-                            setSortState({
-                              direction,
-                              key: option.key as "createdAt" | "name" | "updatedAt",
-                              kind: "builtin",
-                            })
-                          }
-                        >
-                          <span className="flex-1">
-                            {direction === "asc" ? "Ascending" : "Descending"}
-                          </span>
-                          {sortState.kind === "builtin" &&
-                          sortState.key === option.key &&
-                          sortState.direction === direction ? (
-                            <Check className="size-3.5" />
-                          ) : null}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuSubContent>
-                  </DropdownMenuSub>
-                ))}
-                {availablePropertyDefinitions.length > 0 ? (
-                  <>
-                    <DropdownMenuSeparator />
                     <DropdownMenuGroup>
                       <DropdownMenuLabel className="px-2 py-1.5 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                        Properties
+                        Sort options
                       </DropdownMenuLabel>
                     </DropdownMenuGroup>
-                    {availablePropertyDefinitions.map((definition) => (
-                      <DropdownMenuSub key={definition.key}>
+                    <DropdownMenuSeparator />
+                    {[
+                      { key: "name", label: "Name" },
+                      { key: "createdAt", label: "Date created" },
+                      { key: "updatedAt", label: "Date updated" },
+                    ].map((option) => (
+                      <DropdownMenuSub key={option.key}>
                         <DropdownMenuSubTrigger>
                           <ArrowUpDown className="size-3.5" />
-                          {definition.key}
+                          {option.label}
                         </DropdownMenuSubTrigger>
                         <DropdownMenuSubContent
-                          className={cn("w-44 bg-background", COMPACT_MENU_SURFACE_CLASS)}
+                          className={cn(
+                            "w-44 bg-background",
+                            COMPACT_MENU_SURFACE_CLASS
+                          )}
                         >
                           {(["asc", "desc"] as const).map((direction) => (
                             <DropdownMenuItem
@@ -5126,17 +5324,21 @@ export function FileExplorer({
                               onClick={() =>
                                 setSortState({
                                   direction,
-                                  key: definition.key,
-                                  kind: "property",
-                                  type: definition.type,
+                                  key: option.key as
+                                    | "createdAt"
+                                    | "name"
+                                    | "updatedAt",
+                                  kind: "builtin",
                                 })
                               }
                             >
                               <span className="flex-1">
-                                {direction === "asc" ? "Ascending" : "Descending"}
+                                {direction === "asc"
+                                  ? "Ascending"
+                                  : "Descending"}
                               </span>
-                              {sortState.kind === "property" &&
-                              sortState.key === definition.key &&
+                              {sortState.kind === "builtin" &&
+                              sortState.key === option.key &&
                               sortState.direction === direction ? (
                                 <Check className="size-3.5" />
                               ) : null}
@@ -5145,8 +5347,55 @@ export function FileExplorer({
                         </DropdownMenuSubContent>
                       </DropdownMenuSub>
                     ))}
-                  </>
-                ) : null}
+                    {availablePropertyDefinitions.length > 0 ? (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel className="px-2 py-1.5 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                            Properties
+                          </DropdownMenuLabel>
+                        </DropdownMenuGroup>
+                        {availablePropertyDefinitions.map((definition) => (
+                          <DropdownMenuSub key={definition.key}>
+                            <DropdownMenuSubTrigger>
+                              <ArrowUpDown className="size-3.5" />
+                              {definition.key}
+                            </DropdownMenuSubTrigger>
+                            <DropdownMenuSubContent
+                              className={cn(
+                                "w-44 bg-background",
+                                COMPACT_MENU_SURFACE_CLASS
+                              )}
+                            >
+                              {(["asc", "desc"] as const).map((direction) => (
+                                <DropdownMenuItem
+                                  key={direction}
+                                  onClick={() =>
+                                    setSortState({
+                                      direction,
+                                      key: definition.key,
+                                      kind: "property",
+                                      type: definition.type,
+                                    })
+                                  }
+                                >
+                                  <span className="flex-1">
+                                    {direction === "asc"
+                                      ? "Ascending"
+                                      : "Descending"}
+                                  </span>
+                                  {sortState.kind === "property" &&
+                                  sortState.key === definition.key &&
+                                  sortState.direction === direction ? (
+                                    <Check className="size-3.5" />
+                                  ) : null}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuSubContent>
+                          </DropdownMenuSub>
+                        ))}
+                      </>
+                    ) : null}
                   </div>
                 </ScrollArea>
               </DropdownMenuContent>
@@ -5171,13 +5420,17 @@ export function FileExplorer({
               </DropdownMenuTrigger>
               <DropdownMenuContent
                 align="end"
-                className={cn("w-[220px] bg-background", COMPACT_MENU_SURFACE_CLASS)}
+                className={cn(
+                  "w-[220px] bg-background",
+                  COMPACT_MENU_SURFACE_CLASS
+                )}
               >
                 <DropdownMenuGroup>
                   <DropdownMenuLabel className="flex items-center justify-between gap-3 px-2 py-1.5 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                     <span>Visible card fields</span>
                     <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] normal-case">
-                      {selectedCardPropertyDefinitions.length}/{MAX_VISIBLE_CARD_PROPERTIES}
+                      {selectedCardPropertyDefinitions.length}/
+                      {MAX_VISIBLE_CARD_PROPERTIES}
                     </span>
                   </DropdownMenuLabel>
                 </DropdownMenuGroup>
@@ -5212,12 +5465,17 @@ export function FileExplorer({
                     Add field
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent
-                    className={cn("w-[220px] bg-background p-0", COMPACT_MENU_SURFACE_CLASS)}
+                    className={cn(
+                      "w-[220px] bg-background p-0",
+                      COMPACT_MENU_SURFACE_CLASS
+                    )}
                   >
                     <div className="border-b border-border/60 p-2">
                       <Input
                         className="h-8 border-0 bg-transparent px-2 text-xs shadow-none"
-                        onChange={(event) => setCardFieldQuery(event.target.value)}
+                        onChange={(event) =>
+                          setCardFieldQuery(event.target.value)
+                        }
                         placeholder="Search fields..."
                         value={cardFieldQuery}
                       />
@@ -5229,41 +5487,46 @@ export function FileExplorer({
                             No matching fields.
                           </div>
                         ) : (
-                          filteredAvailablePropertyDefinitions.map((definition) => {
-                            const checked = cardPropertyKeys.includes(definition.key);
-                            const atLimit =
-                              selectedCardPropertyDefinitions.length >=
-                                MAX_VISIBLE_CARD_PROPERTIES && !checked;
+                          filteredAvailablePropertyDefinitions.map(
+                            (definition) => {
+                              const checked = cardPropertyKeys.includes(
+                                definition.key
+                              );
+                              const atLimit =
+                                selectedCardPropertyDefinitions.length >=
+                                  MAX_VISIBLE_CARD_PROPERTIES && !checked;
 
-                            return (
-                              <DropdownMenuCheckboxItem
-                                checked={checked}
-                                disabled={atLimit}
-                                key={definition.key}
-                                onCheckedChange={(nextChecked) => {
-                                  setCardPropertyKeys((current) => {
-                                    if (nextChecked) {
-                                      if (current.includes(definition.key)) {
-                                        return current;
+                              return (
+                                <DropdownMenuCheckboxItem
+                                  checked={checked}
+                                  disabled={atLimit}
+                                  key={definition.key}
+                                  onCheckedChange={(nextChecked) => {
+                                    setCardPropertyKeys((current) => {
+                                      if (nextChecked) {
+                                        if (current.includes(definition.key)) {
+                                          return current;
+                                        }
+                                        if (
+                                          current.length >=
+                                          MAX_VISIBLE_CARD_PROPERTIES
+                                        ) {
+                                          return current;
+                                        }
+                                        return [...current, definition.key];
                                       }
-                                      if (
-                                        current.length >= MAX_VISIBLE_CARD_PROPERTIES
-                                      ) {
-                                        return current;
-                                      }
-                                      return [...current, definition.key];
-                                    }
 
-                                    return current.filter(
-                                      (key) => key !== definition.key
-                                    );
-                                  });
-                                }}
-                              >
-                                {definition.key}
-                              </DropdownMenuCheckboxItem>
-                            );
-                          })
+                                      return current.filter(
+                                        (key) => key !== definition.key
+                                      );
+                                    });
+                                  }}
+                                >
+                                  {definition.key}
+                                </DropdownMenuCheckboxItem>
+                              );
+                            }
+                          )
                         )}
                       </div>
                     </ScrollArea>
@@ -5638,8 +5901,13 @@ export function FileExplorer({
                         })}
 
                         {sortedFiles.map((file) => {
-                          const { isImage, isMarkdown, isPdf, isVideo, isAudio } =
-                            detectPreviewKind(file);
+                          const {
+                            isImage,
+                            isMarkdown,
+                            isPdf,
+                            isVideo,
+                            isAudio,
+                          } = detectPreviewKind(file);
                           const fileProperties = getFileProperties(file);
                           const fileCardDetails =
                             selectedCardPropertyDefinitions
@@ -5760,7 +6028,7 @@ export function FileExplorer({
                                       }
                                     />
                                   </div>
-                                <CardContent className="px-0 pt-0">
+                                  <CardContent className="px-0 pt-0">
                                     <FileCard
                                       details={fileCardDetails}
                                       fileType={fileCardType}
@@ -5780,7 +6048,7 @@ export function FileExplorer({
                                           />
                                         ) : isVideo ? (
                                           <VideoThumbnail
-                                            className="h-full w-auto rounded-md object-contain"
+                                            className="h-full w-full"
                                             openedCached={
                                               openedCached || isWarmed
                                             }
@@ -5806,11 +6074,10 @@ export function FileExplorer({
                                           <MarkdownThumbnail
                                             className="h-full w-full"
                                             content={file.noteContent ?? null}
-                                            workspaceUuid={workspaceUuid}
                                           />
                                         ) : isPdf ? (
                                           <PdfThumbnail
-                                            className="h-full w-auto rounded-md"
+                                            className="h-full w-full"
                                             src={file.storageUrl}
                                           />
                                         ) : undefined
@@ -5941,7 +6208,7 @@ export function FileExplorer({
                       </div>
                       {viewMode === "list" ? (
                         <div className="divide-y divide-border/40 rounded-md bg-secondary/30">
-                        {sortedFolders.map((folder) => (
+                          {sortedFolders.map((folder) => (
                             <div
                               className={cn(
                                 "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
@@ -6049,7 +6316,9 @@ export function FileExplorer({
                                       });
                                       setPropertiesOpen(true);
                                     }}
-                                    onRename={() => openRenameFolderDialog(folder)}
+                                    onRename={() =>
+                                      openRenameFolderDialog(folder)
+                                    }
                                     onShare={() => {
                                       void copyFolderShareLink(folder);
                                     }}
@@ -6079,7 +6348,9 @@ export function FileExplorer({
                               ) : (
                                 <>
                                   <Checkbox
-                                    checked={selection.selectedIds.has(folder.id)}
+                                    checked={selection.selectedIds.has(
+                                      folder.id
+                                    )}
                                     onCheckedChange={(checked) =>
                                       selection.setItemSelected(
                                         folder.id,
@@ -6101,7 +6372,8 @@ export function FileExplorer({
                                     <span className="min-w-[110px] text-right tabular-nums">
                                       {folderSubfolderCount.get(folder.id) ?? 0}{" "}
                                       folders •{" "}
-                                      {folderFileCount.get(folder.id) ?? 0} files
+                                      {folderFileCount.get(folder.id) ?? 0}{" "}
+                                      files
                                     </span>
                                     <span className="min-w-[72px] text-right tabular-nums">
                                       {folder.updatedAt
@@ -6113,33 +6385,34 @@ export function FileExplorer({
                               )}
                             </div>
                           ))}
-                        {sortedFiles.map((file) => {
-                          const fileKind = detectFileKind(file);
-                          const previewKind = detectPreviewKind(file);
-                          const fileProperties = getFileProperties(file);
-                          const mobilePropertyEntries =
-                            selectedCardPropertyDefinitions
-                              .map((definition) => {
-                                const property = fileProperties[definition.key];
-                                const value =
-                                  property &&
-                                  formatCardPropertyValue(property);
-                                if (!value) {
-                                  return null;
-                                }
-                                return {
-                                  key: definition.key,
-                                  value,
-                                };
-                              })
-                              .filter(
-                                (
-                                  entry
-                                ): entry is { key: string; value: string } =>
-                                  Boolean(entry)
-                              );
-                          return (
-                            <div
+                          {sortedFiles.map((file) => {
+                            const fileKind = detectFileKind(file);
+                            const previewKind = detectPreviewKind(file);
+                            const fileProperties = getFileProperties(file);
+                            const mobilePropertyEntries =
+                              selectedCardPropertyDefinitions
+                                .map((definition) => {
+                                  const property =
+                                    fileProperties[definition.key];
+                                  const value =
+                                    property &&
+                                    formatCardPropertyValue(property);
+                                  if (!value) {
+                                    return null;
+                                  }
+                                  return {
+                                    key: definition.key,
+                                    value,
+                                  };
+                                })
+                                .filter(
+                                  (
+                                    entry
+                                  ): entry is { key: string; value: string } =>
+                                    Boolean(entry)
+                                );
+                            return (
+                              <div
                                 className={cn(
                                   "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors hover:bg-muted/30",
                                   selection.selectedIds.has(file.id) &&
@@ -6257,10 +6530,12 @@ export function FileExplorer({
                                           id: file.id,
                                           name: file.name,
                                           detail: `${formatBytes(file.sizeBytes)} • ${file.mimeType ?? "unknown"} • ${file.isIngested ? "Ingested" : "Pending"}`,
-                                          });
-                                          setPropertiesOpen(true);
-                                        }}
-                                      onRename={() => openRenameFileDialog(file)}
+                                        });
+                                        setPropertiesOpen(true);
+                                      }}
+                                      onRename={() =>
+                                        openRenameFileDialog(file)
+                                      }
                                       onShare={() => {
                                         void copyFileShareLink(file);
                                       }}
@@ -6290,14 +6565,18 @@ export function FileExplorer({
                                 ) : (
                                   <>
                                     <Checkbox
-                                      checked={selection.selectedIds.has(file.id)}
+                                      checked={selection.selectedIds.has(
+                                        file.id
+                                      )}
                                       onCheckedChange={(checked) =>
                                         selection.setItemSelected(
                                           file.id,
                                           checked === true
                                         )
                                       }
-                                      onClick={(event) => event.stopPropagation()}
+                                      onClick={(event) =>
+                                        event.stopPropagation()
+                                      }
                                     />
                                     <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted/60">
                                       {getFileTypeIcon(fileKind)}
@@ -6318,7 +6597,8 @@ export function FileExplorer({
                                           )}
                                         </span>
                                       </div>
-                                      {selectedCardPropertyDefinitions.length > 0 ? (
+                                      {selectedCardPropertyDefinitions.length >
+                                      0 ? (
                                         <div className="flex max-w-[22rem] flex-wrap justify-end gap-1.5">
                                           {selectedCardPropertyDefinitions.map(
                                             (definition) => {
@@ -6376,9 +6656,7 @@ export function FileExplorer({
               </div>
             </ContextMenuTrigger>
             {isMobile ? null : (
-              <ContextMenuContent
-                className={COMPACT_MENU_SURFACE_CLASS}
-              >
+              <ContextMenuContent className={COMPACT_MENU_SURFACE_CLASS}>
                 <ContextMenuItem
                   disabled={isCurrentFolderReadOnly}
                   onClick={() => openCreateNoteDialog(currentFolderId)}
@@ -6645,29 +6923,31 @@ export function FileExplorer({
                   : "Update the item name."}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <label className="font-medium text-sm" htmlFor="item-name-input">
-              Name
-            </label>
-            <Input
-              autoFocus
-              id="item-name-input"
-              onChange={(event) => {
-                if (!editDialog) {
-                  return;
-                }
-                setEditDialog({ ...editDialog, value: event.target.value });
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || !editDialog?.value.trim()) {
-                  return;
-                }
-                event.preventDefault();
-                void applyEditDialog();
-              }}
-              placeholder="Name"
-              value={editDialog?.value ?? ""}
-            />
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="font-medium text-sm" htmlFor="item-name-input">
+                Name
+              </label>
+              <Input
+                autoFocus
+                id="item-name-input"
+                onChange={(event) => {
+                  if (!editDialog) {
+                    return;
+                  }
+                  setEditDialog({ ...editDialog, value: event.target.value });
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || !editDialog?.value.trim()) {
+                    return;
+                  }
+                  event.preventDefault();
+                  void applyEditDialog();
+                }}
+                placeholder="Name"
+                value={editDialog?.value ?? ""}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -6685,6 +6965,98 @@ export function FileExplorer({
               type="button"
             >
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setNoteTemplateEditorOpen(false);
+          }
+        }}
+        open={noteTemplateEditorOpen}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {noteTemplateDraft.id ? "Edit template" : "New template"}
+            </DialogTitle>
+            <DialogDescription>
+              Templates live in this workspace and can use note variables when a
+              note is created.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="space-y-2">
+              <label className="font-medium text-sm" htmlFor="template-name">
+                Name
+              </label>
+              <Input
+                id="template-name"
+                onChange={(event) =>
+                  setNoteTemplateDraft((current) => ({
+                    ...current,
+                    name: event.target.value,
+                  }))
+                }
+                placeholder="Study note"
+                value={noteTemplateDraft.name}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="font-medium text-sm" htmlFor="template-body">
+                Template body
+              </label>
+              <Textarea
+                className="min-h-80 font-mono text-xs"
+                id="template-body"
+                onChange={(event) =>
+                  setNoteTemplateDraft((current) => ({
+                    ...current,
+                    content: event.target.value,
+                  }))
+                }
+                placeholder={DEFAULT_NOTE_TEMPLATE.content}
+                value={noteTemplateDraft.content}
+              />
+            </div>
+          </div>
+          <DialogFooter className="justify-between gap-2 sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => {
+                  setNoteTemplateEditorOpen(false);
+                }}
+                type="button"
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+              {noteTemplateDraft.id ? (
+                <Button
+                  onClick={() => {
+                    deleteTemplateDraft();
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  Delete
+                </Button>
+              ) : null}
+            </div>
+            <Button
+              disabled={
+                !noteTemplateDraft.name.trim() ||
+                !noteTemplateDraft.content.trim()
+              }
+              onClick={() => {
+                saveTemplateDraft();
+              }}
+              type="button"
+            >
+              Save template
             </Button>
           </DialogFooter>
         </DialogContent>

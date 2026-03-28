@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { MDXRemote } from "next-mdx-remote/rsc";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Navbar } from "@/components/landing/Navbar";
 import { Footer } from "@/components/landing/Footer";
 
@@ -10,14 +11,35 @@ export const metadata = {
 };
 
 const mdxComponents = {
-  h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h1 className="text-3xl md:text-4xl font-semibold text-foreground tracking-tight mt-8 mb-4" {...props} />
+  h1: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h1
+      className="mb-4 mt-8 text-3xl font-semibold tracking-tight text-foreground md:text-4xl"
+      {...props}
+    >
+      {children}
+    </h1>
   ),
-  h2: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h2 className="text-2xl font-semibold text-foreground tracking-tight mt-8 mb-3" {...props} />
+  h2: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h2
+      className="mb-3 mt-8 text-2xl font-semibold tracking-tight text-foreground"
+      {...props}
+    >
+      {children}
+    </h2>
   ),
-  h3: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h3 className="text-xl font-semibold text-foreground mt-6 mb-2" {...props} />
+  h3: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h3 className="mb-2 mt-6 text-xl font-semibold text-foreground" {...props}>
+      {children}
+    </h3>
   ),
   p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p className="text-foreground/80 leading-relaxed mb-4" {...props} />
@@ -50,7 +72,9 @@ export default function PrivacyPage() {
 
       <section className="pt-32 pb-24 px-4">
         <div className="max-w-3xl mx-auto">
-          <MDXRemote source={source} components={mdxComponents} />
+          <Markdown components={mdxComponents} remarkPlugins={[remarkGfm]}>
+            {source}
+          </Markdown>
         </div>
       </section>
 

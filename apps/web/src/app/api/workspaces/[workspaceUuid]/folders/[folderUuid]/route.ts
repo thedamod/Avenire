@@ -1,6 +1,7 @@
 import {
   getFolderWithAncestors,
   getNoteContent,
+  isMarkdownFileRecord,
   isSharedFilesVirtualFolderId,
   listFolderContentsForUser,
   listWorkspaceMembers,
@@ -46,10 +47,21 @@ export async function GET(
   const noteContentByFileId = new Map<string, string | null>();
   await Promise.all(
     (children.files ?? [])
-      .filter((file) => file.isNote)
+      .filter((file) => isMarkdownFileRecord(file))
       .map(async (file) => {
         const note = await getNoteContent(file.id);
-        noteContentByFileId.set(file.id, note?.content ?? null);
+        if (note?.content != null) {
+          noteContentByFileId.set(file.id, note.content);
+          return;
+        }
+
+        const response = await fetch(file.storageUrl, { cache: "no-store" }).catch(
+          () => null
+        );
+        noteContentByFileId.set(
+          file.id,
+          response?.ok ? await response.text() : null
+        );
       })
   );
   return NextResponse.json({

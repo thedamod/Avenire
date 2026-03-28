@@ -2,17 +2,10 @@
 
 import { Button } from "@avenire/ui/components/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, } from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
 import { Label } from "@avenire/ui/components/label";
-import { Share2 } from "lucide-react";
+import { ShareNetwork as Share2 } from "@phosphor-icons/react"
 import { useEffect, useState } from "react";
 import { EmailSuggestionInput } from "@/components/shared/email-suggestion-input";
 import type {

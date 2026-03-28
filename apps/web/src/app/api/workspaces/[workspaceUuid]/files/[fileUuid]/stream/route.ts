@@ -1,6 +1,7 @@
 import {
   getFileAssetById,
   getNoteContent,
+  isMarkdownFileRecord,
   isTrustedStorageUrl,
 } from "@/lib/file-data";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
@@ -60,7 +61,7 @@ export async function GET(
     return new Response("File not found", { status: 404 });
   }
 
-  if (file.isNote) {
+  if (isMarkdownFileRecord(file)) {
     const note = await getNoteContent(file.id);
     if (note?.content != null) {
       return new Response(note.content, {

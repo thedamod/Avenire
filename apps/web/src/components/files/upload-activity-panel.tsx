@@ -2,23 +2,12 @@
 
 import { Button } from "@avenire/ui/components/button";
 import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-} from "@avenire/ui/components/drawer";
+  Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, } from "@avenire/ui/components/drawer";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@avenire/ui/components/empty";
+  Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, } from "@avenire/ui/components/empty";
 import { Spinner } from "@avenire/ui/components/spinner";
-import { AlertCircle, CheckCircle2, Waves, X, XCircle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Warning as AlertCircle, CheckCircle as CheckCircle2, Waves, X, XCircle } from "@phosphor-icons/react"
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -30,6 +19,126 @@ import {
 import { filesUiActions, useFilesUiStore } from "@/stores/filesUiStore";
 
 const WORKSPACE_FILES_ROUTE_REGEX = /^\/workspace\/files\/([^/]+)/;
+
+interface IngestionJobEvent {
+  eventType: string;
+  jobId: string;
+  payload?: {
+    error?: unknown;
+    fileName?: unknown;
+  };
+}
+
+async function loadRecentIngestionJobs(input: {
+  activeWorkspaceUuid: string;
+  signal?: AbortSignal;
+}) {
+  const response = await fetch(
+    `/api/ai/ingestion/jobs?workspaceUuid=${input.activeWorkspaceUuid}&limit=60&windowMinutes=10`,
+    { cache: "no-store", signal: input.signal }
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const payload = (await response.json()) as {
+    jobs?: Array<{
+      fileId: string;
+      fileName?: string | null;
+      id: string;
+      status: "failed" | "queued" | "running" | "succeeded";
+    }>;
+  };
+  return payload.jobs ?? [];
+}
+
+function getQueueStatusClass(status: FilesActivityItem["status"]) {
+  if (status === "failed") {
+    return "bg-destructive";
+  }
+
+  if (status === "uploaded") {
+    return "bg-emerald-500";
+  }
+
+  return "bg-primary";
+}
+
+function mapIngestionEventStatus(
+  eventType: string
+): FilesActivityItem["status"] {
+  if (eventType === "job.failed") {
+    return "failed";
+  }
+
+  if (eventType === "job.succeeded") {
+    return "uploaded";
+  }
+
+  return "ingesting";
+}
+
+function mapRecentJobStatus(
+  status: "failed" | "queued" | "running" | "succeeded"
+): FilesActivityItem["status"] {
+  if (status === "running") {
+    return "ingesting";
+  }
+
+  if (status === "succeeded") {
+    return "uploaded";
+  }
+
+  return status;
+}
+
+function getIngestionErrorMessage(
+  payload: IngestionJobEvent["payload"],
+  status: FilesActivityItem["status"]
+) {
+  if (status !== "failed") {
+    return undefined;
+  }
+
+  if (!payload) {
+    return "Ingestion failed";
+  }
+
+  if (typeof payload.error === "string") {
+    return `Ingestion failed for this file: ${payload.error}`;
+  }
+
+  return "Ingestion failed";
+}
+
+function createIngestionQueueItem(input: {
+  jobId: string;
+  status: FilesActivityItem["status"];
+}): FilesActivityItem {
+  return {
+    error: undefined,
+    id: `job:${input.jobId}`,
+    ingestionJobId: input.jobId,
+    name: "Ingestion job",
+    sizeLabel: "—",
+    status: input.status,
+  };
+}
+
+function updateIngestionQueueItem(
+  item: FilesActivityItem,
+  event: IngestionJobEvent,
+  status: FilesActivityItem["status"]
+) {
+  const nextError = getIngestionErrorMessage(event.payload, status);
+  return {
+    ...item,
+    error: nextError,
+    failureCount: status === "failed" ? (item.failureCount ?? 0) + 1 : 0,
+    status,
+  };
+}
 
 function statusMeta(status: FilesActivityItem["status"]) {
   switch (status) {
@@ -178,11 +287,7 @@ function UploadActivityBody({
                     <div
                       className={cn(
                         "h-full transition-all duration-300",
-                        item.status === "failed"
-                          ? "bg-destructive"
-                          : item.status === "uploaded"
-                            ? "bg-emerald-500"
-                            : "bg-primary"
+                        getQueueStatusClass(item.status)
                       )}
                       style={{ width: `${meta.progress}%` }}
                     />
@@ -200,7 +305,7 @@ function UploadActivityBody({
       {completedCount > 0 ? (
         <div className="border-border/70 border-t bg-muted/20 px-4 py-3">
           <Button
-            className="px-0 text-xs text-muted-foreground hover:text-foreground"
+            className="px-0 text-muted-foreground text-xs hover:text-foreground"
             onClick={onClearCompleted}
             size="sm"
             type="button"
@@ -211,7 +316,7 @@ function UploadActivityBody({
         </div>
       ) : null}
     </div>
-  )
+  );
 }
 
 export function UploadActivityPanel() {
@@ -260,70 +365,51 @@ export function UploadActivityPanel() {
     ? (queuesByWorkspace[activeWorkspaceUuid] ?? [])
     : [];
 
+  const recentJobsQuery = useQuery({
+    enabled: Boolean(activeWorkspaceUuid && isFilesRoute),
+    queryFn: ({ signal }) =>
+      activeWorkspaceUuid
+        ? loadRecentIngestionJobs({ activeWorkspaceUuid, signal })
+        : Promise.resolve([]),
+    queryKey: ["upload-activity", activeWorkspaceUuid],
+    staleTime: 30_000,
+  });
+
   useEffect(() => {
     if (!(activeWorkspaceUuid && isFilesRoute)) {
       return;
     }
+    const jobs = recentJobsQuery.data ?? [];
+    if (jobs.length === 0) {
+      return;
+    }
 
-    let cancelled = false;
-    const hydrateRecentJobs = async () => {
-      try {
-        const response = await fetch(
-          `/api/ai/ingestion/jobs?workspaceUuid=${activeWorkspaceUuid}&limit=60&windowMinutes=10`,
-          { cache: "no-store" }
-        );
-        if (!(response.ok && !cancelled)) {
-          return;
-        }
-
-        const payload = (await response.json()) as {
-          jobs?: Array<{
-            id: string;
-            status: "failed" | "queued" | "running" | "succeeded";
-            fileName?: string | null;
-            fileId: string;
-          }>;
+    updateWorkspaceQueue(activeWorkspaceUuid, (previous) => [
+      ...previous.filter(
+        (item) =>
+          !(
+            item.ingestionJobId &&
+            jobs.some((job) => job.id === item.ingestionJobId)
+          )
+      ),
+      ...jobs.map((job) => {
+        const status = mapRecentJobStatus(job.status);
+        return {
+          id: `job:${job.id}`,
+          ingestionJobId: job.id,
+          fileId: job.fileId,
+          name: job.fileName ?? "Ingestion job",
+          sizeLabel: "—",
+          status,
         };
-        const jobs = payload.jobs ?? [];
-        if (jobs.length === 0) {
-          return;
-        }
-
-        updateWorkspaceQueue(activeWorkspaceUuid, (previous) => [
-          ...previous.filter(
-            (item) =>
-              !(
-                item.ingestionJobId &&
-                jobs.some((job) => job.id === item.ingestionJobId)
-              )
-          ),
-          ...jobs.map((job) => {
-            const status: FilesActivityItem["status"] =
-              job.status === "running"
-                ? "ingesting"
-                : job.status === "succeeded"
-                  ? "uploaded"
-                  : job.status;
-            return {
-              id: `job:${job.id}`,
-              ingestionJobId: job.id,
-              fileId: job.fileId,
-              name: job.fileName ?? "Ingestion job",
-              sizeLabel: "—",
-              status,
-            };
-          }),
-        ]);
-      } catch {
-        // ignore hydration failures
-      }
-    };
-
-    hydrateRecentJobs().catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [activeWorkspaceUuid, isFilesRoute, updateWorkspaceQueue]);
+      }),
+    ]);
+  }, [
+    activeWorkspaceUuid,
+    isFilesRoute,
+    recentJobsQuery.data,
+    updateWorkspaceQueue,
+  ]);
 
   useEffect(() => {
     if (!(activeWorkspaceUuid && isFilesRoute)) {
@@ -376,11 +462,7 @@ export function UploadActivityPanel() {
         };
         eventSource.addEventListener("ingestion.job", (event) => {
           const messageEvent = event as MessageEvent;
-          const payload = JSON.parse(messageEvent.data) as {
-            jobId: string;
-            eventType: string;
-            payload?: Record<string, unknown>;
-          };
+          const payload = JSON.parse(messageEvent.data) as IngestionJobEvent;
           const cursor =
             typeof messageEvent.lastEventId === "string" &&
             messageEvent.lastEventId.length > 0
@@ -389,12 +471,9 @@ export function UploadActivityPanel() {
           if (cursor) {
             ingestionSseCursorRef.current = cursor;
           }
-          const status: FilesActivityItem["status"] =
-            payload.eventType === "job.failed"
-              ? "failed"
-              : payload.eventType === "job.succeeded"
-                ? "uploaded"
-                : "ingesting";
+          const status: FilesActivityItem["status"] = mapIngestionEventStatus(
+            payload.eventType
+          );
 
           updateWorkspaceQueue(activeWorkspaceUuid, (previous) => {
             const existingIndex = previous.findIndex(
@@ -403,21 +482,7 @@ export function UploadActivityPanel() {
             if (existingIndex === -1) {
               return [
                 ...previous,
-                {
-                  id: `job:${payload.jobId}`,
-                  ingestionJobId: payload.jobId,
-                  name:
-                    typeof payload.payload?.fileName === "string"
-                      ? payload.payload.fileName
-                      : "Ingestion job",
-                  sizeLabel: "—",
-                  status,
-                  error:
-                    status === "failed" &&
-                    typeof payload.payload?.error === "string"
-                      ? `Ingestion failed for this file: ${payload.payload.error}`
-                      : undefined,
-                },
+                createIngestionQueueItem({ jobId: payload.jobId, status }),
               ];
             }
 
@@ -425,18 +490,7 @@ export function UploadActivityPanel() {
               if (index !== existingIndex) {
                 return item;
               }
-              return {
-                ...item,
-                status,
-                error:
-                  status === "failed"
-                    ? typeof payload.payload?.error === "string"
-                      ? `Ingestion failed for this file: ${payload.payload.error}`
-                      : "Ingestion failed"
-                    : undefined,
-                failureCount:
-                  status === "failed" ? (item.failureCount ?? 0) + 1 : 0,
-              };
+              return updateIngestionQueueItem(item, payload, status);
             });
           });
         });
@@ -524,7 +578,9 @@ export function UploadActivityPanel() {
       item.status === "ingesting"
   ).length;
   const failedCount = queue.filter((item) => item.status === "failed").length;
-  const completedCount = queue.filter((item) => item.status === "uploaded").length;
+  const completedCount = queue.filter(
+    (item) => item.status === "uploaded"
+  ).length;
 
   const handleClose = () => {
     setIsQueueDismissed(true);

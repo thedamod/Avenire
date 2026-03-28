@@ -6,6 +6,7 @@ import {
 } from "@/lib/file-data";
 import { createApiLogger } from "@/lib/observability";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
+import { extractMarkdownNotePageMetadata } from "@/lib/markdown-note-template";
 import { registerWorkspaceUploadedFile } from "@/lib/upload-registration";
 import { scheduleAsyncVideoDeliveryOptimization } from "@/lib/video-delivery";
 import { getSessionUser } from "@/lib/workspace";
@@ -108,6 +109,26 @@ export async function POST(
         { error: "Missing note metadata" },
         { status: 400 }
       );
+    }
+
+    const templatePage = extractMarkdownNotePageMetadata(body.content);
+    const currentPage =
+      nextMetadata.page &&
+      typeof nextMetadata.page === "object" &&
+      !Array.isArray(nextMetadata.page)
+        ? (nextMetadata.page as Record<string, unknown>)
+        : null;
+
+    if (templatePage || currentPage) {
+      nextMetadata.page = {
+        ...(currentPage ?? {}),
+        ...(templatePage ?? {}),
+        properties: {
+          ...(((currentPage?.properties as Record<string, unknown> | undefined) ??
+            {}) as Record<string, unknown>),
+          ...(templatePage?.properties ?? {}),
+        },
+      };
     }
 
     const file = await createWorkspaceNoteFile({

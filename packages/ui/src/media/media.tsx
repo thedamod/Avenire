@@ -1,28 +1,6 @@
 "use client";
 
-import {
-  AlertTriangleIcon,
-  CaptionsOffIcon,
-  CheckIcon,
-  DownloadIcon,
-  FastForwardIcon,
-  Loader2Icon,
-  Maximize2Icon,
-  Minimize2Icon,
-  PauseIcon,
-  PictureInPicture2Icon,
-  PictureInPictureIcon,
-  PlayIcon,
-  RefreshCcwIcon,
-  RepeatIcon,
-  RewindIcon,
-  RotateCcwIcon,
-  SettingsIcon,
-  SubtitlesIcon,
-  Volume1Icon,
-  Volume2Icon,
-  VolumeXIcon,
-} from "lucide-react";
+import { Warning as AlertTriangleIcon, SubtitlesSlash as CaptionsOffIcon, CheckIcon, DownloadIcon, FastForwardIcon, SpinnerGap as Loader2Icon, ArrowsOutSimple as Maximize2Icon, ArrowsInSimple as Minimize2Icon, PauseIcon, PictureInPicture as PictureInPicture2Icon, PictureInPictureIcon, PlayIcon, ArrowCounterClockwise as RefreshCcwIcon, RepeatIcon, RewindIcon, ArrowCounterClockwise as RotateCcwIcon, Gear as SettingsIcon, SubtitlesIcon, SpeakerSimpleLow as Volume1Icon, SpeakerSimpleHigh as Volume2Icon, SpeakerSimpleSlash as VolumeXIcon } from "@phosphor-icons/react"
 import {
   MediaActionTypes,
   MediaProvider,

@@ -33,7 +33,7 @@ export const WelcomeUserMessage = ({ name }: WelcomeUserProps) => (
         textAlign: "center",
       }}
     >
-      You’re in. Avenire is built to keep learning material, chats, and files organized in one place.
+      You’re in. Avenire is built to keep learning material, methods, and manage items organized in one place.
     </Text>
 
     <div
@@ -46,7 +46,7 @@ export const WelcomeUserMessage = ({ name }: WelcomeUserProps) => (
       }}
     >
       <Text style={{ color: emailColors.ink, fontSize: 15, lineHeight: "24px", margin: 0 }}>
-        Create a workspace, upload a file, or start a chat to see the full flow.
+        Create a workspace, upload a file, or start a method to see the full flow.
       </Text>
     </div>
 
@@ -79,10 +79,10 @@ export const WelcomeUserMessage = ({ name }: WelcomeUserProps) => (
         • Create a workspace for your projects.
       </Text>
       <Text style={{ color: emailColors.ink, fontSize: 15, lineHeight: "24px", margin: "0 0 8px" }}>
-        • Upload files and open them directly in the viewer.
+        • Upload items and open them directly in the viewer.
       </Text>
       <Text style={{ color: emailColors.ink, fontSize: 15, lineHeight: "24px", margin: 0 }}>
-        • Use chat to ask questions over your workspace content.
+        • Use method to ask questions over your workspace content.
       </Text>
     </div>
 

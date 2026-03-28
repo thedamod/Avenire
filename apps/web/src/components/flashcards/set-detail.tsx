@@ -3,31 +3,18 @@
 import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, } from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
 import { Label } from "@avenire/ui/components/label";
 import { ScrollArea } from "@avenire/ui/components/scroll-area";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@avenire/ui/components/table";
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow, } from "@avenire/ui/components/table";
 import { Textarea } from "@avenire/ui/components/textarea";
 import { cn } from "@avenire/ui/lib/utils";
-import { BookOpenCheck, Pause, Pencil, Plus, Trash2 } from "lucide-react";
+import { BookOpenText as BookOpenCheck, Pause, Pencil, Plus, Trash as Trash2 } from "@phosphor-icons/react"
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/chat/markdown";
 import { HeaderBreadcrumbs, HeaderLeadingIcon } from "@/components/dashboard/header-portal";
 import { FlashcardDeckStack } from "@/components/flashcards/deck-stack";
@@ -141,11 +128,19 @@ export function FlashcardSetDetail({
   const [topic, setTopic] = useState("");
   const [concept, setConcept] = useState("");
   const [tags, setTags] = useState("");
-  const [studyOpen, setStudyOpen] = useState(false);
+  const [studyOpen, setStudyOpen] = useState(
+    initialStudyOpen && initialQueue.length > 0
+  );
   const [studyRevealed, setStudyRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const reviewAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
+  );
+  const queueRef = useRef(queue);
+  const studyOpenRef = useRef(studyOpen);
+  const studyRevealedRef = useRef(studyRevealed);
+  const submitReviewRef = useRef<(rating: Rating) => Promise<void>>(
+    async () => undefined
   );
 
   useEffect(() => {
@@ -153,34 +148,37 @@ export function FlashcardSetDetail({
   }, [pathname, recordRoute]);
   const [drillFilters, setDrillFilters] = useState(initialDrillFilters);
   const deferredSearch = useDeferredValue(search);
-
-  useEffect(() => {
-    setSet(initialSet);
-  }, [initialSet]);
-
-  useEffect(() => {
-    setQueue(initialQueue);
-  }, [initialQueue]);
-
-  useEffect(() => {
-    setDrillFilters(initialDrillFilters);
-  }, [initialDrillFilters]);
-
-  useEffect(() => {
-    setStudyRevealed(false);
-  }, [queue]);
-
-  useEffect(() => {
-    if (initialStudyOpen && queue.length > 0) {
-      setStudyOpen(true);
-    }
-  }, [initialStudyOpen, queue.length]);
+  const headerLeadingIcon = useMemo(
+    () => <BookOpenCheck className="size-3.5" />,
+    []
+  );
+  const headerBreadcrumbs = useMemo(
+    () => (
+      <div className="min-w-0">
+        <p className="truncate text-muted-foreground text-sm">Mindset</p>
+        <p className="truncate text-muted-foreground text-xs">{set.title}</p>
+      </div>
+    ),
+    [set.title]
+  );
 
   useEffect(() => {
     if (!studyOpen) {
       setStudyRevealed(false);
     }
   }, [studyOpen]);
+
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+
+  useEffect(() => {
+    studyOpenRef.current = studyOpen;
+  }, [studyOpen]);
+
+  useEffect(() => {
+    studyRevealedRef.current = studyRevealed;
+  }, [studyRevealed]);
 
   useEffect(() => {
     return () => {
@@ -193,7 +191,7 @@ export function FlashcardSetDetail({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        !studyOpen ||
+        !studyOpenRef.current ||
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement
       ) {
@@ -213,41 +211,90 @@ export function FlashcardSetDetail({
       };
 
       const rating = ratingMap[event.code];
-      if (rating && studyRevealed && queue[0]) {
+      if (rating && studyRevealedRef.current && queueRef.current[0]) {
         event.preventDefault();
-        submitReview(rating).catch(() => undefined);
+        submitReviewRef.current(rating).catch(() => undefined);
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [queue, studyOpen, studyRevealed]);
+  }, []);
 
-  const snapshotByCardId = new Map(
-    set.cardSnapshots.map((snapshot) => [snapshot.card.id, snapshot])
+  const snapshotByCardId = useMemo(
+    () => new Map(set.cardSnapshots.map((snapshot) => [snapshot.card.id, snapshot])),
+    [set.cardSnapshots]
   );
-  const filteredCards = set.cards.filter((card) => {
-    if (!deferredSearch.trim()) {
-      return true;
-    }
-
-    const searchNeedle = deferredSearch.toLowerCase();
-    return (
-      card.frontMarkdown.toLowerCase().includes(searchNeedle) ||
-      card.backMarkdown.toLowerCase().includes(searchNeedle) ||
-      (card.notesMarkdown ?? "").toLowerCase().includes(searchNeedle) ||
-      card.tags.some((tag) => tag.toLowerCase().includes(searchNeedle))
-    );
-  });
   const activeCard = queue[0] ?? null;
+  const activeCardId = activeCard?.card.id ?? null;
   useEffect(() => {
     if (studyOpen && !activeCard) {
       setStudyOpen(false);
     }
   }, [activeCard, studyOpen]);
-  const activeSnapshot = activeCard
-    ? (snapshotByCardId.get(activeCard.card.id) ?? null)
+  const activeSnapshot = activeCardId
+    ? (snapshotByCardId.get(activeCardId) ?? null)
     : null;
+  const filteredCards = useMemo(() => {
+    const needle = deferredSearch.trim().toLowerCase();
+    if (!needle) {
+      return set.cards;
+    }
+
+    return set.cards.filter((card) => {
+      return (
+        card.frontMarkdown.toLowerCase().includes(needle) ||
+        card.backMarkdown.toLowerCase().includes(needle) ||
+        (card.notesMarkdown ?? "").toLowerCase().includes(needle) ||
+        card.tags.some((tag) => tag.toLowerCase().includes(needle))
+      );
+    });
+  }, [deferredSearch, set.cards]);
+  const reviewDeckCards = useMemo(
+    () =>
+      queue.map((item) => ({
+        back: (
+          <div className="w-full space-y-5">
+            <Markdown
+              className="max-w-none text-base"
+              content={item.card.backMarkdown}
+              id={`study-back-${item.card.id}`}
+              parseIncompleteMarkdown={false}
+            />
+            {item.card.notesMarkdown ? (
+              <div className="rounded-2xl border border-border/60 bg-background/75 p-3">
+                <p className="mb-2 text-[11px] text-muted-foreground uppercase tracking-[0.18em]">
+                  Notes
+                </p>
+                <Markdown
+                  className="max-w-none text-sm"
+                  content={item.card.notesMarkdown}
+                  id={`study-notes-${item.card.id}`}
+                  parseIncompleteMarkdown={false}
+                />
+              </div>
+            ) : null}
+          </div>
+        ),
+        front: (
+          <div className="w-full">
+            <Markdown
+              className="max-w-none text-center text-lg [&_p]:text-center"
+              content={item.card.frontMarkdown}
+              id={`study-front-${item.card.id}`}
+              parseIncompleteMarkdown={false}
+            />
+          </div>
+        ),
+        id: item.card.id,
+        title: item.set.title,
+        meta:
+          item.card.id === activeCardId && activeSnapshot?.dueAt
+            ? "Due now"
+            : "Ready to recall",
+      })),
+    [activeCardId, activeSnapshot?.dueAt, queue]
+  );
   const setEnrollmentLabel = getEnrollmentLabel(set.enrollment?.status);
   const reviewSummary = `${set.dueCount} due · ${set.newCount} new · ${set.reviewCountToday} studied today`;
 
@@ -427,21 +474,18 @@ export function FlashcardSetDetail({
     }
   };
 
+  useEffect(() => {
+    submitReviewRef.current = submitReview;
+  }, [submitReview]);
+
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="flex w-full flex-col gap-4 px-4 py-4 md:px-6 lg:px-8">
         <HeaderLeadingIcon>
-          <BookOpenCheck className="size-3.5" />
+          {headerLeadingIcon}
         </HeaderLeadingIcon>
         <HeaderBreadcrumbs>
-          <div className="min-w-0">
-            <p className="truncate text-muted-foreground text-sm">
-              Flashcards
-            </p>
-            <p className="truncate text-muted-foreground text-xs">
-              {set.title}
-            </p>
-          </div>
+          {headerBreadcrumbs}
         </HeaderBreadcrumbs>
         <motion.div
           animate={{ opacity: 1, y: 0 }}
@@ -719,47 +763,7 @@ export function FlashcardSetDetail({
                   {activeCard ? (
                     <div className="w-full max-w-[22rem] rounded-[1.75rem] border border-border/40 bg-white/70 p-3 backdrop-blur-sm sm:max-w-[27rem] sm:p-4 md:p-5 dark:bg-slate-950/45">
                       <FlashcardDeckStack
-                        cards={queue.map((item) => ({
-                          back: (
-                            <div className="w-full space-y-5">
-                              <Markdown
-                                className="max-w-none text-base"
-                                content={item.card.backMarkdown}
-                                id={`study-back-${item.card.id}`}
-                                parseIncompleteMarkdown={false}
-                              />
-                              {item.card.notesMarkdown ? (
-                                <div className="rounded-2xl border border-border/60 bg-background/75 p-3">
-                                  <p className="mb-2 text-[11px] text-muted-foreground uppercase tracking-[0.18em]">
-                                    Notes
-                                  </p>
-                                  <Markdown
-                                    className="max-w-none text-sm"
-                                    content={item.card.notesMarkdown}
-                                    id={`study-notes-${item.card.id}`}
-                                    parseIncompleteMarkdown={false}
-                                  />
-                                </div>
-                              ) : null}
-                            </div>
-                          ),
-                          front: (
-                            <div className="w-full">
-                              <Markdown
-                                className="max-w-none text-center text-lg [&_p]:text-center"
-                                content={item.card.frontMarkdown}
-                                id={`study-front-${item.card.id}`}
-                                parseIncompleteMarkdown={false}
-                              />
-                            </div>
-                          ),
-                          id: item.card.id,
-                          title: item.set.title,
-                          meta:
-                            item === activeCard && activeSnapshot?.dueAt
-                              ? "Due now"
-                              : "Ready to recall",
-                        }))}
+                        cards={reviewDeckCards}
                         className="w-full max-w-none"
                         flipped={studyRevealed}
                         onFlippedChange={setStudyRevealed}

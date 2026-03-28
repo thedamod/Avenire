@@ -4,18 +4,9 @@ import { Button } from "@avenire/ui/components/button";
 import { Checkbox } from "@avenire/ui/components/checkbox";
 import { Input } from "@avenire/ui/components/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@avenire/ui/components/select";
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue, } from "@avenire/ui/components/select";
 import {
-  ChevronDown,
-  ChevronRight,
-  Plus,
-  Trash2,
-} from "lucide-react";
+  CaretDown as ChevronDown, CaretRight as ChevronRight, Plus, Trash as Trash2 } from "@phosphor-icons/react"
 import { useCallback, useMemo, useState } from "react";
 import {
   createEmptyProperty,

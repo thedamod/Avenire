@@ -1,3 +1,5 @@
+"use client";
+
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { AgentActivityData, UIMessage } from "@avenire/ai/message-types";
 import {
@@ -7,7 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@avenire/ui/components/card";
-import { AlertCircle } from "lucide-react";
+import { Warning as AlertCircle } from "@phosphor-icons/react";
 import { memo, type RefObject } from "react";
 import { PreviewMessage } from "@/components/chat/message";
 import { Overview } from "@/components/chat/overview";

@@ -44,6 +44,7 @@ export async function POST(request: Request) {
         {
           workspace: {
             ...resolvedExisting,
+            logo: existingWorkspace.logo,
             name: existingWorkspace.name,
           },
         },
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
     {
       workspace: {
         ...workspace,
+        logo: null,
         name: trimmed,
       },
     },

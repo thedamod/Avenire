@@ -2,7 +2,7 @@
 
 import type { UIMessage } from "@avenire/ai/message-types";
 import { motion } from "motion/react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   type ActivityAction,
   RollingAgentActivity,
@@ -176,15 +176,19 @@ function FlashcardDeckComponent({
     );
   }
 
-  const deckCards = cards.map((card, index) => ({
-    back: <MarkdownContent content={card.backMarkdown} />,
-    front: <MarkdownContent content={card.frontMarkdown} />,
-    id: `${setId}:${index}:${card.frontMarkdown.slice(
-      0,
-      24
-    )}:${card.backMarkdown.slice(0, 24)}`,
-    title,
-  }));
+  const deckCards = useMemo(
+    () =>
+      cards.map((card, index) => ({
+        back: <MarkdownContent content={card.backMarkdown} />,
+        front: <MarkdownContent content={card.frontMarkdown} />,
+        id: `${setId}:${index}:${card.frontMarkdown.slice(
+          0,
+          24
+        )}:${card.backMarkdown.slice(0, 24)}`,
+        title,
+      })),
+    [cards, setId, title]
+  );
 
   return (
     <div className="mb-2">

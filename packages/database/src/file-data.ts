@@ -3,11 +3,13 @@ import {
   asc,
   desc,
   eq,
+  ilike,
   inArray,
   isNotNull,
   isNull,
   lte,
   ne,
+  or,
   sql,
 } from "drizzle-orm";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -70,6 +72,25 @@ export interface ExplorerFileRecord {
   videoDelivery?: VideoDeliveryRecord | null;
   createdAt: string;
   updatedAt: string;
+}
+
+function isMarkdownFileName(name: string) {
+  return /\.mdx?$/i.test(name);
+}
+
+export function isMarkdownFileRecord(
+  file: Pick<ExplorerFileRecord, "mimeType" | "name">
+) {
+  const mime = file.mimeType?.toLowerCase() ?? "";
+  return mime.includes("markdown") || isMarkdownFileName(file.name);
+}
+
+function createVirtualMarkdownStorage(fileId: string) {
+  const storageKey = `virtual:markdown:${fileId}`;
+  return {
+    storageKey,
+    storageUrl: `https://utfs.io/f/${encodeURIComponent(storageKey)}`,
+  };
 }
 
 export interface FilePageProperties {
@@ -921,6 +942,138 @@ export async function updateNoteContent(input: {
   });
 }
 
+export async function upsertMarkdownFileContent(input: {
+  content: string;
+  fileId: string;
+  metadata?: Record<string, unknown>;
+  userId: string;
+  version?: number;
+  workspaceId: string;
+}) {
+  const now = new Date();
+  const content = input.content ?? "";
+  const sizeBytes = Buffer.byteLength(content, "utf8");
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        metadata: fileAsset.metadata,
+        mimeType: fileAsset.mimeType,
+        name: fileAsset.name,
+        storageKey: fileAsset.storageKey,
+        storageUrl: fileAsset.storageUrl,
+      })
+      .from(fileAsset)
+      .where(
+        and(
+          eq(fileAsset.id, input.fileId),
+          eq(fileAsset.workspaceId, input.workspaceId),
+          isNull(fileAsset.deletedAt)
+        )
+      )
+      .limit(1);
+
+    if (!existing) {
+      return null;
+    }
+
+    if (
+      !isMarkdownFileRecord({
+        mimeType: existing.mimeType,
+        name: existing.name,
+      })
+    ) {
+      return null;
+    }
+
+    const nextMetadata = input.metadata
+      ? {
+          ...(asObjectRecord(existing.metadata) ?? {}),
+          ...input.metadata,
+        }
+      : (asObjectRecord(existing.metadata) ?? {});
+    const virtualStorage =
+      existing.storageKey.startsWith("virtual:note:") ||
+      existing.storageKey.startsWith("virtual:markdown:")
+        ? {
+            storageKey: existing.storageKey,
+            storageUrl: existing.storageUrl,
+          }
+        : createVirtualMarkdownStorage(input.fileId);
+
+    const [note] = await tx
+      .insert(noteContent)
+      .values({
+        baseContent: content,
+        content,
+        fileId: input.fileId,
+        needsReindex: content.trim().length > 0,
+        updatedAt: now,
+        updatedBy: input.userId,
+        version: input.version ?? 0,
+      })
+      .onConflictDoUpdate({
+        target: noteContent.fileId,
+        set: {
+          baseContent: content,
+          content,
+          needsReindex: content.trim().length > 0,
+          updatedAt: now,
+          updatedBy: input.userId,
+          ...(typeof input.version === "number"
+            ? { version: input.version }
+            : {}),
+        },
+      })
+      .returning({
+        updatedAt: noteContent.updatedAt,
+        version: noteContent.version,
+      });
+
+    const [record] = await tx
+      .update(fileAsset)
+      .set({
+        metadata: nextMetadata,
+        mimeType: "text/markdown",
+        optimizedMimeType: null,
+        optimizedName: null,
+        optimizedSizeBytes: null,
+        optimizedStorageKey: null,
+        optimizedStorageUrl: null,
+        sizeBytes,
+        storageKey: virtualStorage.storageKey,
+        storageUrl: virtualStorage.storageUrl,
+        updatedAt: now,
+        updatedBy: input.userId,
+      })
+      .where(
+        and(
+          eq(fileAsset.id, input.fileId),
+          eq(fileAsset.workspaceId, input.workspaceId),
+          isNull(fileAsset.deletedAt)
+        )
+      )
+      .returning();
+
+    if (!record || !note) {
+      return null;
+    }
+
+    const page = mapFilePageRecord(nextMetadata.page);
+    if (page) {
+      await syncWorkspacePropertyRegistry(tx, input.workspaceId, page.properties);
+    }
+
+    return {
+      file: mapFile(record),
+      previousStorageKey: existing.storageKey,
+      previousStorageUrl: existing.storageUrl,
+      updatedAt: note.updatedAt,
+      version: note.version,
+    };
+  });
+}
+
 export async function listNotesNeedingReindex(input: { limit: number }) {
   const limit = Math.max(1, Math.min(200, Math.trunc(input.limit)));
   const rows = await db
@@ -944,6 +1097,51 @@ export async function listNotesNeedingReindex(input: { limit: number }) {
     fileId: row.fileId,
     workspaceId: row.workspaceId,
     updatedAt: row.updatedAt.toISOString(),
+  }));
+}
+
+export async function listLegacyMarkdownFilesForMigration(input: {
+  limit: number;
+}) {
+  const limit = Math.max(1, Math.min(500, Math.trunc(input.limit)));
+  const rows = await db
+    .select({
+      id: fileAsset.id,
+      workspaceId: fileAsset.workspaceId,
+      name: fileAsset.name,
+      mimeType: fileAsset.mimeType,
+      storageKey: fileAsset.storageKey,
+      storageUrl: fileAsset.storageUrl,
+      uploadedBy: fileAsset.uploadedBy,
+      updatedBy: fileAsset.updatedBy,
+      noteFileId: noteContent.fileId,
+    })
+    .from(fileAsset)
+    .leftJoin(noteContent, eq(noteContent.fileId, fileAsset.id))
+    .where(
+      and(
+        isNull(fileAsset.deletedAt),
+        sql`${fileAsset.storageKey} NOT LIKE 'virtual:note:%'`,
+        sql`${fileAsset.storageKey} NOT LIKE 'virtual:markdown:%'`,
+        or(
+          ilike(fileAsset.mimeType, "%markdown%"),
+          ilike(fileAsset.name, "%.md"),
+          ilike(fileAsset.name, "%.mdx")
+        )
+      )
+    )
+    .orderBy(asc(fileAsset.updatedAt), asc(fileAsset.name))
+    .limit(limit);
+
+  return rows.map((row) => ({
+    id: row.id,
+    workspaceId: row.workspaceId,
+    name: row.name,
+    mimeType: row.mimeType,
+    storageKey: row.storageKey,
+    storageUrl: row.storageUrl,
+    userId: row.updatedBy ?? row.uploadedBy,
+    hasNoteContent: row.noteFileId != null,
   }));
 }
 
@@ -1457,6 +1655,7 @@ export async function listWorkspaceShareSuggestions(input: {
 }
 
 export interface UserWorkspaceSummary {
+  logo: string | null;
   workspaceId: string;
   organizationId: string;
   name: string;
@@ -1590,6 +1789,7 @@ export async function listWorkspacesForUser(
     .select({
       organizationId: member.organizationId,
       organizationName: organization.name,
+      organizationLogo: organization.logo,
     })
     .from(member)
     .innerJoin(organization, eq(organization.id, member.organizationId))
@@ -1606,6 +1806,7 @@ export async function listWorkspacesForUser(
       );
       const root = await ensureWorkspaceRootFolder(ws.id, userId);
       return {
+        logo: membership.organizationLogo ?? null,
         workspaceId: ws.id,
         organizationId: ws.organizationId,
         name: membership.organizationName,
@@ -1649,11 +1850,54 @@ export async function createWorkspaceForUser(userId: string, name: string) {
   const root = await ensureWorkspaceRootFolder(ws.id, userId);
 
   return {
+    logo: null,
     workspaceId: ws.id,
     organizationId: ws.organizationId,
     name: trimmed,
     rootFolderId: root.id,
   } satisfies UserWorkspaceSummary;
+}
+
+export async function updateWorkspaceLogoForUser(
+  userId: string,
+  workspaceId: string,
+  logo: string | null
+) {
+  const [ws] = await db
+    .select({ organizationId: workspace.organizationId })
+    .from(workspace)
+    .where(eq(workspace.id, workspaceId))
+    .limit(1);
+
+  if (!ws) {
+    return { status: "workspace-not-found" as const };
+  }
+
+  const [membership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(
+      and(
+        eq(member.organizationId, ws.organizationId),
+        eq(member.userId, userId)
+      )
+    )
+    .limit(1);
+
+  if (!membership) {
+    return { status: "forbidden" as const };
+  }
+
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { status: "forbidden" as const };
+  }
+
+  await db
+    .update(organization)
+    .set({ logo })
+    .where(eq(organization.id, ws.organizationId));
+
+  return { status: "updated" as const };
 }
 
 export async function deleteWorkspaceForUser(

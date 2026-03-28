@@ -3,23 +3,12 @@
 import { Button } from "@avenire/ui/components/button";
 import { Card, CardContent, CardHeader } from "@avenire/ui/components/card";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@avenire/ui/components/empty";
+  Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, } from "@avenire/ui/components/empty";
 import {
-  CalendarDays,
-  CheckCircle2,
-  Circle,
-  Pencil,
-  Sparkles,
-  Trash2,
-} from "lucide-react";
-import { motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+  CalendarDots as CalendarDays, CheckCircle as CheckCircle2, Circle, Pencil, Sparkle as Sparkles, Trash as Trash2 } from "@phosphor-icons/react"
+import { LazyMotion, domAnimation, m } from "framer-motion";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { Spinner } from "@avenire/ui/components/spinner";
 import { QuickCaptureDialog } from "@/components/dashboard/quick-capture-dialog";
 import { cn } from "@/lib/utils";
 
@@ -31,44 +20,106 @@ interface TaskRecord {
   title: string;
 }
 
+interface TaskStoreSnapshot {
+  errorMessage: string | null;
+  loading: boolean;
+  tasks: TaskRecord[];
+}
+
+const TASKS_ENDPOINT = "/api/tasks?limit=12&includeCompleted=true";
+const TASKS_REFRESH_EVENT = "dashboard.tasks.refresh";
+
+let taskStoreSnapshot: TaskStoreSnapshot = {
+  errorMessage: null,
+  loading: true,
+  tasks: [],
+};
+let taskStoreRequest: Promise<void> | null = null;
+let taskStoreHasLoaded = false;
+const taskStoreListeners = new Set<() => void>();
+
+function emitTaskStore() {
+  for (const listener of taskStoreListeners) {
+    listener();
+  }
+}
+
+function updateTaskStore(
+  updater:
+    | TaskStoreSnapshot
+    | ((current: TaskStoreSnapshot) => TaskStoreSnapshot)
+) {
+  taskStoreSnapshot =
+    typeof updater === "function" ? updater(taskStoreSnapshot) : updater;
+  emitTaskStore();
+}
+
+function reloadTaskStore() {
+  if (taskStoreRequest) {
+    return taskStoreRequest;
+  }
+
+  if (!taskStoreHasLoaded) {
+    updateTaskStore((current) => ({ ...current, loading: true }));
+  }
+
+  taskStoreRequest = (async () => {
+    try {
+      const response = await fetch(TASKS_ENDPOINT);
+      if (!response.ok) {
+        throw new Error("Failed to load tasks.");
+      }
+
+      const data = (await response.json()) as { tasks: TaskRecord[] };
+      taskStoreHasLoaded = true;
+      updateTaskStore({
+        errorMessage: null,
+        loading: false,
+        tasks: data.tasks,
+      });
+    } catch {
+      updateTaskStore((current) => ({
+        ...current,
+        errorMessage: "Could not load tasks right now.",
+        loading: false,
+      }));
+    } finally {
+      taskStoreRequest = null;
+    }
+  })();
+
+  return taskStoreRequest;
+}
+
+function subscribeToTaskStore(listener: () => void) {
+  taskStoreListeners.add(listener);
+  return () => {
+    taskStoreListeners.delete(listener);
+  };
+}
+
 export function DashboardTaskManager() {
-  const [tasks, setTasks] = useState<TaskRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
+  const { errorMessage, loading, tasks } = useSyncExternalStore(
+    subscribeToTaskStore,
+    () => taskStoreSnapshot,
+    () => taskStoreSnapshot
+  );
+
   const notifyTaskRefresh = () => {
-    window.dispatchEvent(new Event("dashboard.tasks.refresh"));
+    window.dispatchEvent(new Event(TASKS_REFRESH_EVENT));
   };
 
   useEffect(() => {
-    const loadTasks = async () => {
-      try {
-        const response = await fetch(
-          "/api/tasks?limit=12&includeCompleted=true"
-        );
-        if (!response.ok) {
-          throw new Error("Failed to load tasks.");
-        }
-        const data = (await response.json()) as { tasks: TaskRecord[] };
-        setTasks(data.tasks);
-        setErrorMessage(null);
-      } catch {
-        setErrorMessage("Could not load tasks right now.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     const refresh = () => {
-      setLoading(true);
-      loadTasks().catch(() => undefined);
+      reloadTaskStore().catch(() => undefined);
     };
 
-    window.addEventListener("dashboard.tasks.refresh", refresh);
+    window.addEventListener(TASKS_REFRESH_EVENT, refresh);
     refresh();
 
     return () => {
-      window.removeEventListener("dashboard.tasks.refresh", refresh);
+      window.removeEventListener(TASKS_REFRESH_EVENT, refresh);
     };
   }, []);
 
@@ -108,12 +159,13 @@ export function DashboardTaskManager() {
     }
 
     const newStatus = task.status === "completed" ? "pending" : "completed";
-    setTasks((prev) =>
-      prev.map((item) =>
+    updateTaskStore((current) => ({
+      ...current,
+      errorMessage: null,
+      tasks: current.tasks.map((item) =>
         item.id === taskId ? { ...item, status: newStatus } : item
-      )
-    );
-    setErrorMessage(null);
+      ),
+    }));
 
     try {
       const response = await fetch(`/api/tasks/${taskId}`, {
@@ -126,12 +178,13 @@ export function DashboardTaskManager() {
       }
       notifyTaskRefresh();
     } catch {
-      setTasks((prev) =>
-        prev.map((item) =>
+      updateTaskStore((current) => ({
+        ...current,
+        errorMessage: "Could not update that task.",
+        tasks: current.tasks.map((item) =>
           item.id === taskId ? { ...item, status: task.status } : item
-        )
-      );
-      setErrorMessage("Could not update that task.");
+        ),
+      }));
     }
   };
 
@@ -141,8 +194,11 @@ export function DashboardTaskManager() {
       return;
     }
 
-    setTasks((prev) => prev.filter((item) => item.id !== taskId));
-    setErrorMessage(null);
+    updateTaskStore((current) => ({
+      ...current,
+      errorMessage: null,
+      tasks: current.tasks.filter((item) => item.id !== taskId),
+    }));
 
     try {
       const response = await fetch(`/api/tasks/${taskId}`, {
@@ -153,8 +209,11 @@ export function DashboardTaskManager() {
       }
       notifyTaskRefresh();
     } catch {
-      setTasks((prev) => [...prev, task]);
-      setErrorMessage("Could not delete that task.");
+      updateTaskStore((current) => ({
+        ...current,
+        errorMessage: "Could not delete that task.",
+        tasks: [...current.tasks, task],
+      }));
     }
   };
 
@@ -194,9 +253,10 @@ export function DashboardTaskManager() {
         {errorMessage && (
           <p className="text-destructive text-xs">{errorMessage}</p>
         )}
-          <div className="space-y-1">
+        <div className="space-y-1">
           {loading && (
-            <div className="text-muted-foreground text-xs">
+            <div className="inline-flex items-center gap-2 text-muted-foreground text-xs">
+              <Spinner className="size-3.5" />
               Loading tasks...
             </div>
           )}
@@ -233,54 +293,56 @@ export function DashboardTaskManager() {
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
-                    <motion.button
-                      animate={{ opacity: 1, scale: 1 }}
-                      className={cn(
-                        "flex min-w-0 flex-1 items-center gap-2 text-left",
-                        isCompleted && "text-muted-foreground"
-                      )}
-                      layout
-                      onClick={() => handleToggleTask(task.id)}
-                      type="button"
-                    >
-                      <motion.span
-                        animate={{
-                          scale: isCompleted ? 1 : 0.88,
-                          opacity: isCompleted ? 1 : 0.8,
-                        }}
+                    <LazyMotion features={domAnimation}>
+                      <m.button
+                        animate={{ opacity: 1, scale: 1 }}
                         className={cn(
-                          "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors",
-                          isCompleted
-                            ? "border-primary/40 bg-primary text-primary-foreground"
-                            : "border-border bg-background text-muted-foreground"
+                          "flex min-w-0 flex-1 items-center gap-2 text-left",
+                          isCompleted && "text-muted-foreground"
                         )}
-                        transition={{ duration: 0.18, ease: "easeOut" }}
+                        layout
+                        onClick={() => handleToggleTask(task.id)}
+                        type="button"
                       >
-                        {isCompleted ? (
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                        ) : (
-                          <Circle className="h-3.5 w-3.5" />
-                        )}
-                      </motion.span>
-                      <span className="relative min-w-0 flex-1 overflow-hidden">
-                        <span className="block truncate">{task.title}</span>
-                        <motion.span
-                          animate={{ scaleX: isCompleted ? 1 : 0 }}
-                          className="absolute inset-x-0 top-1/2 h-px origin-left bg-current"
-                          style={{ translateY: "-50%" }}
-                          transition={{ duration: 0.2, ease: "easeOut" }}
-                        />
-                      </span>
-                      <span className="flex shrink-0 items-center gap-1 text-muted-foreground text-xs">
-                        <CalendarDays className="h-3 w-3" />
-                        {task.dueAt
-                          ? new Date(task.dueAt).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                            })
-                          : "No date"}
-                      </span>
-                    </motion.button>
+                        <m.span
+                          animate={{
+                            scale: isCompleted ? 1 : 0.88,
+                            opacity: isCompleted ? 1 : 0.8,
+                          }}
+                          className={cn(
+                            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors",
+                            isCompleted
+                              ? "border-primary/40 bg-primary text-primary-foreground"
+                              : "border-border bg-background text-muted-foreground"
+                          )}
+                          transition={{ duration: 0.18, ease: "easeOut" }}
+                        >
+                          {isCompleted ? (
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          ) : (
+                            <Circle className="h-3.5 w-3.5" />
+                          )}
+                        </m.span>
+                        <span className="relative min-w-0 flex-1 overflow-hidden">
+                          <span className="block truncate">{task.title}</span>
+                          <m.span
+                            animate={{ scaleX: isCompleted ? 1 : 0 }}
+                            className="absolute inset-x-0 top-1/2 h-px origin-left bg-current"
+                            style={{ translateY: "-50%" }}
+                            transition={{ duration: 0.2, ease: "easeOut" }}
+                          />
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1 text-muted-foreground text-xs">
+                          <CalendarDays className="h-3 w-3" />
+                          {task.dueAt
+                            ? new Date(task.dueAt).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                              })
+                            : "No date"}
+                        </span>
+                      </m.button>
+                    </LazyMotion>
                     <button
                       className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-destructive"
                       onClick={(e) => {

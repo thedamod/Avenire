@@ -39,7 +39,7 @@ export async function generateMetadata({
 
   if (!context.chat) {
     return buildPageMetadata({
-      title: slug === "new" ? "New Chat" : "Chat",
+      title: slug === "new" ? "New Method" : "Method",
     });
   }
 
@@ -65,7 +65,7 @@ export default async function DashboardChatPage({
       <ChatWorkspace
         chatIcon={null}
         chatSlug="new"
-        chatTitle="New Chat"
+        chatTitle="New Method"
         initialMessages={[]}
         initialPrompt={null}
         isReadonly={false}

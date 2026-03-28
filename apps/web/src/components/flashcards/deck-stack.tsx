@@ -4,7 +4,7 @@ import { Badge } from "@avenire/ui/components/badge";
 import { cn } from "@avenire/ui/lib/utils";
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { FlashcardFlipCard } from "@/components/flashcards/flip-card";
 
 export interface FlashcardDeckItem {
@@ -47,17 +47,15 @@ export function FlashcardDeckStack({
   const [internalCards, setInternalCards] = useState(cards);
   const [internalFlipped, setInternalFlipped] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setInternalCards(cards);
-  }, [cards]);
-
-  useEffect(() => {
     setInternalFlipped(false);
-  }, [internalCards]);
+  }, [cards]);
 
   const activeCards = internalCards;
   const currentCard = activeCards[0] ?? null;
-  const nextCards = useMemo(() => activeCards.slice(1, 4), [activeCards]);
+  const currentCardId = currentCard?.id ?? null;
+  const nextCards = activeCards.slice(1, 4);
   const isControlledFlipped = typeof flipped === "boolean";
   const isFlipped = isControlledFlipped ? flipped : internalFlipped;
 
@@ -85,7 +83,7 @@ export function FlashcardDeckStack({
 
     return () => window.clearTimeout(timer);
   }, [
-    activeCards.length,
+    currentCardId,
     autoAdvanceMs,
     isControlledFlipped,
     onFlippedChange,

@@ -4,11 +4,13 @@ import { scheduleIngestionJob } from "@avenire/ingestion/queue";
 import {
   deleteIngestionDataForFile,
   getFileAssetById,
+  isMarkdownFileRecord,
   getNoteContent,
   getWorkspaceIdForFile,
-  updateNoteContent,
+  upsertMarkdownFileContent,
   userCanEditFile,
 } from "@/lib/file-data";
+import { deleteUploadThingFile } from "@/lib/upload-registration";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
 
 const NOTE_REINDEX_DEBOUNCE_MS = 3000;
@@ -33,16 +35,63 @@ export async function GET(
   }
 
   const file = await getFileAssetById(workspaceId, noteId);
-  if (!file?.isNote) {
-    return NextResponse.json({ error: "Note not found" }, { status: 404 });
+  if (!file || !isMarkdownFileRecord(file)) {
+    return NextResponse.json({ error: "Markdown file not found" }, { status: 404 });
   }
 
   const note = await getNoteContent(noteId);
+  if (note?.content != null) {
+    return NextResponse.json({
+      markdown: note.content,
+      updatedAt: note.updatedAt?.toISOString() ?? file.updatedAt,
+      version: note.version ?? 0,
+    });
+  }
+
+  const response = await fetch(file.storageUrl, { cache: "no-store" }).catch(
+    () => null
+  );
+  if (!response?.ok) {
+    return NextResponse.json({
+      markdown: "",
+      updatedAt: file.updatedAt,
+      version: 0,
+    });
+  }
+
+  const markdown = await response.text();
+  const canEdit = await userCanEditFile({
+    workspaceId,
+    fileId: noteId,
+    userId: user.id,
+  });
+
+  if (!canEdit) {
+    return NextResponse.json({
+      markdown,
+      updatedAt: file.updatedAt,
+      version: 0,
+    });
+  }
+
+  const migrated = await upsertMarkdownFileContent({
+    content: markdown,
+    fileId: noteId,
+    userId: user.id,
+    workspaceId,
+  });
+
+  if (
+    migrated?.previousStorageKey &&
+    migrated.previousStorageKey !== migrated.file.storageKey
+  ) {
+    void deleteUploadThingFile(migrated.previousStorageKey);
+  }
 
   return NextResponse.json({
-    markdown: note?.content ?? "",
-    updatedAt: note?.updatedAt?.toISOString() ?? file.updatedAt,
-    version: note?.version ?? 0,
+    markdown,
+    updatedAt: migrated?.updatedAt?.toISOString() ?? file.updatedAt,
+    version: migrated?.version ?? 0,
   });
 }
 
@@ -71,8 +120,8 @@ export async function POST(
   }
 
   const file = await getFileAssetById(workspaceId, noteId);
-  if (!file?.isNote) {
-    return NextResponse.json({ error: "Note not found" }, { status: 404 });
+  if (!file || !isMarkdownFileRecord(file)) {
+    return NextResponse.json({ error: "Markdown file not found" }, { status: 404 });
   }
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -94,11 +143,11 @@ export async function POST(
   );
   const merged = mergedResult.result.join("\n");
 
-  const updated = await updateNoteContent({
-    baseContent: body.base,
+  const updated = await upsertMarkdownFileContent({
     content: merged,
     fileId: noteId,
     userId: user.id,
+    workspaceId,
     version: currentVersion + 1,
   });
 

@@ -1,22 +1,14 @@
-import type { LucideIcon } from "lucide-react";
-import {
-  BookOpenCheck,
-  BrainIcon,
-  Clock3,
-  FileCode2,
-  FileText,
-  Folder,
-  FolderOpen,
-  LibraryBig,
-  MessageSquareDashed,
-  MessageSquareText,
-  Sparkles,
-  Tag,
-} from "lucide-react";
+"use client";
+
+import type { ComponentType, SVGProps } from "react";
+import { BookOpenText as BookOpenCheck, BrainIcon, Clock as Clock3, FileCode as FileCode2, FileText, Folder, FolderOpen, Books as LibraryBig, ChatCenteredText as MessageSquareDashed, ChatText as MessageSquareText, Sparkle as Sparkles, Tag } from "@phosphor-icons/react";
 import { type ChatIconName } from "@/lib/chat-icons";
 import { cn } from "@/lib/utils";
 
-const CHAT_ICON_COMPONENTS: Record<ChatIconName, LucideIcon> = {
+const CHAT_ICON_COMPONENTS: Record<
+  ChatIconName,
+  ComponentType<SVGProps<SVGSVGElement>>
+> = {
   MessageSquareText,
   BookOpenCheck,
   FileText,

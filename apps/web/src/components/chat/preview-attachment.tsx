@@ -2,23 +2,13 @@
 
 import { Button } from "@avenire/ui/components/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogHeader, DialogTitle, } from "@avenire/ui/components/dialog";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@avenire/ui/components/tooltip";
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, } from "@avenire/ui/components/tooltip";
 import {
-  FileMediaPlayer,
-  type MediaPlaybackSource,
-  useMediaPlaybackSource,
-} from "@avenire/ui/media";
-import { File, FileCode2, LoaderIcon, X } from "lucide-react";
+  FileMediaPlayer, type MediaPlaybackSource, useMediaPlaybackSource, } from "@avenire/ui/media";
+import { Spinner } from "@avenire/ui/components/spinner";
+import { File, FileCode as FileCode2, SpinnerGap as LoaderIcon, X } from "@phosphor-icons/react"
 import { motion } from "motion/react";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -38,7 +28,10 @@ import { cn } from "@/lib/utils";
 const PDFViewer = dynamic(() => import("@/components/files/pdf-viewer"), {
   ssr: false,
   loading: () => (
-    <div className="p-4 text-muted-foreground text-sm">Loading PDF...</div>
+    <div className="inline-flex items-center gap-2 p-4 text-muted-foreground text-sm">
+      <Spinner className="size-4" />
+      Loading PDF...
+    </div>
   ),
 });
 
@@ -602,7 +595,8 @@ export function PreviewAttachment({
       return (
         <div className="max-h-[70vh] overflow-auto">
           {isLoadingText ? (
-            <p className="p-4 text-muted-foreground text-sm">
+            <p className="inline-flex items-center gap-2 p-4 text-muted-foreground text-sm">
+              <Spinner className="size-4" />
               Loading preview...
             </p>
           ) : (

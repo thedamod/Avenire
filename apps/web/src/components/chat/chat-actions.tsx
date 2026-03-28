@@ -2,7 +2,8 @@
 
 import type { UIMessage } from "@avenire/ai/message-types";
 import { Button } from "@avenire/ui/components/button";
-import { GitBranch, RefreshCcw, Copy } from "lucide-react";
+import {
+  Copy, GitBranch, ArrowCounterClockwise as RefreshCcw } from "@phosphor-icons/react"
 import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";

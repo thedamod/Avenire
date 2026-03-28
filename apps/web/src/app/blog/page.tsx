@@ -5,7 +5,7 @@ import { Footer } from "@/components/landing/Footer";
 import Link from "next/link";
 import Image from "next/image";
 import type { Route } from "next";
-import { Calendar, Clock, Tag, ArrowRight } from "lucide-react";
+import { Calendar, Clock, Tag, ArrowRight } from "@phosphor-icons/react/ssr"
 
 export const metadata = {
   title: "Blog — Avenire",

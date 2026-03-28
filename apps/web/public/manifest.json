@@ -26,9 +26,9 @@
   ],
   "shortcuts": [
     {
-      "name": "New Chat",
-      "short_name": "Chat",
-      "description": "Start a new conversation with Apollo",
+      "name": "New Method",
+      "short_name": "Method",
+      "description": "Start a new method with Apollo",
       "url": "/chat",
       "icons": [
         {

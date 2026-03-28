@@ -2,17 +2,11 @@
 
 import { Button } from "@avenire/ui/components/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, } from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
 import { Label } from "@avenire/ui/components/label";
 import { Textarea } from "@avenire/ui/components/textarea";
-import { Loader2, Plus, TriangleAlert } from "lucide-react";
+import { SpinnerGap as Loader2, Plus, Warning as TriangleAlert } from "@phosphor-icons/react"
 import { useRouter } from "next/navigation";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 
@@ -230,9 +224,10 @@ export function QuickCaptureDialog({
 
       if (nextKind === "task") {
         window.dispatchEvent(new Event("dashboard.tasks.refresh"));
+      } else {
+        router.refresh();
       }
 
-      router.refresh();
       handleOpenChange(false);
     } catch (submissionError) {
       setError(

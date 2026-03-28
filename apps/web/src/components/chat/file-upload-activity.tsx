@@ -2,21 +2,11 @@
 
 import { Button } from "@avenire/ui/components/button";
 import {
-  Drawer,
-  DrawerContent,
-} from "@avenire/ui/components/drawer";
+  Drawer, DrawerContent, } from "@avenire/ui/components/drawer";
 import { Progress } from "@avenire/ui/components/progress";
 import {
-  File,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileText,
-  FileVideo,
-  Upload,
-  X,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+  File, FileAudio, FileCode, FileImage, FileText, FileVideo, UploadSimple as Upload, X } from "@phosphor-icons/react"
+import { useMemo, useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 export type UploadStage = "preparing" | "uploading" | "ingesting";
@@ -254,23 +244,36 @@ export function FileUploadActivity({
   onRemoveFile,
 }: FileUploadActivityProps) {
   const isMobile = useIsMobile();
-  const [localFiles, setLocalFiles] = useState<FileUploadItem[]>(files);
-
-  useEffect(() => {
-    setLocalFiles(files);
-  }, [files]);
+  const [dismissedFileIds, setDismissedFileIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   const handleRemoveFile = (file: FileUploadItem) => {
-    setLocalFiles((prev) => prev.filter((f) => f.id !== file.id));
+    setDismissedFileIds((current) => {
+      const next = new Set(current);
+      next.add(file.id);
+      return next;
+    });
     onRemoveFile?.(file);
   };
 
   const handleClearCompleted = () => {
-    setLocalFiles((prev) => prev.filter((f) => !f.completed));
+    setDismissedFileIds((current) => {
+      const next = new Set(current);
+      for (const file of files) {
+        if (file.completed) {
+          next.add(file.id);
+        }
+      }
+      return next;
+    });
     onClearCompleted?.();
   };
 
-  const displayFiles = localFiles;
+  const displayFiles = useMemo(
+    () => files.filter((file) => !dismissedFileIds.has(file.id)),
+    [dismissedFileIds, files]
+  );
   const completedCount = displayFiles.filter((f) => f.completed).length;
 
   if (!isOpen) {

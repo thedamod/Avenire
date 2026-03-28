@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export function SensitiveText({
   value,
@@ -14,19 +14,13 @@ export function SensitiveText({
   className?: string;
   fallback?: string;
 }) {
-  const [revealed, setRevealed] = useState(false);
-
-  useEffect(() => {
-    if (!privacyMode) {
-      setRevealed(false);
-    }
-  }, [privacyMode, value]);
+  const [revealedValue, setRevealedValue] = useState<string | null>(null);
 
   if (!value) {
     return <span className={className}>{fallback}</span>;
   }
 
-  if (!privacyMode || revealed) {
+  if (!privacyMode || revealedValue === value) {
     return <span className={className}>{value}</span>;
   }
 
@@ -36,7 +30,7 @@ export function SensitiveText({
         "max-w-full cursor-pointer appearance-none border-0 bg-transparent p-0 text-left",
         className
       )}
-      onClick={() => setRevealed(true)}
+      onClick={() => setRevealedValue(value)}
       title="Click to reveal"
       type="button"
     >

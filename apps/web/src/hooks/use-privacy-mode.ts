@@ -7,11 +7,11 @@ import {
 } from "@/lib/privacy-mode";
 
 export function usePrivacyMode() {
-  const [privacyMode, setPrivacyMode] = useState(false);
+  const [privacyMode, setPrivacyMode] = useState(() =>
+    readPrivacyModeFromStorage()
+  );
 
   useEffect(() => {
-    setPrivacyMode(readPrivacyModeFromStorage());
-
     const onStorage = (event: StorageEvent) => {
       if (event.key && event.key !== PRIVACY_MODE_STORAGE_KEY) {
         return;

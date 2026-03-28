@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import type { LucideIcon } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import { cn } from "../lib/utils"
@@ -9,7 +8,7 @@ import { cn } from "../lib/utils"
 type ExpandableTabItem = {
   value: string
   label: string
-  icon: LucideIcon
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   disabled?: boolean
 }
 

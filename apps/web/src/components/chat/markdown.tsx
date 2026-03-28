@@ -3,14 +3,8 @@
 import { Button } from "@avenire/ui/components/button";
 import { Separator } from "@avenire/ui/components/separator";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@avenire/ui/components/table";
-import { CheckIcon, CopyIcon, FileTextIcon } from "lucide-react";
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow, } from "@avenire/ui/components/table";
+import { CheckIcon, Copy as CopyIcon, FileText as FileTextIcon } from "@phosphor-icons/react"
 import {
   type ComponentPropsWithoutRef,
   memo,

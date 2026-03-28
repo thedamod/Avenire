@@ -28,14 +28,14 @@ const createThread = (title?: string): ChatThread => {
   const now = nowIso();
   return {
     id: crypto.randomUUID(),
-    title: title?.trim() || "New Chat",
+    title: title?.trim() || "New Method",
     pinned: false,
     createdAt: now,
     updatedAt: now,
   };
 };
 
-const initialThread = createThread("New Chat");
+const initialThread = createThread("New Method");
 
 export const useChatStore = create<ChatStore>()(
   persist(
@@ -74,7 +74,7 @@ export const useChatStore = create<ChatStore>()(
         set((state) => {
           const nextChats = state.chats.filter((chat) => chat.id !== id);
           if (nextChats.length === 0) {
-            const fallback = createThread("New Chat");
+            const fallback = createThread("New Method");
             return { chats: [fallback], activeChatId: fallback.id };
           }
 

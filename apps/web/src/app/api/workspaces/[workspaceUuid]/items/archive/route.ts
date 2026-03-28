@@ -2,6 +2,7 @@ import {
   getFileAssetById,
   getFolderWithAncestors,
   getNoteContent,
+  isMarkdownFileRecord,
   listWorkspaceFiles,
   listWorkspaceFolders,
   userCanAccessWorkspace,
@@ -109,10 +110,15 @@ export async function POST(
         cursor = folder.parentId;
       }
       pathSegments.push(...folderSegments, sanitizeArchiveSegment(file.name));
-      if (file.isNote) {
+      if (isMarkdownFileRecord(file)) {
         const note = await getNoteContent(file.id);
+        const content =
+          note?.content ??
+          (await fetch(file.storageUrl)
+            .then((response) => (response.ok ? response.text() : ""))
+            .catch(() => ""));
         archiveEntries[pathSegments.join("/")] = Buffer.from(
-          note?.content ?? "",
+          content,
           "utf8"
         );
         continue;

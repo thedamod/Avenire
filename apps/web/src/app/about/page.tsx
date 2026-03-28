@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { MDXRemote } from "next-mdx-remote/rsc";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Navbar } from "@/components/landing/Navbar";
 import { Footer } from "@/components/landing/Footer";
 
@@ -10,11 +11,27 @@ export const metadata = {
 };
 
 const mdxComponents = {
-  h1: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h1 className="mb-6 border-b border-border/80 pb-4 font-sans text-2xl font-semibold tracking-tight text-foreground md:text-3xl" {...props} />
+  h1: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h1
+      className="mb-6 border-b border-border/80 pb-4 font-sans text-2xl font-semibold tracking-tight text-foreground md:text-3xl"
+      {...props}
+    >
+      {children}
+    </h1>
   ),
-  h2: (props: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h2 className="mt-8 mb-3 font-sans text-lg font-semibold tracking-tight text-foreground md:text-xl" {...props} />
+  h2: ({
+    children,
+    ...props
+  }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h2
+      className="mb-3 mt-8 font-sans text-lg font-semibold tracking-tight text-foreground md:text-xl"
+      {...props}
+    >
+      {children}
+    </h2>
   ),
   p: (props: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p className="mb-4 leading-relaxed text-foreground/85" {...props} />
@@ -60,7 +77,9 @@ export default function AboutPage() {
               />
 
               <article className="relative px-5 py-8 font-mono text-[13px] md:px-10 md:py-10 md:text-[14px]">
-                <MDXRemote source={source} components={mdxComponents} />
+                <Markdown components={mdxComponents} remarkPlugins={[remarkGfm]}>
+                  {source}
+                </Markdown>
               </article>
             </div>
           </div>

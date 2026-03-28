@@ -1,8 +1,11 @@
+"use client"
+
 import { NavigationMenu as NavigationMenuPrimitive } from "@base-ui/react/navigation-menu"
 import { cva } from "class-variance-authority"
+import type * as React from "react"
 
 import { cn } from "../lib/utils"
-import { ChevronDownIcon } from "lucide-react"
+import { CaretDown as ChevronDownIcon } from "@phosphor-icons/react"
 
 function NavigationMenu({
   align = "start",

@@ -183,7 +183,7 @@ function buildIframeDocument(cssVarBlock: string, isDark: boolean): string {
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
-  background: transparent;
+  background: var(--card);
   color: var(--foreground);
   font-family: var(--font-sans, system-ui, sans-serif);
   font-size: 14px;
@@ -509,7 +509,7 @@ export function WidgetRenderer({
   return (
     <div
       ref={containerRef}
-      className={`relative w-full overflow-visible rounded-lg border border-border ${className}`}
+      className={`relative w-full overflow-visible rounded-lg border border-border bg-card ${className}`}
     >
       {isStreaming && (
         <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-lg bg-background/5 backdrop-blur-[0.5px]">
@@ -538,7 +538,7 @@ export function WidgetRenderer({
           height: `${autoHeightRef.current}px`,
           border: "none",
           display: "block",
-          background: "transparent",
+          background: "var(--card)",
         }}
       />
     </div>

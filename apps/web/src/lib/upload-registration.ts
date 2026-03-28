@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import matter from "gray-matter";
 import { scheduleIngestionJob } from "@avenire/ingestion/queue";
-import { UTApi, UTFile } from "@avenire/storage";
+import { UTApi } from "@avenire/storage";
 import { consumeUploadUnits } from "@/lib/billing";
 import {
   normalizeFrontmatterProperties,
   type PageMetadataState,
 } from "@/lib/frontmatter";
 import {
+  createWorkspaceNoteFile,
   getFileAssetByContentHash,
   getFileAssetByStorageKey,
   registerFileAsset,
@@ -38,6 +39,12 @@ export interface UploadRegistrationResult {
   file: Awaited<ReturnType<typeof registerFileAsset>>;
   ingestionJob: Awaited<ReturnType<typeof scheduleIngestionJob>> | null;
   status: "created" | "deduplicated";
+}
+
+interface MarkdownNotePayload {
+  content: string;
+  contentHashSha256: string;
+  metadata?: Record<string, unknown>;
 }
 
 export function normalizeSha256(value: string | null | undefined) {
@@ -104,6 +111,16 @@ function resolveMimeType(input: { mimeType?: string | null; name: string }) {
   return inferMimeTypeFromName(input.name) ?? input.mimeType ?? null;
 }
 
+function isMarkdownUpload(input: { mimeType?: string | null; name: string }) {
+  const mime = input.mimeType?.toLowerCase() ?? "";
+  const normalizedName = input.name.toLowerCase();
+  return (
+    mime === "text/markdown" ||
+    normalizedName.endsWith(".md") ||
+    normalizedName.endsWith(".mdx")
+  );
+}
+
 function normalizeUploadThingStorageUrl(
   storageUrl: string,
   storageKey: string
@@ -149,47 +166,19 @@ function inferFrontmatterProperty(value: unknown) {
   return null;
 }
 
-async function normalizeMarkdownUpload(input: {
-  contentHashSha256?: string | null;
+function extractMarkdownNotePayload(input: {
   metadata?: Record<string, unknown>;
-  mimeType: string | null;
-  name: string;
-  sizeBytes: number;
-  storageKey: string;
-  storageUrl: string;
+  rawContent: string;
 }) {
-  const mime = input.mimeType?.toLowerCase() ?? "";
-  const isMarkdown =
-    mime === "text/markdown" ||
-    input.name.toLowerCase().endsWith(".md") ||
-    input.name.toLowerCase().endsWith(".mdx");
-
-  if (!isMarkdown) {
-    return {
-      contentHashSha256: input.contentHashSha256 ?? null,
-      metadata: input.metadata,
-      sizeBytes: input.sizeBytes,
-      storageKey: input.storageKey,
-      storageUrl: input.storageUrl,
-    };
-  }
-
-  const response = await fetch(input.storageUrl, { cache: "no-store" });
-  if (!response.ok) {
-    return {
-      contentHashSha256: input.contentHashSha256 ?? null,
-      metadata: input.metadata,
-      sizeBytes: input.sizeBytes,
-      storageKey: input.storageKey,
-      storageUrl: input.storageUrl,
-    };
-  }
-
-  const originalText = await response.text();
-  const parsed = matter(originalText);
+  const parsed = matter(input.rawContent);
+  const frontmatterTitle =
+    typeof parsed.data?.title === "string" ? parsed.data.title.trim() : "";
   const extractedProperties = Object.fromEntries(
     Object.entries(parsed.data ?? {})
       .map(([key, value]) => {
+        if (key.trim().toLowerCase() === "title") {
+          return null;
+        }
         const normalized = inferFrontmatterProperty(value);
         return normalized ? ([key.trim(), normalized] as const) : null;
       })
@@ -205,21 +194,6 @@ async function normalizeMarkdownUpload(input: {
       )
   );
 
-  if (Object.keys(extractedProperties).length === 0) {
-    return {
-      contentHashSha256: input.contentHashSha256 ?? null,
-      metadata: input.metadata,
-      sizeBytes: input.sizeBytes,
-      storageKey: input.storageKey,
-      storageUrl: input.storageUrl,
-    };
-  }
-
-  const normalizedPage = {
-    bannerUrl: null,
-    icon: null,
-    properties: normalizeFrontmatterProperties(extractedProperties),
-  } satisfies PageMetadataState;
   const currentMetadata = input.metadata ?? {};
   const currentPage =
     currentMetadata.page &&
@@ -227,6 +201,11 @@ async function normalizeMarkdownUpload(input: {
     !Array.isArray(currentMetadata.page)
       ? (currentMetadata.page as Record<string, unknown>)
       : {};
+  const normalizedPage = {
+    bannerUrl: null,
+    icon: null,
+    properties: normalizeFrontmatterProperties(extractedProperties),
+  } satisfies PageMetadataState;
   const mergedMetadata = {
     ...currentMetadata,
     page: {
@@ -237,42 +216,172 @@ async function normalizeMarkdownUpload(input: {
       },
     },
   };
-
   const cleanedText = parsed.content.replace(/^\n+/, "");
-  if (!process.env.UPLOADTHING_TOKEN) {
-    return {
-      contentHashSha256: createHash("sha256").update(cleanedText).digest("hex"),
-      metadata: mergedMetadata,
-      sizeBytes: Buffer.byteLength(cleanedText, "utf8"),
-      storageKey: input.storageKey,
-      storageUrl: input.storageUrl,
-    };
-  }
-
-  const utapi = new UTApi({ token: process.env.UPLOADTHING_TOKEN });
-  const result = await utapi.uploadFiles(
-    new UTFile([Buffer.from(cleanedText, "utf8")], input.name, {
-      type: input.mimeType ?? "text/markdown",
-    })
-  );
-  const uploaded = Array.isArray(result) ? result[0]?.data : result.data;
-
-  if (
-    !uploaded ||
-    typeof uploaded.key !== "string" ||
-    typeof uploaded.ufsUrl !== "string"
-  ) {
-    throw new Error("Failed to upload normalized markdown file.");
-  }
-
-  await deleteUploadThingFile(input.storageKey);
+  const hasHeading = /^#\s+.+$/m.test(cleanedText);
+  const normalizedContent =
+    frontmatterTitle && !hasHeading
+      ? `# ${frontmatterTitle}\n\n${cleanedText}`.replace(/\n+$/, "\n")
+      : cleanedText;
 
   return {
-    contentHashSha256: createHash("sha256").update(cleanedText).digest("hex"),
+    content: normalizedContent,
+    contentHashSha256: createHash("sha256")
+      .update(normalizedContent)
+      .digest("hex"),
     metadata: mergedMetadata,
-    sizeBytes: Buffer.byteLength(cleanedText, "utf8"),
-    storageKey: uploaded.key,
-    storageUrl: uploaded.ufsUrl,
+  } satisfies MarkdownNotePayload;
+}
+
+async function publishRegisteredUpload(input: {
+  deduplicated: boolean;
+  file: Awaited<ReturnType<typeof registerFileAsset>>;
+  folderId: string;
+  ingestionJob: Awaited<ReturnType<typeof scheduleIngestionJob>> | null;
+  source: "upload.dedupe" | "upload.register";
+  workspaceUuid: string;
+}) {
+  const tasks: Promise<unknown>[] = [
+    publishWorkspaceStreamEvent({
+      workspaceUuid: input.workspaceUuid,
+      type: "upload.finalized",
+      payload: {
+        deduplicated: input.deduplicated,
+        fileId: input.file.id,
+        folderId: input.folderId,
+        workspaceUuid: input.workspaceUuid,
+      },
+    }),
+  ];
+
+  if (!input.deduplicated) {
+    tasks.push(
+      publishFilesInvalidationEvent({
+        workspaceUuid: input.workspaceUuid,
+        folderId: input.folderId,
+        reason: "file.created",
+      }),
+      publishFilesInvalidationEvent({
+        workspaceUuid: input.workspaceUuid,
+        reason: "tree.changed",
+      })
+    );
+  }
+
+  if (input.ingestionJob) {
+    tasks.push(
+      publishWorkspaceStreamEvent({
+        workspaceUuid: input.workspaceUuid,
+        type: "ingestion.job",
+        payload: {
+          createdAt: new Date().toISOString(),
+          eventType: "job.queued",
+          jobId: input.ingestionJob.id,
+          payload: { status: "queued", source: input.source },
+          workspaceId: input.workspaceUuid,
+        },
+      })
+    );
+  }
+
+  await Promise.allSettled(tasks);
+}
+
+export async function registerWorkspaceMarkdownNote(input: {
+  content: string;
+  dedupeMode?: "allow" | "skip";
+  folderId: string;
+  metadata?: Record<string, unknown>;
+  name: string;
+  userId: string;
+  workspaceUuid: string;
+}): Promise<UploadRegistrationResult> {
+  const dedupeMode = input.dedupeMode ?? "allow";
+  const normalizedNote = extractMarkdownNotePayload({
+    metadata: input.metadata,
+    rawContent: input.content,
+  });
+  const normalizedHash = normalizeSha256(normalizedNote.contentHashSha256);
+
+  if (dedupeMode !== "skip" && normalizedHash) {
+    const existing = await getFileAssetByContentHash(
+      input.workspaceUuid,
+      normalizedHash
+    );
+    if (existing) {
+      const hasSucceeded = await hasSuccessfulIngestionForFile(
+        input.workspaceUuid,
+        existing.id
+      ).catch(() => false);
+      const ingestionJob = hasSucceeded
+        ? null
+        : await scheduleIngestionJob({
+            workspaceId: input.workspaceUuid,
+            fileId: existing.id,
+          }).catch((error) => {
+            console.error("upload.ingestion_enqueue_failed", {
+              workspaceUuid: input.workspaceUuid,
+              fileId: existing.id,
+              error,
+            });
+            return null;
+          });
+
+      await publishRegisteredUpload({
+        deduplicated: true,
+        file: existing,
+        folderId: existing.folderId,
+        ingestionJob,
+        source: "upload.dedupe",
+        workspaceUuid: input.workspaceUuid,
+      });
+
+      return {
+        file: existing,
+        ingestionJob,
+        status: "deduplicated",
+      };
+    }
+  }
+
+  const file = await createWorkspaceNoteFile({
+    workspaceId: input.workspaceUuid,
+    userId: input.userId,
+    folderId: input.folderId,
+    name: input.name,
+    baseContent: normalizedNote.content,
+    content: normalizedNote.content,
+    metadata: {
+      ...(normalizedNote.metadata ?? {}),
+      type: "note",
+    },
+  });
+
+  const ingestionJob = await scheduleIngestionJob({
+    workspaceId: input.workspaceUuid,
+    fileId: file.id,
+    sourceType: "markdown",
+  }).catch((error) => {
+    console.error("upload.ingestion_enqueue_failed", {
+      workspaceUuid: input.workspaceUuid,
+      fileId: file.id,
+      error,
+    });
+    return null;
+  });
+
+  await publishRegisteredUpload({
+    deduplicated: false,
+    file,
+    folderId: input.folderId,
+    ingestionJob,
+    source: "upload.register",
+    workspaceUuid: input.workspaceUuid,
+  });
+
+  return {
+    file,
+    ingestionJob,
+    status: "created",
   };
 }
 
@@ -299,15 +408,36 @@ export async function registerWorkspaceUploadedFile(
     mimeType: input.mimeType,
     name: input.name,
   });
-  const normalizedUpload = await normalizeMarkdownUpload({
-    contentHashSha256: input.contentHashSha256,
+  if (isMarkdownUpload({ mimeType: resolvedMimeType, name: input.name })) {
+    const response = await fetch(
+      normalizeUploadThingStorageUrl(input.storageUrl, input.storageKey),
+      { cache: "no-store" }
+    );
+    if (!response.ok) {
+      throw new Error("Unable to read uploaded markdown file.");
+    }
+
+    const content = await response.text();
+    const result = await registerWorkspaceMarkdownNote({
+      content,
+      dedupeMode,
+      folderId: input.folderId,
+      metadata: input.metadata,
+      name: input.name,
+      userId: input.userId,
+      workspaceUuid: input.workspaceUuid,
+    });
+    await deleteUploadThingFile(input.storageKey);
+    return result;
+  }
+
+  const normalizedUpload = {
+    contentHashSha256: input.contentHashSha256 ?? null,
     metadata: input.metadata,
-    mimeType: resolvedMimeType,
-    name: input.name,
     sizeBytes: input.sizeBytes,
     storageKey: input.storageKey,
     storageUrl: normalizeUploadThingStorageUrl(input.storageUrl, input.storageKey),
-  });
+  };
   const normalizedHash = normalizeSha256(normalizedUpload.contentHashSha256);
 
   if (dedupeMode !== "skip") {
@@ -344,37 +474,14 @@ export async function registerWorkspaceUploadedFile(
             return null;
           });
 
-      const publishTasks: Promise<unknown>[] = [];
-
-      if (ingestionJob) {
-        publishTasks.push(
-          publishWorkspaceStreamEvent({
-            workspaceUuid: input.workspaceUuid,
-            type: "ingestion.job",
-            payload: {
-              createdAt: new Date().toISOString(),
-              eventType: "job.queued",
-              jobId: ingestionJob.id,
-              payload: { status: "queued", source: "upload.dedupe" },
-              workspaceId: input.workspaceUuid,
-            },
-          })
-        );
-      }
-
-      publishTasks.push(
-        publishWorkspaceStreamEvent({
-          workspaceUuid: input.workspaceUuid,
-          type: "upload.finalized",
-          payload: {
-            deduplicated: true,
-            fileId: existing.id,
-            folderId: existing.folderId,
-            workspaceUuid: input.workspaceUuid,
-          },
-        })
-      );
-      await Promise.allSettled(publishTasks);
+      await publishRegisteredUpload({
+        deduplicated: true,
+        file: existing,
+        folderId: existing.folderId,
+        ingestionJob,
+        source: "upload.dedupe",
+        workspaceUuid: input.workspaceUuid,
+      });
 
       return {
         file: existing,
@@ -419,44 +526,14 @@ export async function registerWorkspaceUploadedFile(
     return null;
   });
 
-  const postRegisterTasks: Promise<unknown>[] = [
-    publishFilesInvalidationEvent({
-      workspaceUuid: input.workspaceUuid,
-      folderId: input.folderId,
-      reason: "file.created",
-    }),
-    publishFilesInvalidationEvent({
-      workspaceUuid: input.workspaceUuid,
-      reason: "tree.changed",
-    }),
-    publishWorkspaceStreamEvent({
-      workspaceUuid: input.workspaceUuid,
-      type: "upload.finalized",
-      payload: {
-        deduplicated: false,
-        fileId: file.id,
-        folderId: input.folderId,
-        workspaceUuid: input.workspaceUuid,
-      },
-    }),
-  ];
-
-  if (ingestionJob) {
-    postRegisterTasks.push(
-      publishWorkspaceStreamEvent({
-        workspaceUuid: input.workspaceUuid,
-        type: "ingestion.job",
-        payload: {
-          createdAt: new Date().toISOString(),
-          eventType: "job.queued",
-          jobId: ingestionJob.id,
-          payload: { status: "queued", source: "upload.register" },
-          workspaceId: input.workspaceUuid,
-        },
-      })
-    );
-  }
-  await Promise.allSettled(postRegisterTasks);
+  await publishRegisteredUpload({
+    deduplicated: false,
+    file,
+    folderId: input.folderId,
+    ingestionJob,
+    source: "upload.register",
+    workspaceUuid: input.workspaceUuid,
+  });
 
   return {
     file,

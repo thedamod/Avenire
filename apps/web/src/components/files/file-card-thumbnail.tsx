@@ -4,9 +4,9 @@ import {
   type MediaPlaybackSource,
   useMediaPlaybackSource,
 } from "@avenire/ui/media";
-import { FileCode2, FileText } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Markdown } from "@/components/chat/markdown";
+import { FileCode as FileCode2, FileText } from "@phosphor-icons/react";
+import { useTheme } from "next-themes";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   primeMediaPlayback,
   releaseMediaPlaybackPrime,
@@ -39,8 +39,6 @@ interface FileCardProps {
 interface MarkdownThumbnailProps {
   className?: string;
   content?: string | null;
-  id?: string;
-  workspaceUuid?: string;
 }
 
 function formatTimeAgo(date: Date): string {
@@ -73,6 +71,213 @@ function formatTimeAgo(date: Date): string {
     return `${diffMonths}mo`;
   }
   return `${diffYears}y`;
+}
+
+const MARKDOWN_FRONTMATTER_REGEX = /^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?/;
+const MARKDOWN_IMAGE_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
+const MARKDOWN_LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)/g;
+const MARKDOWN_WIKILINK_REGEX = /\[\[([^[\]|]+)(?:\|([^[\]]+))?\]\]/g;
+const MARKDOWN_INLINE_CODE_REGEX = /`([^`]+)`/g;
+const MARKDOWN_HEADING_REGEX = /^\s{0,3}#{1,6}\s+/;
+const MARKDOWN_BLOCKQUOTE_REGEX = /^\s{0,3}>\s?/;
+const MARKDOWN_LIST_REGEX = /^\s{0,3}(?:[-*+]|(?:\d+\.))\s+/;
+const MARKDOWN_HORIZONTAL_RULE_REGEX = /^\s{0,3}(?:[-*_]\s?){3,}$/;
+const WHITESPACE_REGEX = /\s+/g;
+const WORD_SPLIT_REGEX = /\s+/;
+const THUMBNAIL_SURFACE_CLASS =
+  "relative flex h-full w-full items-center justify-center overflow-hidden rounded-md";
+
+function escapeXml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function stripMarkdownFrontmatter(content: string) {
+  return content.replace(MARKDOWN_FRONTMATTER_REGEX, "");
+}
+
+function normalizeMarkdownLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (MARKDOWN_HORIZONTAL_RULE_REGEX.test(trimmed)) {
+    return "";
+  }
+
+  const normalized = trimmed
+    .replace(MARKDOWN_BLOCKQUOTE_REGEX, "")
+    .replace(MARKDOWN_LIST_REGEX, "")
+    .replace(MARKDOWN_HEADING_REGEX, "")
+    .replace(MARKDOWN_IMAGE_REGEX, (_match, altText: string) => altText || "")
+    .replace(MARKDOWN_LINK_REGEX, (_match, label: string) => label || "")
+    .replace(
+      MARKDOWN_WIKILINK_REGEX,
+      (_match, target: string, label?: string) => (label ?? target).trim()
+    )
+    .replace(MARKDOWN_INLINE_CODE_REGEX, (_match, code: string) => code)
+    .replace(/[*_~]/g, "")
+    .replace(WHITESPACE_REGEX, " ")
+    .trim();
+
+  return normalized;
+}
+
+function wrapTextLine(text: string, maxChars: number) {
+  const words = text.split(WORD_SPLIT_REGEX).filter(Boolean);
+  if (words.length === 0) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      lines.push(current);
+    }
+
+    if (word.length > maxChars) {
+      let remaining = word;
+      while (remaining.length > maxChars) {
+        lines.push(`${remaining.slice(0, maxChars - 1)}…`);
+        remaining = remaining.slice(maxChars - 1);
+      }
+      current = remaining;
+    } else {
+      current = word;
+    }
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines;
+}
+
+function markdownToPreviewLines(markdown: string) {
+  const normalized = stripMarkdownFrontmatter(markdown).replaceAll(
+    "\r\n",
+    "\n"
+  );
+  const rawLines = normalized.split("\n");
+  const cleanedLines: string[] = [];
+  let previousWasBlank = false;
+
+  for (const rawLine of rawLines) {
+    const line = normalizeMarkdownLine(rawLine);
+    if (!line) {
+      if (!previousWasBlank && cleanedLines.length > 0) {
+        cleanedLines.push("");
+      }
+      previousWasBlank = true;
+      continue;
+    }
+
+    cleanedLines.push(line);
+    previousWasBlank = false;
+  }
+
+  while (cleanedLines.at(-1) === "") {
+    cleanedLines.pop();
+  }
+
+  return cleanedLines;
+}
+
+function buildMarkdownThumbnailSvg(markdown: string, isDark: boolean) {
+  const width = 400;
+  const height = 250;
+  const lines = markdownToPreviewLines(markdown);
+  const headlineSource =
+    lines.find((line) => line.length > 0) ?? "Untitled note";
+  const headlineLines = wrapTextLine(headlineSource, 28).slice(0, 2);
+  const bodySource = lines.slice(
+    lines.findIndex((line) => line.length > 0) + 1
+  );
+  const bodyLines = bodySource
+    .flatMap((line) => (line ? wrapTextLine(line, 40) : [""]))
+    .slice(0, 7);
+  const palette = isDark
+    ? {
+        bodyText: "#3a3a3a",
+        innerFill: "#f7f4ee",
+        innerStroke: "rgba(17, 24, 39, 0.08)",
+        line: "rgba(17, 24, 39, 0.08)",
+        outerStart: "#1b1b1b",
+        outerEnd: "#232323",
+        titleText: "#111827",
+      }
+    : {
+        bodyText: "#4b5563",
+        innerFill: "#fffdf8",
+        innerStroke: "rgba(17, 24, 39, 0.08)",
+        line: "rgba(17, 24, 39, 0.08)",
+        outerStart: "#f7f3ea",
+        outerEnd: "#efe9dc",
+        titleText: "#111827",
+      };
+  const titleY = 46;
+  const bodyY = 88;
+  const titleLineHeight = 20;
+  const bodyLineHeight = 15;
+
+  const titleSvg = headlineLines
+    .map(
+      (line, index) =>
+        `<text x="32" y="${titleY + index * titleLineHeight}" fill="${palette.titleText}" font-family="Inter, system-ui, sans-serif" font-size="15.5" font-weight="700" letter-spacing="-0.01em">${escapeXml(line)}</text>`
+    )
+    .join("");
+
+  const bodySvg = bodyLines
+    .map((line, index) => {
+      if (!line) {
+        return "";
+      }
+      return `<text x="32" y="${bodyY + index * bodyLineHeight}" fill="${palette.bodyText}" font-family="Inter, system-ui, sans-serif" font-size="11.25" font-weight="400">${escapeXml(line)}</text>`;
+    })
+    .join("");
+
+  const lineDecorations = Array.from({ length: 6 }, (_unused, index) => {
+    const y = 106 + index * 18;
+    const widthMultiplier = [0.78, 0.94, 0.88, 0.72, 0.91, 0.64][index];
+    const x2 = 32 + 304 * widthMultiplier;
+    return `<line x1="32" y1="${y}" x2="${x2}" y2="${y}" stroke="${palette.line}" stroke-width="1" />`;
+  }).join("");
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Markdown preview">
+      <defs>
+        <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0%" stop-color="${palette.outerStart}" />
+          <stop offset="100%" stop-color="${palette.outerEnd}" />
+        </linearGradient>
+        <filter id="pageShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity="0.16" />
+        </filter>
+      </defs>
+      <rect width="400" height="250" rx="18" fill="url(#bg)" />
+      <rect x="20" y="14" width="360" height="222" rx="14" fill="${palette.innerFill}" filter="url(#pageShadow)" />
+      <rect x="20" y="14" width="360" height="222" rx="14" fill="none" stroke="${palette.innerStroke}" />
+      <rect x="32" y="28" width="46" height="6" rx="3" fill="${palette.line}" />
+      <rect x="32" y="37" width="98" height="2" rx="1" fill="${palette.line}" opacity="0.65" />
+      ${titleSvg}
+      ${lineDecorations}
+      ${bodySvg}
+    </svg>`
+  )}`;
 }
 
 function getFileIcon(fileType: FileCardType): React.ReactNode {
@@ -127,16 +332,16 @@ export function FileCard({
 
   if (previewContent) {
     previewBody = (
-      <div className="h-full w-auto max-w-full overflow-hidden rounded-lg border border-border/50 bg-card/60 p-1 [&_canvas]:h-full [&_canvas]:w-auto [&_canvas]:rounded-md [&_img]:h-full [&_img]:w-auto [&_img]:rounded-md [&_img]:object-contain [&_video]:h-full [&_video]:w-auto [&_video]:rounded-md [&_video]:object-contain">
+      <div className="h-full w-full overflow-hidden rounded-md [&_canvas]:h-full [&_canvas]:w-full [&_canvas]:rounded-md [&_img]:h-full [&_img]:w-full [&_img]:rounded-md [&_img]:object-contain [&_video]:h-full [&_video]:w-full [&_video]:rounded-md [&_video]:object-contain">
         {previewContent}
       </div>
     );
   } else if (previewUrl) {
     previewBody = (
-      <div className="h-full w-auto max-w-full overflow-hidden rounded-lg border border-border/50 bg-card/60 p-1">
+      <div className="h-full w-full overflow-hidden rounded-md">
         <img
           alt={name}
-          className="h-full w-auto max-w-full rounded-md object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+          className="h-full w-full rounded-md object-contain transition-transform duration-300 group-hover:scale-[1.02]"
           height={168}
           src={previewUrl}
           width={224}
@@ -160,7 +365,7 @@ export function FileCard({
     >
       <div
         className={cn(
-          "group relative flex w-full min-w-0 items-center justify-center overflow-hidden rounded-xl border border-border/45 bg-muted/70 p-1.5",
+          "group relative flex w-full min-w-0 items-center justify-center overflow-hidden rounded-xl bg-muted/70",
           hasPreview ? "h-28" : "aspect-[4/3] h-28"
         )}
       >
@@ -189,7 +394,7 @@ export function FileCard({
         <div className="flex w-full min-w-0 flex-wrap gap-1.5">
           {details.map((detail) => (
             <span
-              className="inline-flex max-w-full items-center gap-1 rounded-full border border-border/50 bg-background/75 px-2 py-0.5 text-[10px] text-muted-foreground leading-none"
+              className="inline-flex max-w-full items-center gap-1 rounded-full bg-background/75 px-2 py-0.5 text-[10px] text-muted-foreground leading-none"
               key={`${detail.label}:${detail.value}`}
               title={`${detail.label}: ${detail.value}`}
             >
@@ -208,39 +413,30 @@ export function FileCard({
 export function MarkdownThumbnail({
   className,
   content,
-  id,
-  workspaceUuid,
 }: MarkdownThumbnailProps) {
-  const markdownIdRef = useRef(
-    `markdown-thumbnail-${crypto.randomUUID()}`
+  const { resolvedTheme } = useTheme();
+  const markdownContent = typeof content === "string" ? content.trim() : "";
+  const isDark = resolvedTheme === "dark";
+  const previewSrc = useMemo(
+    () =>
+      markdownContent ? buildMarkdownThumbnailSvg(markdownContent, isDark) : "",
+    [isDark, markdownContent]
   );
 
-  const markdownContent =
-    typeof content === "string" && content.trim().length > 0
-      ? content
-      : null;
-
   return (
-    <div
-      className={cn(
-        "flex h-full w-full items-start justify-start overflow-hidden rounded-md border border-border/50 bg-background p-2 text-[8px] leading-none",
-        className
-      )}
-    >
-      {markdownContent ? (
-        <div className="origin-top-left scale-[0.62] transform-gpu">
-          <Markdown
-            className="max-w-none break-words text-foreground [&_p]:my-0 [&_h1]:mt-0 [&_h1]:mb-0 [&_h2]:mt-0 [&_h2]:mb-0 [&_h3]:mt-0 [&_h3]:mb-0 [&_h4]:mt-0 [&_h4]:mb-0 [&_h5]:mt-0 [&_h5]:mb-0 [&_h6]:mt-0 [&_h6]:mb-0 [&_li]:py-0 [&_ol]:my-0 [&_ul]:my-0 [&_pre]:my-0"
-            content={markdownContent}
-            id={id ?? markdownIdRef.current}
-            parseIncompleteMarkdown={false}
-            textSize="small"
-            workspaceUuid={workspaceUuid}
-          />
-        </div>
+    <div className={cn(THUMBNAIL_SURFACE_CLASS, className)}>
+      {previewSrc ? (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="h-full w-full object-contain"
+          height={250}
+          src={previewSrc}
+          width={400}
+        />
       ) : (
-        <div className="flex h-full w-full items-center justify-center rounded-md border border-dashed border-border/60 bg-muted/30 text-muted-foreground">
-          <FileCode2 className="size-4" aria-hidden="true" />
+        <div className="flex h-full w-full items-center justify-center rounded-md bg-muted/30 text-muted-foreground">
+          <FileCode2 aria-hidden="true" className="size-4" />
         </div>
       )}
     </div>
@@ -358,27 +554,24 @@ export function VideoThumbnail({
 
   if (failed) {
     return (
-      <div
-        className={cn(
-          "flex h-full w-auto items-center justify-center bg-muted/70",
-          className
-        )}
-      >
+      <div className={cn(THUMBNAIL_SURFACE_CLASS, className)}>
         <FileText className="size-8 text-violet-500" />
       </div>
     );
   }
 
   return (
-    <video
-      className={cn("h-full w-auto object-contain", className)}
-      muted
-      onError={() => setFailed(true)}
-      playsInline
-      poster={posterUrl ?? undefined}
-      preload={warm || openedCached || playOnHover ? "auto" : "none"}
-      ref={videoRef}
-    />
+    <div className={cn(THUMBNAIL_SURFACE_CLASS, className)}>
+      <video
+        className="h-full w-full object-contain"
+        muted
+        onError={() => setFailed(true)}
+        playsInline
+        poster={posterUrl ?? undefined}
+        preload={warm || openedCached || playOnHover ? "auto" : "none"}
+        ref={videoRef}
+      />
+    </div>
   );
 }
 
@@ -467,26 +660,21 @@ export function PdfThumbnail({
 
   if (failed) {
     return (
-      <div
-        className={cn(
-          "flex h-full w-auto items-center justify-center bg-muted/70",
-          className
-        )}
-      >
+      <div className={cn(THUMBNAIL_SURFACE_CLASS, className)}>
         <FileText className="size-8 text-rose-500" />
       </div>
     );
   }
 
   return (
-    <div className={cn("relative h-full w-auto overflow-hidden", className)}>
+    <div className={cn(THUMBNAIL_SURFACE_CLASS, className)}>
       {!ready && (
         <div className="absolute inset-0 flex items-center justify-center bg-muted/70">
           <FileText className="size-8 text-rose-400" />
         </div>
       )}
       <canvas
-        className="h-full w-auto object-contain"
+        className="h-full w-full object-contain"
         ref={canvasRef}
         style={{ opacity: ready ? 1 : 0, transition: "opacity 0.2s" }}
       />

@@ -2,56 +2,19 @@
 
 import { Button } from "@avenire/ui/components/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@avenire/ui/components/dropdown-menu";
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, } from "@avenire/ui/components/dropdown-menu";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@avenire/ui/components/empty";
+  Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, } from "@avenire/ui/components/empty";
 import { ExpandableTabs } from "@avenire/ui/components/expandable-tabs";
 import { Input } from "@avenire/ui/components/input";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuAction,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "@avenire/ui/components/sidebar";
+  Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuAction, SidebarMenuButton, SidebarMenuItem, useSidebar, } from "@avenire/ui/components/sidebar";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@avenire/ui/components/tooltip";
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, } from "@avenire/ui/components/tooltip";
+import { Spinner } from "@avenire/ui/components/spinner";
 import { useHotkey } from "@tanstack/react-hotkeys";
 import {
-  Files,
-  GitBranch,
-  MessageSquare,
-  MoreHorizontal,
-  Pencil,
-  Pin,
-  PinOff,
-  PlusCircle,
-  Settings,
-  Sparkles,
-  Trash2,
-  Waves,
-} from "lucide-react";
+  Files, GitBranch, Chat as MessageSquare, DotsThree as MoreHorizontal, Pencil, PushPin as Pin, PushPinSlash as PinOff, PlusCircle, Gear as Settings, Sparkle as Sparkles, Trash as Trash2, Waves } from "@phosphor-icons/react"
 import type { Route } from "next";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -104,7 +67,10 @@ const FlashcardsSidebarPanel = dynamic(
   {
     loading: () => (
       <div className="absolute inset-0 flex items-start p-4">
-        <p className="text-muted-foreground text-xs">Loading flashcards...</p>
+        <div className="inline-flex items-center gap-2 text-muted-foreground text-xs">
+          <Spinner className="size-3.5" />
+          Loading flashcards...
+        </div>
       </div>
     ),
   }
@@ -118,16 +84,13 @@ const DeferredFilesSidebarPanel = dynamic(
   {
     loading: () => (
       <div className="absolute inset-0 flex items-start p-4">
-        <p className="text-muted-foreground text-xs">Loading files...</p>
+        <div className="inline-flex items-center gap-2 text-muted-foreground text-xs">
+          <Spinner className="size-3.5" />
+          Loading files...
+        </div>
       </div>
     ),
   }
-);
-
-const SettingsDialog = dynamic(() =>
-  import("@/components/settings/settings-dialog").then((module) => ({
-    default: module.SettingsDialog,
-  }))
 );
 
 const TrashDialog = dynamic(() =>
@@ -140,6 +103,34 @@ interface DashboardSidebarUser {
   avatar?: string;
   email: string;
   name: string;
+}
+
+async function sendChatSessionClose(payload: {
+  chatId: string;
+  sessionId: string;
+}) {
+  const body = JSON.stringify({
+    kind: "session-close",
+    chatId: payload.chatId,
+    sessionId: payload.sessionId,
+  });
+
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon(
+      "/api/chat",
+      new Blob([body], { type: "application/json" })
+    );
+    return;
+  }
+
+  await fetch("/api/chat", {
+    body,
+    keepalive: true,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
 }
 
 function SectionButton({
@@ -541,6 +532,7 @@ export function DashboardSidebar({
   >(() =>
     activeView && activeView !== "workspace" ? new Set([activeView]) : new Set()
   );
+  const [deferredStartupReady, setDeferredStartupReady] = useState(false);
   const primaryChatRoute = useMemo<Route>(() => {
     const chatSlug = activeChatSlug || chats[0]?.slug;
     return chatSlug
@@ -602,6 +594,23 @@ export function DashboardSidebar({
     return match?.[1] ?? undefined;
   }, [pathname]);
   const currentFileId = searchParams.get("file") ?? undefined;
+  const routeWorkspaceUuid = useMemo(() => {
+    const match = pathname.match(/^\/workspace\/files\/([^/]+)/);
+    return match?.[1] ?? null;
+  }, [pathname]);
+  const preferredWorkspaceId = readPreferredWorkspaceId();
+  const activeChatWorkspaceId = activeChatSlug
+    ? (chats.find((chat) => chat.slug === activeChatSlug)?.workspaceId ?? null)
+    : null;
+
+  const derivedWorkspaceUuid =
+    routeWorkspaceUuid ??
+    activeWorkspace?.workspaceId ??
+    preferredWorkspaceId ??
+    activeChatWorkspaceId ??
+    workspaces[0]?.workspaceId ??
+    null;
+
   const warmWorkspaceSection = useCallback(
     (section: "chat" | "flashcards" | "files") => {
       if (section === "chat") {
@@ -664,6 +673,39 @@ export function DashboardSidebar({
   }, [activeView, mountedViews]);
 
   useEffect(() => {
+    if (initialChats.length === 0) {
+      return;
+    }
+    setChats((prev) => {
+      if (prev === initialChats) {
+        return prev;
+      }
+      if (
+        prev.length === initialChats.length &&
+        prev.every((chat, i) => chat.id === initialChats[i]?.id)
+      ) {
+        return prev;
+      }
+      return initialChats;
+    });
+  }, [initialChats]);
+
+  useEffect(() => {
+    setWorkspaceUuid((prev) =>
+      prev === derivedWorkspaceUuid ? prev : derivedWorkspaceUuid
+    );
+  }, [derivedWorkspaceUuid]);
+
+  useEffect(() => {
+    if (chatsWorkspaceRef.current === workspaceUuid) {
+      return;
+    }
+    chatsWorkspaceRef.current = workspaceUuid;
+    const cachedChats = workspaceUuid ? readCachedChats(workspaceUuid) : null;
+    setChats(cachedChats ?? []);
+  }, [workspaceUuid]);
+
+  useEffect(() => {
     const clearSessionCloseTimer = () => {
       if (sessionCloseTimerRef.current) {
         clearTimeout(sessionCloseTimerRef.current);
@@ -687,28 +729,9 @@ export function DashboardSidebar({
             return;
           }
           scope.sent = true;
-
-          const payload = JSON.stringify({
-            kind: "session-close",
+          void sendChatSessionClose({
             chatId: scope.chatId,
             sessionId: scope.sessionId,
-          });
-
-          if (navigator.sendBeacon) {
-            navigator.sendBeacon(
-              "/api/chat",
-              new Blob([payload], { type: "application/json" })
-            );
-            return;
-          }
-
-          void fetch("/api/chat", {
-            body: payload,
-            keepalive: true,
-            headers: {
-              "Content-Type": "application/json",
-            },
-            method: "POST",
           }).catch(() => undefined);
         },
         5 * 60 * 1000
@@ -800,37 +823,6 @@ export function DashboardSidebar({
     };
   }, [activeChatSlug, routeView]);
 
-  useEffect(() => {
-    if (initialChats.length === 0) {
-      return;
-    }
-    setChats((prev) => {
-      if (prev === initialChats) {
-        return prev;
-      }
-      if (
-        prev.length === initialChats.length &&
-        prev.every((chat, i) => chat.id === initialChats[i]?.id)
-      ) {
-        return prev;
-      }
-      return initialChats;
-    });
-  }, [initialChats]);
-
-  useEffect(() => {
-    if (!workspaceUuid) {
-      return;
-    }
-    chatsWorkspaceRef.current = workspaceUuid;
-    const cachedChats = readCachedChats(workspaceUuid);
-    if (cachedChats) {
-      setChats(cachedChats);
-      return;
-    }
-    setChats([]);
-  }, [workspaceUuid]);
-
   const loadChats = useCallback(async () => {
     try {
       const response = await fetch("/api/chat/history", {
@@ -855,6 +847,45 @@ export function DashboardSidebar({
   }, [loadChats]);
 
   useEffect(() => {
+    if (deferredStartupReady || typeof window === "undefined") {
+      return;
+    }
+
+    const markReady = () => {
+      setDeferredStartupReady(true);
+    };
+
+    const cleanupListeners = () => {
+      window.removeEventListener("pointerdown", markReady);
+      window.removeEventListener("keydown", markReady);
+      window.removeEventListener("focusin", markReady);
+    };
+
+    window.addEventListener("pointerdown", markReady, {
+      once: true,
+      passive: true,
+    });
+    window.addEventListener("keydown", markReady, { once: true });
+    window.addEventListener("focusin", markReady, { once: true });
+
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(() => {
+        markReady();
+      });
+      return () => {
+        cleanupListeners();
+        window.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timeoutId = globalThis.setTimeout(markReady, 2000);
+    return () => {
+      cleanupListeners();
+      globalThis.clearTimeout(timeoutId);
+    };
+  }, [deferredStartupReady]);
+
+  useEffect(() => {
     if (!workspaceUuid) {
       return;
     }
@@ -865,15 +896,10 @@ export function DashboardSidebar({
   }, [chats, workspaceUuid]);
 
   useEffect(() => {
-    if (!activeWorkspace?.workspaceId) {
+    if (!deferredStartupReady) {
       return;
     }
-    setWorkspaceUuid((prev) =>
-      prev === activeWorkspace.workspaceId ? prev : activeWorkspace.workspaceId
-    );
-  }, [activeWorkspace?.workspaceId]);
 
-  useEffect(() => {
     const warmTargets = () => {
       router.prefetch(primaryChatRoute);
       router.prefetch("/workspace/flashcards" as Route);
@@ -912,6 +938,7 @@ export function DashboardSidebar({
   }, [
     activeWorkspace?.rootFolderId,
     currentFolderId,
+    deferredStartupReady,
     primaryChatRoute,
     primaryFilesRoute,
     router,
@@ -920,96 +947,22 @@ export function DashboardSidebar({
 
   const pinsRehydratedRef = useRef(false);
   useEffect(() => {
+    if (!deferredStartupReady) {
+      return;
+    }
     if (!pinsRehydratedRef.current) {
       pinsRehydratedRef.current = true;
       useFilesPinsStore.persist.rehydrate();
     }
-  }, []);
+  }, [deferredStartupReady]);
 
   useEffect(() => {
-    const fileRouteMatch = pathname.match(/^\/workspace\/files\/([^/]+)/);
-    if (fileRouteMatch?.[1]) {
-      setWorkspaceUuid((prev) =>
-        prev === fileRouteMatch[1] ? prev : fileRouteMatch[1]
-      );
-      if (readPreferredWorkspaceId() !== fileRouteMatch[1]) {
-        window.localStorage.setItem("preferredWorkspaceId", fileRouteMatch[1]);
+    if (routeWorkspaceUuid) {
+      if (readPreferredWorkspaceId() !== routeWorkspaceUuid) {
+        window.localStorage.setItem("preferredWorkspaceId", routeWorkspaceUuid);
       }
-      return;
     }
-
-    if (activeWorkspace?.workspaceId) {
-      setWorkspaceUuid((prev) =>
-        prev === activeWorkspace.workspaceId ? prev : activeWorkspace.workspaceId
-      );
-      return;
-    }
-
-    const preferredWorkspaceId = readPreferredWorkspaceId();
-    if (preferredWorkspaceId) {
-      setWorkspaceUuid((prev) =>
-        prev === preferredWorkspaceId ? prev : preferredWorkspaceId
-      );
-      return;
-    }
-
-    const activeChatWorkspaceId = activeChatSlug
-      ? (chats.find((chat) => chat.slug === activeChatSlug)?.workspaceId ??
-        null)
-      : null;
-    if (activeChatWorkspaceId) {
-      setWorkspaceUuid((prev) =>
-        prev === activeChatWorkspaceId ? prev : activeChatWorkspaceId
-      );
-      return;
-    }
-
-    const fallbackWorkspaceId =
-      activeWorkspace?.workspaceId ??
-      chats.find((chat) => chat.workspaceId)?.workspaceId ??
-      workspaces[0]?.workspaceId ??
-      null;
-    setWorkspaceUuid((prev) =>
-      prev === fallbackWorkspaceId ? prev : fallbackWorkspaceId
-    );
-  }, [
-    activeChatSlug,
-    activeWorkspace?.workspaceId,
-    chats,
-    pathname,
-    workspaces,
-  ]);
-
-  useEffect(() => {
-    if (pathname !== "/workspace") {
-      return;
-    }
-
-    if (activeWorkspace?.workspaceId) {
-      setWorkspaceUuid((prev) =>
-        prev === activeWorkspace.workspaceId ? prev : activeWorkspace.workspaceId
-      );
-      return;
-    }
-
-    const preferredWorkspaceId = readPreferredWorkspaceId();
-    if (!preferredWorkspaceId) {
-      return;
-    }
-
-    const preferredWorkspace = workspaces.find(
-      (workspace) => workspace.workspaceId === preferredWorkspaceId
-    );
-    if (!preferredWorkspace) {
-      return;
-    }
-
-    if (workspaceUuid === preferredWorkspace.workspaceId) {
-      return;
-    }
-
-    setWorkspaceUuid(preferredWorkspace.workspaceId);
-  }, [activeWorkspace?.workspaceId, pathname, workspaces, workspaceUuid]);
+  }, [routeWorkspaceUuid]);
 
   useEffect(() => {
     const onChatCreated = (event: Event) => {
@@ -1160,7 +1113,6 @@ export function DashboardSidebar({
         workspaces[0];
 
       if (targetWorkspace) {
-        setWorkspaceUuid(targetWorkspace.workspaceId);
         router.push(
           `/workspace/files/${targetWorkspace.workspaceId}/folder/${targetWorkspace.rootFolderId}` as Route
         );
@@ -1179,7 +1131,6 @@ export function DashboardSidebar({
       };
 
       if (payload.workspaceUuid && payload.rootFolderUuid) {
-        setWorkspaceUuid(payload.workspaceUuid);
         router.push(
           `/workspace/files/${payload.workspaceUuid}/folder/${payload.rootFolderUuid}` as Route
         );
@@ -1300,24 +1251,6 @@ export function DashboardSidebar({
     };
   }, [loadChats, workspaceUuid]);
 
-  useEffect(() => {
-    if (!pathname.startsWith("/workspace/files")) {
-      return;
-    }
-
-    const match = pathname.match(
-      /^\/workspace\/files\/([^/]+)\/folder\/([^/]+)/
-    );
-    const currentWorkspace = match?.[1];
-    if (!currentWorkspace) {
-      return;
-    }
-
-    setWorkspaceUuid((prev) =>
-      prev === currentWorkspace ? prev : currentWorkspace
-    );
-  }, [pathname]);
-
   const createChat = async () => {
     navigate("/workspace/chats/new" as Route);
   };
@@ -1393,7 +1326,6 @@ export function DashboardSidebar({
     } catch {
       return;
     }
-    setWorkspaceUuid(workspace.workspaceId);
     window.localStorage.setItem("preferredWorkspaceId", workspace.workspaceId);
     navigate(
       `/workspace/files/${workspace.workspaceId}/folder/${workspace.rootFolderId}` as Route
@@ -1651,9 +1583,9 @@ export function DashboardSidebar({
               allowDeselect={false}
               className="mt-1"
               items={[
-                { value: "chat", label: "Chat", icon: MessageSquare },
-                { value: "flashcards", label: "Flashcards", icon: Sparkles },
-                { value: "files", label: "Files", icon: Files },
+                { value: "chat", label: "Method", icon: MessageSquare },
+                { value: "flashcards", label: "Mindset", icon: Sparkles },
+                { value: "files", label: "Manage", icon: Files },
               ]}
               onItemHover={(item) => {
                 warmWorkspaceSection(
@@ -1711,14 +1643,14 @@ export function DashboardSidebar({
                 <SidebarGroup>
                   <SidebarGroupLabel>Workspace Home</SidebarGroupLabel>
                   <SidebarGroupContent>
-                    <p className="px-2 pb-2 text-muted-foreground text-xs leading-relaxed">
+                      <p className="px-2 pb-2 text-muted-foreground text-xs leading-relaxed">
                       Pick a surface to continue. This home view keeps the
-                      workspace shell visible without pretending to be chat.
+                      workspace shell visible without pretending to be Method.
                     </p>
                     <SidebarMenu>
                       <SectionButton
                         icon={MessageSquare}
-                        label="Open Chat"
+                        label="Open Method"
                         onClick={() => {
                           const chatSlug = activeChatSlug || chats[0]?.slug;
                           closeMobileSidebar();
@@ -1731,7 +1663,7 @@ export function DashboardSidebar({
                       />
                       <SectionButton
                         icon={Sparkles}
-                        label="Open Flashcards"
+                        label="Open Mindset"
                         onClick={() => {
                           closeMobileSidebar();
                           navigate("/workspace/flashcards" as Route);
@@ -1739,7 +1671,7 @@ export function DashboardSidebar({
                       />
                       <SectionButton
                         icon={Files}
-                        label="Open Files"
+                        label="Open Manage"
                         onClick={() => {
                           closeMobileSidebar();
                           void navigateToFilesRoot();
@@ -1768,7 +1700,7 @@ export function DashboardSidebar({
                       <SidebarMenu>
                         <SectionButton
                           icon={PlusCircle}
-                          label="New Chat"
+                          label="New Method"
                           onClick={() => {
                             void triggerHaptic("selection");
                             setEditingChatSlug(null);
@@ -1777,12 +1709,12 @@ export function DashboardSidebar({
                           }}
                         />
                       </SidebarMenu>
-                      <Input
+                        <Input
                         className="mt-2 h-8 text-xs"
                         onChange={(event) =>
                           setChatSearchQuery(event.target.value)
                         }
-                        placeholder="Search chats by title..."
+                        placeholder="Search methods by title..."
                         value={chatSearchQuery}
                       />
                     </SidebarGroupContent>
@@ -1945,9 +1877,19 @@ export function DashboardSidebar({
             <Button
               id="dashboard-settings-trigger"
               className="hit-area h-8 w-8"
+              onFocus={() => {
+                void import("@/components/settings/settings-dialog").catch(
+                  () => undefined
+                );
+              }}
               onClick={() => {
                 void triggerHaptic("selection");
-                setSettingsOpen(true);
+                openOverlayAfterCollapse(() => setSettingsOpen(true));
+              }}
+              onPointerEnter={() => {
+                void import("@/components/settings/settings-dialog").catch(
+                  () => undefined
+                );
               }}
               size="icon-sm"
               type="button"
@@ -1974,19 +1916,6 @@ export function DashboardSidebar({
           user={user}
           workspaces={workspaces}
         />
-        {settingsOpen ? (
-          <SettingsDialog
-            onOpenChange={setSettingsOpen}
-            open={settingsOpen}
-          />
-        ) : null}
-        {trashOpen ? (
-          <TrashDialog
-            onOpenChange={setTrashOpen}
-            open={trashOpen}
-            workspaceUuid={workspaceUuid}
-          />
-        ) : null}
       </SidebarFooter>
     </Sidebar>
   );

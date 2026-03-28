@@ -11,7 +11,7 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "./input-group"
-import { ChevronDownIcon, XIcon, CheckIcon } from "lucide-react"
+import { CaretDown as ChevronDownIcon, XIcon, CheckIcon } from "@phosphor-icons/react"
 
 const Combobox = ComboboxPrimitive.Root
 

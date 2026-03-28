@@ -3,13 +3,10 @@
 import type { ComponentProps, ReactNode } from "react";
 
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@avenire/ui/components/collapsible";
+  Collapsible, CollapsibleContent, CollapsibleTrigger, } from "@avenire/ui/components/collapsible";
 import { cn } from "@/lib/utils";
 import { Markdown } from "@/components/chat/markdown";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { BrainIcon, CaretDown as ChevronDownIcon } from "@phosphor-icons/react"
 import {
   createContext,
   memo,

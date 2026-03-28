@@ -48,14 +48,14 @@ function PureSuggestedActions({ onAction }: SuggestedActionsProps) {
           transition={{ delay: 0.05 * index }}
         >
           <Button
-            className="h-auto w-full justify-start rounded-2xl border border-border/80 bg-card px-4 py-3 text-left text-muted-foreground text-sm hover:bg-accent/40 hover:text-foreground"
+            className="h-auto w-full justify-start overflow-hidden whitespace-nowrap rounded-2xl border border-border/80 bg-card px-4 py-3 text-left text-muted-foreground text-sm hover:bg-accent/40 hover:text-foreground"
             onClick={() => {
               onAction(suggestedAction.action);
             }}
             type="button"
             variant="outline"
           >
-            <span className="block min-w-0">
+            <span className="block min-w-0 overflow-hidden text-clip whitespace-nowrap">
               <span className="font-medium">{suggestedAction.title}</span>
               <span className="text-muted-foreground/80 lowercase">
                 {" "}

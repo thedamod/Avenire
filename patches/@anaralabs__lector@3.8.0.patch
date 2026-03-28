@@ -1,0 +1,309 @@
+diff --git a/dist/index.js b/dist/index.js
+index b1db12d68b3674c88252a51762fdf4a3156d178f..eddf8e7dd392628b9b670326284772d4979bd150 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
+ import { useFloating, autoUpdate, offset, shift, useDismiss, useInteractions, inline, flip } from '@floating-ui/react';
+ import { create, useStore, createStore } from 'zustand';
+ import { jsx, Fragment, jsxs } from 'react/jsx-runtime';
+-import { AnnotationLayer, TextLayer, getDocument } from 'pdfjs-dist';
++import { AnnotationLayer, TextLayer, getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+ import { useDebounce } from 'use-debounce';
+ import { v4 } from 'uuid';
+ import { Slot } from '@radix-ui/react-slot';
+@@ -18,6 +18,13 @@ var clamp = (value, minimum, maximum) => {
+   return Math.min(Math.max(value, minimum), maximum);
+ };
+ 
++if (!GlobalWorkerOptions.workerSrc) {
++  GlobalWorkerOptions.workerSrc = new URL(
++    'pdfjs-dist/build/pdf.worker.mjs',
++    import.meta.url
++  ).toString();
++}
++
+ // src/lib/zoom.ts
+ var getFitWidthZoom = (containerWidth, viewports, zoomOptions) => {
+   const { minZoom, maxZoom } = zoomOptions;
+@@ -50,6 +57,7 @@ var PDFStore = createZustandContext(
+         minZoom: initialState.zoomOptions?.minZoom ?? 0.5,
+         maxZoom: initialState.zoomOptions?.maxZoom ?? 10
+       },
++      rotation: initialState.rotation ?? 0,
+       viewportRef: createRef(),
+       viewports: initialState.viewports,
+       updateZoom: (zoom, isZoomFitWidth = false) => {
+@@ -95,17 +103,27 @@ var PDFStore = createZustandContext(
+           virtualizer: val
+         });
+       },
++      setPageProxy: (pageNumber, pageProxy, viewport) => {
++        set((state) => {
++          const pageProxies = [...state.pageProxies];
++          const viewports = [...state.viewports];
++          pageProxies[pageNumber - 1] = pageProxy;
++          viewports[pageNumber - 1] = viewport;
++          return {
++            pageProxies,
++            viewports
++          };
++        });
++      },
+       pageProxies: initialState.pageProxies,
+       getPdfPageProxy: (pageNumber) => {
+-        const proxy = get().pageProxies[pageNumber - 1];
+-        if (!proxy) throw new Error(`Page ${pageNumber} does not exist`);
+-        return proxy;
++        return get().pageProxies[pageNumber - 1] || null;
+       },
+       textContent: [],
+       setTextContent: (val) => {
+-        set({
+-          textContent: val
+-        });
++        set((state) => ({
++          textContent: typeof val === "function" ? val(state.textContent) : val
++        }));
+       },
+       highlights: [],
+       setHighlight: (val) => {
+@@ -2530,9 +2548,46 @@ var Page = ({
+   ...props
+ }) => {
+   const pdfPageProxy = usePdf((state) => state.getPdfPageProxy(pageNumber));
+-  const width = (pdfPageProxy.view[2] ?? 0) - (pdfPageProxy.view[0] ?? 0);
+-  const height = (pdfPageProxy.view[3] ?? 0) - (pdfPageProxy.view[1] ?? 0);
+-  return /* @__PURE__ */ jsx(PDFPageNumberContext.Provider, { value: pdfPageProxy.pageNumber, children: /* @__PURE__ */ jsx(
++  const pdfDocumentProxy = usePdf((state) => state.pdfDocumentProxy);
++  const rotation = usePdf((state) => state.rotation);
++  const setPageProxy = usePdf((state) => state.setPageProxy);
++  const viewports = usePdf((state) => state.viewports);
++  const fallbackViewport = viewports[0];
++  useEffect(() => {
++    if (pdfPageProxy || !pdfDocumentProxy) {
++      return;
++    }
++    let cancelled = false;
++    pdfDocumentProxy.getPage(pageNumber).then((page) => {
++      if (cancelled) {
++        return;
++      }
++      const deltaRotate = page.rotate || 0;
++      const viewport2 = page.getViewport({
++        scale: 1,
++        rotation: rotation + deltaRotate
++      });
++      setPageProxy(pageNumber, page, viewport2);
++    }).catch((error) => {
++      if (!cancelled) {
++        console.error(`Error loading PDF page ${pageNumber}`, error);
++      }
++    });
++    return () => {
++      cancelled = true;
++    };
++  }, [pageNumber, pdfDocumentProxy, pdfPageProxy, rotation, setPageProxy]);
++  const viewport = pdfPageProxy ? {
++    width: (pdfPageProxy.view[2] ?? 0) - (pdfPageProxy.view[0] ?? 0),
++    height: (pdfPageProxy.view[3] ?? 0) - (pdfPageProxy.view[1] ?? 0)
++  } : fallbackViewport ? {
++    width: fallbackViewport.width,
++    height: fallbackViewport.height
++  } : {
++    width: 0,
++    height: 0
++  };
++  return /* @__PURE__ */ jsx(PDFPageNumberContext.Provider, { value: pdfPageProxy?.pageNumber ?? pageNumber, children: /* @__PURE__ */ jsx(
+     Primitive.div,
+     {
+       style: {
+@@ -2546,11 +2601,11 @@ var Page = ({
+             "--scale-factor": 1,
+             "--total-scale-factor": 1,
+             position: "relative",
+-            width,
+-            height
++            width: viewport.width,
++            height: viewport.height
+           },
+           ...props,
+-          children
++          children: pdfPageProxy ? children : null
+         }
+       )
+     }
+@@ -4643,8 +4698,12 @@ var useViewportContainer = ({
+     },
+     [containerRef, elementRef, elementWrapperRef, updateZoom]
+   );
++  const didInitializeTransform = useRef(false);
+   useEffect(() => {
+-    if (transformations.current.zoom === zoom || !containerRef.current) {
++    if (!containerRef.current) {
++      return;
++    }
++    if (didInitializeTransform.current && transformations.current.zoom === zoom) {
+       return;
+     }
+     const prevZoom = transformations.current.zoom;
+@@ -4655,6 +4714,7 @@ var useViewportContainer = ({
+         zoom
+       };
+       updateTransform();
++      didInitializeTransform.current = true;
+       return;
+     }
+     const dZoom = zoom / prevZoom;
+@@ -4664,6 +4724,7 @@ var useViewportContainer = ({
+       zoom
+     };
+     updateTransform();
++    didInitializeTransform.current = true;
+   }, [containerRef, zoom, updateTransform]);
+   useEffect(() => {
+     const preventDefault = (e) => e.preventDefault();
+@@ -4973,35 +5034,6 @@ var usePDFDocumentContext = ({
+   const [initialState, setInitialState] = useState();
+   const [rotation] = useState(initialRotation);
+   useEffect(() => {
+-    const generateViewports = async (pdf) => {
+-      const pageProxies = [];
+-      const rotations = [];
+-      const viewports = await Promise.all(
+-        Array.from({ length: pdf.numPages }, async (_2, index) => {
+-          const page = await pdf.getPage(index + 1);
+-          const deltaRotate = page.rotate || 0;
+-          const viewport = page.getViewport({
+-            scale: 1,
+-            rotation: rotation + deltaRotate
+-          });
+-          pageProxies.push(page);
+-          rotations.push(page.rotate);
+-          return viewport;
+-        })
+-      );
+-      const sortedPageProxies = pageProxies.sort((a, b) => {
+-        return a.pageNumber - b.pageNumber;
+-      });
+-      setInitialState((prev) => ({
+-        ...prev,
+-        isZoomFitWidth,
+-        viewports,
+-        pageProxies: sortedPageProxies,
+-        pdfDocumentProxy: pdf,
+-        zoom,
+-        zoomOptions
+-      }));
+-    };
+     const loadDocument = () => {
+       setInitialState(null);
+       setProgress(0);
+@@ -5015,7 +5047,26 @@ var usePDFDocumentContext = ({
+       const loadingPromise = loadingTask.promise.then((proxy) => {
+         onDocumentLoad?.({ proxy, source });
+         setProgress(1);
+-        generateViewports(proxy);
++        return proxy.getPage(1).then((page) => {
++          const deltaRotate = page.rotate || 0;
++          const viewport = page.getViewport({
++            scale: 1,
++            rotation: rotation + deltaRotate
++          });
++          const viewports = Array.from({ length: proxy.numPages }, () => viewport);
++          const pageProxies = Array.from({ length: proxy.numPages });
++          pageProxies[0] = page;
++          setInitialState((prev) => ({
++            ...prev,
++            isZoomFitWidth,
++            viewports,
++            pageProxies,
++            pdfDocumentProxy: proxy,
++            rotation,
++            zoom,
++            zoomOptions
++          }));
++        });
+       }).catch((error) => {
+         if (loadingTask.destroyed) {
+           return;
+@@ -5058,30 +5109,59 @@ var Root = forwardRef(
+ );
+ Root.displayName = "Root";
+ var Search = ({ children, loading = "Loading..." }) => {
+-  const [isLoading, setIsLoading] = useState(false);
+   const proxies = usePdf((state) => state.pageProxies);
+   const setTextContent = usePdf((state) => state.setTextContent);
+-  const getTextContent = useCallback(
+-    async (pages) => {
+-      setIsLoading(true);
+-      const promises = pages.map(async (proxy) => {
+-        const content = await proxy.getTextContent();
+-        const text2 = content.items.map((item) => item?.str || "").join("");
+-        return Promise.resolve({
+-          pageNumber: proxy.pageNumber,
+-          text: text2
+-        });
+-      });
+-      const text = await Promise.all(promises);
+-      setIsLoading(false);
+-      setTextContent(text);
+-    },
+-    [setTextContent]
+-  );
++  const loadedPagesRef = useRef(/* @__PURE__ */ new Set());
+   useEffect(() => {
+-    getTextContent(proxies);
+-  }, [proxies, getTextContent]);
+-  return isLoading ? loading : children;
++    if (!proxies.length) {
++      return;
++    }
++    let cancelled = false;
++    const missingPages = proxies.filter(
++      (proxy) => proxy && !loadedPagesRef.current.has(proxy.pageNumber)
++    );
++    if (!missingPages.length) {
++      return;
++    }
++    const loadTextContent = async () => {
++      const newText = await Promise.all(
++        missingPages.map(async (proxy) => {
++          const content = await proxy.getTextContent();
++          const text2 = content.items.map((item) => item?.str || "").join("");
++          return {
++            pageNumber: proxy.pageNumber,
++            text: text2
++          };
++        })
++      );
++      if (cancelled) {
++        return;
++      }
++      for (const proxy of missingPages) {
++        loadedPagesRef.current.add(proxy.pageNumber);
++      }
++      setTextContent((current) => {
++        const merged = [...current];
++        for (const entry of newText) {
++          const existingIndex = merged.findIndex(
++            (item) => item.pageNumber === entry.pageNumber
++          );
++          if (existingIndex >= 0) {
++            merged[existingIndex] = entry;
++          } else {
++            merged.push(entry);
++          }
++        }
++        merged.sort((a, b) => a.pageNumber - b.pageNumber);
++        return merged;
++      });
++    };
++    loadTextContent().catch(() => void 0);
++    return () => {
++      cancelled = true;
++    };
++  }, [proxies, setTextContent]);
++  return children;
+ };
+ var DEFAULT_CONFIG = {
+   maxHeight: 800,

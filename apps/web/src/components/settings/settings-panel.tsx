@@ -1,19 +1,8 @@
 "use client";
 
+import { authClient, linkSocial, listAccounts, revokeOtherSessions, unlinkAccount, updateUser, useSession, } from "@avenire/auth/client";
 import {
-  authClient,
-  linkSocial,
-  listAccounts,
-  revokeOtherSessions,
-  unlinkAccount,
-  updateUser,
-  useSession,
-} from "@avenire/auth/client";
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@avenire/ui/components/avatar";
+  Avatar, AvatarFallback, AvatarImage, } from "@avenire/ui/components/avatar";
 import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
 import {
@@ -25,38 +14,40 @@ import {
   DialogTitle,
 } from "@avenire/ui/components/dialog";
 import { Input } from "@avenire/ui/components/input";
+import { Spinner } from "@avenire/ui/components/spinner";
 import { Switch } from "@avenire/ui/components/switch";
-import type { LucideIcon } from "lucide-react";
-import {
-  Building2,
-  Camera,
-  Check,
-  CreditCard,
-  Database,
-  FileText,
-  Folder,
-  Github,
-  Globe,
-  HardDrive,
-  Key,
-  Shield,
-  SlidersHorizontal,
-  TriangleAlert,
-  Unlink,
-  User,
-  Users,
-} from "lucide-react";
+import { Building as Building2, Camera, Check, CreditCard, Database, FileText, Folder, GithubLogo as Github, Globe, HardDrive, Key, Shield, SlidersHorizontal, Warning as TriangleAlert, LinkBreak as Unlink, User, Users } from "@phosphor-icons/react";
 import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentType, type ReactNode, type SVGProps } from "react";
 import { SensitiveText } from "@/components/shared/sensitive-text";
 import { getFacehashUrl } from "@/lib/avatar";
+import {
+  DEFAULT_NOTE_TEMPLATE,
+  getDefaultNoteTemplates,
+  getNoteTemplateStorageKey,
+  type NoteTemplate,
+} from "@/lib/note-templates";
 import { PRIVACY_MODE_STORAGE_KEY } from "@/lib/privacy-mode";
 import { useUploadThing } from "@/lib/uploadthing";
 import { cn } from "@/lib/utils";
 
+const DeferredAvenireEditor = dynamic(
+  () => import("@/components/editor"),
+  {
+    loading: () => (
+      <div className="flex min-h-[18rem] items-center justify-center text-muted-foreground text-sm">
+        Loading editor...
+      </div>
+    ),
+    ssr: false,
+  }
+);
+
 type WorkspaceSummary = {
+  logo: string | null;
   workspaceId: string;
   organizationId: string;
   rootFolderId: string;
@@ -159,11 +150,11 @@ type TabKey = (typeof tabs)[number]["key"];
 
 const KEYBOARD_SHORTCUTS = [
   { label: "Command Palette", keys: ["Ctrl", "Shift", "P"] },
-  { label: "Open Files", keys: ["Ctrl", "K"] },
-  { label: "New Chat", keys: ["Ctrl", "Shift", "O"] },
+  { label: "Open Manage", keys: ["Ctrl", "K"] },
+  { label: "New Method", keys: ["Ctrl", "Shift", "O"] },
   { label: "Toggle Sidebar", keys: ["Ctrl", "B"] },
   { label: "Open Model Picker", keys: ["Ctrl", "/"] },
-  { label: "Delete Current Chat", keys: ["Ctrl", "Shift", "⌫"] },
+  { label: "Delete Current Method", keys: ["Ctrl", "Shift", "⌫"] },
 ];
 
 const PLAN_LABELS: Record<string, string> = {
@@ -186,10 +177,12 @@ function formatBytes(bytes: number) {
 }
 export function SettingsPanel({
   initialWorkspaces,
+  initialWorkspaceId,
   tabMode = "url",
   initialTab = "account",
 }: {
   initialWorkspaces?: WorkspaceSummary[];
+  initialWorkspaceId?: string;
   tabMode?: "url" | "local";
   initialTab?: TabKey;
 }) {
@@ -245,7 +238,7 @@ export function SettingsPanel({
   // Workspaces
   const [workspaces, setWorkspaces] = useState(initialWorkspaces ?? []);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(
-    initialWorkspaces?.[0]?.workspaceId ?? ""
+    initialWorkspaceId ?? initialWorkspaces?.[0]?.workspaceId ?? ""
   );
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>(
     []
@@ -262,6 +255,30 @@ export function SettingsPanel({
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const [isInvitingMember, setIsInvitingMember] = useState(false);
   const [workspaceDeleteConfirm, setWorkspaceDeleteConfirm] = useState("");
+  const [noteTemplates, setNoteTemplates] = useState<NoteTemplate[]>([
+    DEFAULT_NOTE_TEMPLATE,
+  ]);
+  const [noteTemplateDialogOpen, setNoteTemplateDialogOpen] = useState(false);
+  const [noteTemplateDraft, setNoteTemplateDraft] = useState<NoteTemplate>(
+    DEFAULT_NOTE_TEMPLATE
+  );
+  const [noteTemplateEditorKey, setNoteTemplateEditorKey] = useState(0);
+  const noteTemplatesWorkspaceRef = useRef<string | null>(null);
+  const noteTemplatesHydratedRef = useRef(false);
+  const [workspaceIconDraft, setWorkspaceIconDraft] = useState("");
+  const [workspaceIconStatus, setWorkspaceIconStatus] = useState<string | null>(
+    null
+  );
+  const [workspaceIconUploading, setWorkspaceIconUploading] = useState(false);
+  const workspaceIconInputRef = useRef<HTMLInputElement | null>(null);
+  const [noteTemplateBannerUrl, setNoteTemplateBannerUrl] = useState("");
+  const [noteTemplateBannerStatus, setNoteTemplateBannerStatus] = useState<
+    string | null
+  >(null);
+  const [noteTemplateBannerUploading, setNoteTemplateBannerUploading] =
+    useState(false);
+  const noteTemplateBannerInputRef = useRef<HTMLInputElement | null>(null);
+  const noteTemplateEditorScrollRef = useRef<HTMLDivElement | null>(null);
   const [accountDeleteConfirm, setAccountDeleteConfirm] = useState("");
   const [dangerStatus, setDangerStatus] = useState<string | null>(null);
   const [sudoActive, setSudoActive] = useState(false);
@@ -273,6 +290,12 @@ export function SettingsPanel({
   const [sudoVerifyingCode, setSudoVerifyingCode] = useState(false);
   const pendingSudoActionRef = useRef<null | (() => Promise<void>)>(null);
   const codeRequestedForSessionRef = useRef(false);
+  const accountsLoadedRef = useRef(false);
+  const preferencesLoadedRef = useRef(false);
+  const billingLoadedRef = useRef(false);
+  const securityLoadedRef = useRef(false);
+  const workspaceLoadedRef = useRef(false);
+  const workspaceUsageLoadedForRef = useRef<string>("");
 
   useEffect(() => {
     setProfileName(session?.user?.name ?? "");
@@ -290,6 +313,14 @@ export function SettingsPanel({
     () => workspaces.find((w) => w.workspaceId === activeWorkspaceId) ?? null,
     [activeWorkspaceId, workspaces]
   );
+
+  useEffect(() => {
+    setWorkspaceIconDraft(selectedWorkspace?.logo ?? "");
+  }, [selectedWorkspace?.logo]);
+
+  useEffect(() => {
+    setWorkspaceIconStatus(null);
+  }, [selectedWorkspace?.workspaceId]);
 
   const refreshAccounts = async () => {
     const result = await listAccounts();
@@ -445,7 +476,7 @@ export function SettingsPanel({
   };
 
   const handleAvatarFileChange = async (
-    event: React.ChangeEvent<HTMLInputElement>
+    event: ChangeEvent<HTMLInputElement>
   ) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -477,6 +508,100 @@ export function SettingsPanel({
       }
     } finally {
       setAvatarUploading(false);
+    }
+  };
+
+  const saveWorkspaceIcon = async (nextLogo?: string | null) => {
+    if (!selectedWorkspace) {
+      return false;
+    }
+
+    setWorkspaceIconStatus("Saving workspace icon...");
+    const response = await fetch(
+      `/api/workspaces/${selectedWorkspace.workspaceId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          logo: nextLogo ?? (workspaceIconDraft.trim() || null),
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      setWorkspaceIconStatus(
+        payload.error ?? "Unable to update workspace icon."
+      );
+      return false;
+    }
+
+    setWorkspaceIconStatus("Workspace icon updated.");
+    await refreshWorkspaces();
+    return true;
+  };
+
+  const handleWorkspaceIconFileChange = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file || !selectedWorkspace) {
+      return;
+    }
+
+    setWorkspaceIconUploading(true);
+    setWorkspaceIconStatus("Uploading workspace icon...");
+
+    try {
+      const uploaded = ((await startAvatarUpload([file])) ?? [])[0] as
+        | { ufsUrl?: string | null; url?: string | null }
+        | undefined;
+      const uploadedUrl = uploaded?.ufsUrl ?? uploaded?.url ?? null;
+
+      if (!uploadedUrl) {
+        setWorkspaceIconStatus("Unable to upload workspace icon.");
+        return;
+      }
+
+      setWorkspaceIconDraft(uploadedUrl);
+      await saveWorkspaceIcon(uploadedUrl);
+    } finally {
+      setWorkspaceIconUploading(false);
+    }
+  };
+
+  const handleNoteTemplateBannerFileChange = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setNoteTemplateBannerUploading(true);
+    setNoteTemplateBannerStatus("Uploading banner...");
+
+    try {
+      const uploaded = ((await startAvatarUpload([file])) ?? [])[0] as
+        | { ufsUrl?: string | null; url?: string | null }
+        | undefined;
+      const uploadedUrl = uploaded?.ufsUrl ?? uploaded?.url ?? null;
+
+      if (!uploadedUrl) {
+        setNoteTemplateBannerStatus("Unable to upload banner.");
+        return;
+      }
+
+      setNoteTemplateBannerUrl(uploadedUrl);
+      setNoteTemplateBannerStatus("Banner uploaded.");
+    } finally {
+      setNoteTemplateBannerUploading(false);
     }
   };
 
@@ -552,44 +677,75 @@ export function SettingsPanel({
   };
 
   useEffect(() => {
-    if (currentTab === "account" || currentTab === "billing") {
-      void refreshAccounts();
+    if (currentTab !== "account" || accountsLoadedRef.current) {
+      return;
     }
-    if (currentTab === "billing") {
-      void refreshBillingUsage(true);
-    }
-    if (currentTab === "billing") {
-      void refreshPolarCustomerState();
-    }
-    if (currentTab === "billing") {
-      void refreshUserSettings();
-    }
-    if (currentTab === "security") {
-      void refreshPasskeys();
-    }
-    if (currentTab === "security" || currentTab === "workspace") {
-      void refreshSudoStatus();
-    }
-    if (currentTab === "workspace" && activeWorkspaceId) {
-      void refreshMembers(activeWorkspaceId);
-      void refreshWorkspaceUsage(activeWorkspaceId, true);
-    }
-  }, [activeWorkspaceId, currentTab]);
+    accountsLoadedRef.current = true;
+    refreshAccounts().catch(() => undefined);
+  }, [currentTab]);
 
   useEffect(() => {
-    void refreshBillingUsage(false);
+    if (currentTab !== "preferences" || preferencesLoadedRef.current) {
+      return;
+    }
+    preferencesLoadedRef.current = true;
+    refreshUserSettings().catch(() => undefined);
+  }, [currentTab]);
+
+  useEffect(() => {
+    if (currentTab !== "billing" || billingLoadedRef.current) {
+      return;
+    }
+    billingLoadedRef.current = true;
+    refreshBillingUsage(true).catch(() => undefined);
+    refreshPolarCustomerState().catch(() => undefined);
+    refreshUserSettings().catch(() => undefined);
+  }, [currentTab]);
+
+  useEffect(() => {
+    if (currentTab !== "billing" || !billingLoadedRef.current) {
+      return;
+    }
 
     const intervalId = window.setInterval(() => {
-      void refreshBillingUsage(false);
+      refreshBillingUsage(false).catch(() => undefined);
     }, 60_000);
 
     return () => window.clearInterval(intervalId);
-  }, []);
+  }, [currentTab]);
 
   useEffect(() => {
-    void refreshWorkspaces();
-    void refreshSudoStatus();
-  }, []);
+    if (currentTab !== "security" || securityLoadedRef.current) {
+      return;
+    }
+    securityLoadedRef.current = true;
+    refreshPasskeys().catch(() => undefined);
+    refreshSudoStatus().catch(() => undefined);
+  }, [currentTab]);
+
+  useEffect(() => {
+    if (currentTab !== "workspace") {
+      return;
+    }
+
+    if (!workspaceLoadedRef.current) {
+      workspaceLoadedRef.current = true;
+      if (workspaces.length === 0) {
+        refreshWorkspaces().catch(() => undefined);
+      }
+      refreshSudoStatus().catch(() => undefined);
+    }
+
+    if (
+      activeWorkspaceId &&
+      workspaceUsageLoadedForRef.current !== activeWorkspaceId
+    ) {
+      workspaceUsageLoadedForRef.current = activeWorkspaceId;
+      refreshMembers(activeWorkspaceId).catch(() => undefined);
+      refreshWorkspaceUsage(activeWorkspaceId, true).catch(() => undefined);
+      refreshSudoStatus().catch(() => undefined);
+    }
+  }, [activeWorkspaceId, currentTab, workspaces.length]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(PRIVACY_MODE_STORAGE_KEY);
@@ -604,11 +760,146 @@ export function SettingsPanel({
   }, [privacyMode]);
 
   useEffect(() => {
+    const workspaceId = activeWorkspaceId.trim();
+    noteTemplatesWorkspaceRef.current = workspaceId || null;
+    noteTemplatesHydratedRef.current = false;
+
+    if (!workspaceId) {
+      setNoteTemplates(getDefaultNoteTemplates());
+      noteTemplatesHydratedRef.current = true;
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(
+        getNoteTemplateStorageKey(workspaceId)
+      );
+      if (!raw) {
+        setNoteTemplates(getDefaultNoteTemplates());
+        noteTemplatesHydratedRef.current = true;
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        setNoteTemplates(getDefaultNoteTemplates());
+        return;
+      }
+
+      const templates = parsed
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return null;
+          }
+
+          const candidate = entry as Partial<NoteTemplate>;
+          const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+          const name =
+            typeof candidate.name === "string" ? candidate.name.trim() : "";
+          const content =
+            typeof candidate.content === "string"
+              ? candidate.content
+              : DEFAULT_NOTE_TEMPLATE.content;
+          const bannerUrl =
+            typeof candidate.bannerUrl === "string" &&
+            candidate.bannerUrl.trim().length > 0
+              ? candidate.bannerUrl.trim()
+              : null;
+          if (!(id && name)) {
+            return null;
+          }
+
+          return { id, name, content, bannerUrl } satisfies NoteTemplate;
+        })
+        .filter((entry): entry is NoteTemplate => Boolean(entry));
+
+      setNoteTemplates(
+        templates.length > 0 ? templates : getDefaultNoteTemplates()
+      );
+      noteTemplatesHydratedRef.current = true;
+    } catch {
+      setNoteTemplates(getDefaultNoteTemplates());
+      noteTemplatesHydratedRef.current = true;
+    }
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    const workspaceId = noteTemplatesWorkspaceRef.current;
+    if (!workspaceId || !noteTemplatesHydratedRef.current) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        getNoteTemplateStorageKey(workspaceId),
+        JSON.stringify(noteTemplates)
+      );
+    } catch {
+      return;
+    }
+  }, [noteTemplates]);
+
+  useEffect(() => {
     if (sudoDialogOpen && !sudoActive && !codeRequestedForSessionRef.current) {
       codeRequestedForSessionRef.current = true;
       void requestSudoCode();
     }
   }, [sudoActive, sudoDialogOpen]);
+
+  const openNoteTemplateEditor = (template?: NoteTemplate | null) => {
+    setNoteTemplateDraft(
+      template ?? {
+        ...DEFAULT_NOTE_TEMPLATE,
+        id: "",
+      }
+    );
+    setNoteTemplateBannerUrl(template?.bannerUrl ?? "");
+    setNoteTemplateBannerStatus(null);
+    setNoteTemplateEditorKey((current) => current + 1);
+    setNoteTemplateDialogOpen(true);
+  };
+
+  const saveNoteTemplateDraft = () => {
+    const trimmedName = noteTemplateDraft.name.trim();
+    const trimmedContent = noteTemplateDraft.content.trim();
+    if (!(trimmedName && trimmedContent)) {
+      return;
+    }
+
+    const id =
+      noteTemplateDraft.id.trim() ||
+      globalThis.crypto?.randomUUID?.() ||
+      `template-${Date.now()}`;
+    const nextTemplate: NoteTemplate = {
+      id,
+      name: trimmedName,
+      content: noteTemplateDraft.content,
+      bannerUrl: noteTemplateBannerUrl.trim() || null,
+    };
+
+    setNoteTemplates((current) => {
+      const existingIndex = current.findIndex((item) => item.id === id);
+      if (existingIndex < 0) {
+        return [...current, nextTemplate];
+      }
+      return current.map((item) => (item.id === id ? nextTemplate : item));
+    });
+    setNoteTemplateDialogOpen(false);
+  };
+
+  const deleteNoteTemplateDraft = () => {
+    const id = noteTemplateDraft.id.trim();
+    if (!id) {
+      setNoteTemplateDialogOpen(false);
+      return;
+    }
+
+    setNoteTemplates((current) => {
+      const next = current.filter((template) => template.id !== id);
+      return next.length > 0 ? next : getDefaultNoteTemplates();
+    });
+    setNoteTemplateDialogOpen(false);
+  };
 
   const setTab = (tab: TabKey) => {
     if (tabMode === "local") {
@@ -1113,7 +1404,10 @@ export function SettingsPanel({
                   />
                 </div>
                 {billingStatus ? (
-                  <p className="mt-2 text-muted-foreground text-xs">
+                  <p className="mt-2 inline-flex items-center gap-2 text-muted-foreground text-xs">
+                    {billingStatus.startsWith("Loading") ? (
+                      <Spinner className="size-3.5" />
+                    ) : null}
                     {billingStatus}
                   </p>
                 ) : null}
@@ -1146,11 +1440,14 @@ export function SettingsPanel({
                       })();
                     }}
                   />
-                  {preferencesStatus ? (
-                    <p className="mt-2 text-muted-foreground text-xs">
-                      {preferencesStatus}
-                    </p>
-                  ) : null}
+                {preferencesStatus ? (
+                  <p className="mt-2 inline-flex items-center gap-2 text-muted-foreground text-xs">
+                    {preferencesStatus.startsWith("Loading") ? (
+                      <Spinner className="size-3.5" />
+                    ) : null}
+                    {preferencesStatus}
+                  </p>
+                ) : null}
                 </div>
               </Section>
 
@@ -1168,7 +1465,10 @@ export function SettingsPanel({
                   {hasPaidPlan ? "Manage Billing & Invoices" : "View Plans"}
                 </Button>
                 {billingStatus ? (
-                  <p className="mt-2 text-muted-foreground text-xs">
+                  <p className="mt-2 inline-flex items-center gap-2 text-muted-foreground text-xs">
+                    {billingStatus.startsWith("Loading") ? (
+                      <Spinner className="size-3.5" />
+                    ) : null}
                     {billingStatus}
                   </p>
                 ) : null}
@@ -1246,9 +1546,17 @@ export function SettingsPanel({
                         </div>
                       </div>
                     </>
+                  ) : polarCustomerStatus ? (
+                    <p className="inline-flex items-center gap-2 text-muted-foreground text-sm">
+                      {polarCustomerStatus.startsWith("Loading") ? (
+                        <Spinner className="size-4" />
+                      ) : null}
+                      {polarCustomerStatus}
+                    </p>
                   ) : (
-                    <p className="text-muted-foreground text-sm">
-                      {polarCustomerStatus ?? "Loading billing details..."}
+                    <p className="inline-flex items-center gap-2 text-muted-foreground text-sm">
+                      <Spinner className="size-4" />
+                      Loading billing details...
                     </p>
                   )}
                 </div>
@@ -1524,7 +1832,10 @@ export function SettingsPanel({
                     }}
                   />
                   {preferencesStatus ? (
-                    <p className="mt-2 text-muted-foreground text-xs">
+                    <p className="mt-2 inline-flex items-center gap-2 text-muted-foreground text-xs">
+                      {preferencesStatus.startsWith("Loading") ? (
+                        <Spinner className="size-3.5" />
+                      ) : null}
                       {preferencesStatus}
                     </p>
                   ) : null}
@@ -1598,10 +1909,16 @@ export function SettingsPanel({
               >
                 <div className="rounded-3xl border border-border/60 bg-card p-5 shadow-sm">
                   <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="flex min-w-0 items-center gap-4">
-                      <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-muted font-semibold text-foreground text-lg">
-                        {selectedWorkspaceInitial}
-                      </div>
+                    <div className="flex min-w-0 items-start gap-4">
+                      <Avatar className="size-14 shrink-0 rounded-2xl">
+                        <AvatarImage
+                          alt={selectedWorkspace?.name ?? "Workspace icon"}
+                          src={workspaceIconDraft || selectedWorkspace?.logo || ""}
+                        />
+                        <AvatarFallback className="rounded-2xl bg-muted font-semibold text-foreground text-lg">
+                          {selectedWorkspaceInitial}
+                        </AvatarFallback>
+                      </Avatar>
                       <div className="min-w-0">
                         <p className="font-medium text-muted-foreground text-xs uppercase tracking-[0.22em]">
                           Name &amp; Icon
@@ -1611,35 +1928,64 @@ export function SettingsPanel({
                         </h3>
                         <p className="mt-2 truncate text-muted-foreground text-sm">
                           {selectedWorkspace
-                            ? `${selectedWorkspace.organizationId} · ${selectedWorkspace.rootFolderId}`
+                            ? "Upload or replace the workspace icon."
                             : "Select a workspace to inspect its storage and members."}
                         </p>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge
-                        className="rounded-full px-3 py-1 text-xs"
-                        variant="secondary"
-                      >
-                        {workspaceUsage
-                          ? `${workspaceUsage.fileCount.toLocaleString()} files`
-                          : "Loading files..."}
-                      </Badge>
-                      <Badge
-                        className="rounded-full px-3 py-1 text-xs"
-                        variant="outline"
-                      >
-                        {selectedWorkspace
-                          ? `${selectedWorkspaceMemberCount.toLocaleString()} member${selectedWorkspaceMemberCount === 1 ? "" : "s"}`
-                          : "No workspace"}
-                      </Badge>
+                    <div className="flex flex-col items-start gap-3">
+                      <input
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleWorkspaceIconFileChange}
+                        ref={workspaceIconInputRef}
+                        type="file"
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          disabled={
+                            !selectedWorkspace || workspaceIconUploading
+                          }
+                          onClick={() => workspaceIconInputRef.current?.click()}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <Camera className="mr-2 h-4 w-4" />
+                          {workspaceIconUploading
+                            ? "Uploading..."
+                            : "Upload Icon"}
+                        </Button>
+                        <Button
+                          disabled={
+                            !selectedWorkspace || workspaceIconUploading
+                          }
+                          onClick={() => {
+                            setWorkspaceIconDraft("");
+                            void saveWorkspaceIcon(null);
+                          }}
+                          size="sm"
+                          type="button"
+                          variant="ghost"
+                        >
+                          Remove Icon
+                        </Button>
+                      </div>
+                      {workspaceIconStatus ? (
+                        <p className="text-muted-foreground text-xs">
+                          {workspaceIconStatus}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
 
                   <div className="mt-6 space-y-3">
                     <div className="flex items-center justify-between">
                       <p className="font-medium text-sm">Workspace stats</p>
-                      <p className="text-muted-foreground text-xs">
+                      <p className="inline-flex items-center gap-2 text-muted-foreground text-xs">
+                        {workspaceUsageStatus?.startsWith("Loading") ? (
+                          <Spinner className="size-3.5" />
+                        ) : null}
                         {workspaceUsageStatus ?? "Live workspace totals"}
                       </p>
                     </div>
@@ -1651,17 +1997,27 @@ export function SettingsPanel({
                         value={
                           workspaceUsage
                             ? formatBytes(workspaceUsage.totalSizeBytes)
-                            : "Loading..."
+                            : (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Spinner className="size-4" />
+                                Loading...
+                              </span>
+                            )
                         }
                       />
                       <UsageStatCard
-                        description="File records available in this workspace."
+                        description="Manage records available in this workspace."
                         icon={FileText}
-                        label="Files"
+                        label="Manage"
                         value={
                           workspaceUsage
                             ? workspaceUsage.fileCount.toLocaleString()
-                            : "Loading..."
+                            : (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Spinner className="size-4" />
+                                Loading...
+                              </span>
+                            )
                         }
                       />
                       <UsageStatCard
@@ -1671,7 +2027,12 @@ export function SettingsPanel({
                         value={
                           workspaceUsage
                             ? workspaceUsage.folderCount.toLocaleString()
-                            : "Loading..."
+                            : (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Spinner className="size-4" />
+                                Loading...
+                              </span>
+                            )
                         }
                       />
                       <UsageStatCard
@@ -1685,9 +2046,98 @@ export function SettingsPanel({
                         value={
                           workspaceUsage
                             ? workspaceUsage.indexedFileCount.toLocaleString()
-                            : "Loading..."
+                            : (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Spinner className="size-4" />
+                                Loading...
+                              </span>
+                            )
                         }
                       />
+                    </div>
+                  </div>
+
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-sm">Note templates</p>
+                        <p className="text-muted-foreground text-xs">
+                          Templates are stored per workspace and can use note
+                          variables when you create a new note.
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => openNoteTemplateEditor(null)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        New template
+                      </Button>
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {noteTemplates.map((template) => (
+                        <div
+                          className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm"
+                          key={template.id}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate font-medium text-sm">
+                                {template.name}
+                              </p>
+                              <p className="text-muted-foreground text-xs">
+                                {template.bannerUrl
+                                  ? "Template banner enabled"
+                                  : "Markdown template"}
+                              </p>
+                            </div>
+                            <Badge variant="secondary">Template</Badge>
+                          </div>
+                          {template.bannerUrl ? (
+                            <div
+                              className="mt-3 h-24 overflow-hidden rounded-xl border border-border/60 bg-muted/30"
+                              style={{
+                                backgroundImage: `url(${template.bannerUrl})`,
+                                backgroundPosition: "center",
+                                backgroundSize: "cover",
+                              }}
+                            />
+                          ) : null}
+                          <p className="mt-3 line-clamp-6 whitespace-pre-wrap text-muted-foreground text-xs">
+                            {template.content}
+                          </p>
+                          <div className="mt-4 flex items-center gap-2">
+                            <Button
+                              onClick={() => openNoteTemplateEditor(template)}
+                              size="sm"
+                              type="button"
+                              variant="outline"
+                            >
+                              Edit
+                            </Button>
+                            {template.id !== DEFAULT_NOTE_TEMPLATE.id ? (
+                              <Button
+                                onClick={() => {
+                                  setNoteTemplates((current) => {
+                                    const next = current.filter(
+                                      (item) => item.id !== template.id
+                                    );
+                                    return next.length > 0
+                                      ? next
+                                      : getDefaultNoteTemplates();
+                                  });
+                                }}
+                                size="sm"
+                                type="button"
+                                variant="ghost"
+                              >
+                                Delete
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -2066,6 +2516,170 @@ export function SettingsPanel({
 
       <Dialog
         onOpenChange={(open) => {
+          setNoteTemplateDialogOpen(open);
+          if (!open) {
+            setNoteTemplateDraft(DEFAULT_NOTE_TEMPLATE);
+            setNoteTemplateBannerUrl("");
+            setNoteTemplateBannerStatus(null);
+          }
+        }}
+        open={noteTemplateDialogOpen}
+      >
+        <DialogContent className="max-h-[92vh] sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>
+              {noteTemplateDraft.id ? "Edit template" : "New template"}
+            </DialogTitle>
+            <DialogDescription>
+              Templates are stored per workspace and can use note variables at
+              creation time.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid max-h-[calc(92vh-12rem)] gap-4 overflow-y-auto pr-1">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+              <div className="space-y-2">
+                <label className="font-medium text-sm" htmlFor="template-name">
+                  Name
+                </label>
+                <Input
+                  id="template-name"
+                  onChange={(event) =>
+                    setNoteTemplateDraft((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="Study note"
+                  value={noteTemplateDraft.name}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="font-medium text-sm" htmlFor="template-banner">
+                  Banner
+                </label>
+                <input
+                  className="hidden"
+                  onChange={handleNoteTemplateBannerFileChange}
+                  ref={noteTemplateBannerInputRef}
+                  type="file"
+                  accept="image/*"
+                />
+                <Input
+                  id="template-banner"
+                  onChange={(event) => setNoteTemplateBannerUrl(event.target.value)}
+                  placeholder="https://example.com/banner.png"
+                  value={noteTemplateBannerUrl}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    disabled={noteTemplateBannerUploading}
+                    onClick={() => noteTemplateBannerInputRef.current?.click()}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Camera className="mr-2 h-4 w-4" />
+                    {noteTemplateBannerUploading ? "Uploading..." : "Upload banner"}
+                  </Button>
+                  <Button
+                    disabled={!noteTemplateBannerUrl.trim()}
+                    onClick={() => setNoteTemplateBannerUrl("")}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    Remove
+                  </Button>
+                </div>
+                {noteTemplateBannerStatus ? (
+                  <p className="text-muted-foreground text-xs">
+                    {noteTemplateBannerStatus}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            {noteTemplateBannerUrl.trim() ? (
+              <div
+                className="h-32 overflow-hidden rounded-2xl border border-border/60 bg-muted/30"
+                style={{
+                  backgroundImage: `url(${noteTemplateBannerUrl.trim()})`,
+                  backgroundPosition: "center",
+                  backgroundSize: "cover",
+                }}
+              />
+            ) : null}
+            <div className="space-y-2">
+              <p className="font-medium text-sm">Template body</p>
+              <div
+                className="overflow-hidden rounded-2xl border border-border/60"
+                ref={noteTemplateEditorScrollRef}
+              >
+                <DeferredAvenireEditor
+                  createdBy={
+                    session?.user?.name?.trim() ||
+                    session?.user?.email?.trim() ||
+                    ""
+                  }
+                  defaultValue={noteTemplateDraft.content}
+                  key={noteTemplateEditorKey}
+                  noteTitle={noteTemplateDraft.name || "Untitled"}
+                  onChange={(markdown) =>
+                    setNoteTemplateDraft((current) => ({
+                      ...current,
+                      content: markdown,
+                    }))
+                  }
+                  onTemplateApplied={(template) => {
+                    setNoteTemplateBannerUrl(template.bannerUrl ?? "");
+                  }}
+                  scrollContainerRef={noteTemplateEditorScrollRef}
+                  wikiPages={[]}
+                  workspaceUuid={selectedWorkspace?.workspaceId ?? activeWorkspaceId}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="justify-between gap-2 sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => {
+                  setNoteTemplateDialogOpen(false);
+                }}
+                type="button"
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+              {noteTemplateDraft.id ? (
+                <Button
+                  onClick={() => {
+                    deleteNoteTemplateDraft();
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  Delete
+                </Button>
+              ) : null}
+            </div>
+            <Button
+              disabled={
+                !noteTemplateDraft.name.trim() ||
+                !noteTemplateDraft.content.trim()
+              }
+              onClick={() => {
+                saveNoteTemplateDraft();
+              }}
+              type="button"
+            >
+              Save template
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        onOpenChange={(open) => {
           setSudoDialogOpen(open);
           if (!open) {
             codeRequestedForSessionRef.current = false;
@@ -2166,9 +2780,9 @@ function UsageStatCard({
   value,
   description,
 }: {
-  icon: LucideIcon;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   label: string;
-  value: string;
+  value: ReactNode;
   description: string;
 }) {
   return (

@@ -1,16 +1,11 @@
 "use client"
 
 import * as React from "react"
-import {
-  DayPicker,
-  getDefaultClassNames,
-  type DayButton,
-  type Locale,
-} from "react-day-picker"
+import { DayPicker, getDefaultClassNames, type DayButton, type Locale, } from "react-day-picker"
 
 import { cn } from "../lib/utils"
 import { Button, buttonVariants } from "./button"
-import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from "lucide-react"
+import { CaretLeft as ChevronLeftIcon, CaretRight as ChevronRightIcon, CaretDown as ChevronDownIcon } from "@phosphor-icons/react"
 
 function Calendar({
   className,

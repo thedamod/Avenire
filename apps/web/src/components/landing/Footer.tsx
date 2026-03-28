@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Github, Mail, MessageCircle } from "lucide-react";
+import { GithubLogo as Github, Envelope as Mail, ChatCircle as MessageCircle } from "@phosphor-icons/react/ssr"
 import { AvenireMark } from "@/components/branding/AvenireMark";
 
 const columns = [

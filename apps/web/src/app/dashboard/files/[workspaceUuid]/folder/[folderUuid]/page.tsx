@@ -34,13 +34,13 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const session = await getRouteSession();
   if (!session?.user) {
-    return buildPageMetadata({ title: "Files" });
+    return buildPageMetadata({ title: "Manage" });
   }
 
   const { workspaceUuid, folderUuid } = await params;
   const canAccess = await canAccessWorkspace(session.user.id, workspaceUuid);
   if (!canAccess) {
-    return buildPageMetadata({ title: "Files" });
+    return buildPageMetadata({ title: "Manage" });
   }
 
   const query = await searchParams;
@@ -61,7 +61,7 @@ export async function generateMetadata({
     folderUuid
   );
   return buildPageMetadata({
-    title: folder?.folder?.name ?? "Files",
+    title: folder?.folder?.name ?? "Manage",
   });
 }
 

@@ -3,35 +3,14 @@
 import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@avenire/ui/components/empty";
+  Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, } from "@avenire/ui/components/empty";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, } from "@avenire/ui/components/dialog";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@avenire/ui/components/tabs";
+  Tabs, TabsContent, TabsList, TabsTrigger, } from "@avenire/ui/components/tabs";
+import { Spinner } from "@avenire/ui/components/spinner";
 import {
-  ArrowRight,
-  BookOpenCheck,
-  Files,
-  FileText,
-  MessageSquareText,
-  Plus,
-  TriangleAlert,
-} from "lucide-react";
+  ArrowRight, BookOpenText as BookOpenCheck, Files, FileText, ChatText as MessageSquareText, Plus, Warning as TriangleAlert } from "@phosphor-icons/react"
 import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -39,12 +18,9 @@ import dynamic from "next/dynamic";
 import { startTransition, useEffect, useMemo, useState } from "react";
 import { QuickCaptureDialog } from "@/components/dashboard/quick-capture-dialog";
 import { HeaderBreadcrumbs } from "@/components/dashboard/header-portal";
-import type { ChatSummary } from "@/lib/chat-data";
-import type { ExplorerFileRecord } from "@/lib/file-data";
 import type {
   ConceptDrillTarget,
   ConceptMasteryRecord,
-  ConceptMasterySubjectRecord,
   FlashcardSetSummary,
   FlashcardTaxonomy,
 } from "@/lib/flashcards";
@@ -62,7 +38,8 @@ const DashboardTaskManager = dynamic(
     })),
   {
     loading: () => (
-      <div className="rounded-md bg-secondary/50 px-4 py-10 text-center text-muted-foreground text-sm">
+      <div className="flex items-center justify-center gap-2 rounded-md bg-secondary/50 px-4 py-10 text-center text-muted-foreground text-sm">
+        <Spinner className="size-4" />
         Loading tasks...
       </div>
     ),
@@ -76,7 +53,8 @@ const StudentCalendar = dynamic(
     })),
   {
     loading: () => (
-      <div className="rounded-md bg-secondary/50 px-4 py-10 text-center text-muted-foreground text-sm">
+      <div className="flex items-center justify-center gap-2 rounded-md bg-secondary/50 px-4 py-10 text-center text-muted-foreground text-sm">
+        <Spinner className="size-4" />
         Loading calendar...
       </div>
     ),
@@ -85,17 +63,8 @@ const StudentCalendar = dynamic(
 
 interface DashboardHomeProps {
   activeMisconceptions: MisconceptionRecord[];
-  chats: ChatSummary[];
-  files: ExplorerFileRecord[];
   flashcardSets: FlashcardSetSummary[];
-  masteryConcepts: ConceptMasteryRecord[];
-  masterySelectedSubject: string | null;
-  masterySubjects: ConceptMasterySubjectRecord[];
-  studySessions: Array<{ count: number; day: string }>;
-  onboardingCompleted: boolean;
-  rootFolderId: string | null;
   userName?: string;
-  workspaceUuid: string;
   weakestConcepts: ConceptMasteryRecord[];
   weakestDrillTarget: ConceptDrillTarget | null;
 }
@@ -242,17 +211,8 @@ function UpcomingFlashcardList({
 
 export function DashboardHome({
   activeMisconceptions,
-  chats: _chats,
-  files: _files,
   flashcardSets,
-  masteryConcepts: _masteryConcepts,
-  masterySelectedSubject: _masterySelectedSubject,
-  masterySubjects: _masterySubjects,
-  studySessions: _studySessions,
-  onboardingCompleted: _onboardingCompleted,
-  rootFolderId: _rootFolderId,
   userName,
-  workspaceUuid: _workspaceUuid,
   weakestConcepts,
   weakestDrillTarget,
 }: DashboardHomeProps) {
@@ -328,7 +288,8 @@ export function DashboardHome({
   let activityContent: React.ReactNode;
   if (loadingActivities) {
     activityContent = (
-      <div className="rounded-md bg-secondary/50 px-4 py-10 text-center text-muted-foreground text-sm">
+      <div className="flex items-center justify-center gap-2 rounded-md bg-secondary/50 px-4 py-10 text-center text-muted-foreground text-sm">
+        <Spinner className="size-4" />
         Loading activity...
       </div>
     );
@@ -431,7 +392,7 @@ export function DashboardHome({
             variant="ghost"
           >
             <MessageSquareText className="size-3.5" />
-            Chat
+            Method
           </Button>
 
           <Button
@@ -443,7 +404,7 @@ export function DashboardHome({
             variant="ghost"
           >
             <BookOpenCheck className="size-3.5" />
-            Flashcards
+            Mindset
           </Button>
 
           <Button
@@ -455,7 +416,7 @@ export function DashboardHome({
             variant="ghost"
           >
             <Files className="size-3.5" />
-            Files
+            Manage
           </Button>
         </div>
 
@@ -468,8 +429,8 @@ export function DashboardHome({
           </p>
         </div>
 
-        <div className="mt-4 grid items-stretch gap-6 xl:grid-cols-[minmax(16rem,0.6fr)_minmax(0,1.4fr)]">
-          <div className="flex h-[24rem] flex-col overflow-hidden sm:h-[27rem] xl:h-[30rem]">
+        <div className="mt-3 grid items-stretch gap-6 xl:grid-cols-[minmax(16rem,0.6fr)_minmax(0,1.4fr)]">
+          <div className="flex h-[20rem] flex-col overflow-hidden sm:h-[23rem] xl:h-[26rem]">
             <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               <Tabs
                 className="space-y-4"
@@ -496,7 +457,7 @@ export function DashboardHome({
             </div>
           </div>
 
-          <div className="flex h-[28rem] flex-col overflow-hidden sm:h-[31rem] xl:h-[34rem]">
+          <div className="flex h-[24rem] flex-col overflow-hidden sm:h-[27rem] xl:h-[30rem]">
             <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               <Tabs
                 className="space-y-4"
@@ -654,7 +615,7 @@ export function DashboardHome({
           </div>
         </div>
 
-        <div className="mt-2">
+        <div className="mt-0">
           <h2 className="mb-3 text-sm font-medium text-foreground">
             Student calendar
           </h2>
@@ -706,7 +667,7 @@ export function DashboardHome({
                     type="button"
                   >
                     <MessageSquareText className="size-4" />
-                    Chat with AI
+                    Method with AI
                   </Button>
                   <Button
                     onClick={() => {
@@ -719,7 +680,7 @@ export function DashboardHome({
                     variant="outline"
                   >
                     <BookOpenCheck className="size-4" />
-                    Generate flashcards
+                    Generate mindset
                   </Button>
                   <Button
                     onClick={() => {

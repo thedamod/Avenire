@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import {
   getFileAssetById,
+  isMarkdownFileRecord,
   isTrustedStorageUrl,
   replaceFileAssetContent,
+  upsertMarkdownFileContent,
   userCanEditFile,
 } from "@/lib/file-data";
 import { publishFilesInvalidationEvent } from "@/lib/files-realtime-publisher";
@@ -41,6 +43,7 @@ export async function PATCH(
   }
 
   const body = (await request.json().catch(() => ({}))) as {
+    content?: string;
     mimeType?: string | null;
     page?: {
       bannerUrl?: string | null;
@@ -56,6 +59,44 @@ export async function PATCH(
   const storageUrl = String(body.storageUrl ?? "").trim();
   const sizeBytes = Number(body.sizeBytes);
   const mimeType = typeof body.mimeType === "string" ? body.mimeType : null;
+  const content =
+    typeof body.content === "string" ? body.content : null;
+  const isMarkdownFile = isMarkdownFileRecord(existing);
+
+  const nextPage =
+    body.page === undefined ? undefined : normalizePageMetadataState(body.page);
+
+  if (isMarkdownFile && content !== null) {
+    const replaced = await upsertMarkdownFileContent({
+      content,
+      fileId: fileUuid,
+      metadata: nextPage === undefined ? undefined : { page: nextPage },
+      userId: user.id,
+      workspaceId: workspaceUuid,
+    });
+
+    if (!replaced) {
+      return NextResponse.json(
+        { error: "Unable to replace file content" },
+        { status: 404 }
+      );
+    }
+
+    await publishFilesInvalidationEvent({
+      workspaceUuid,
+      folderId: replaced.file.folderId || undefined,
+      reason: "file.updated",
+    });
+
+    if (
+      replaced.previousStorageKey &&
+      replaced.previousStorageKey !== replaced.file.storageKey
+    ) {
+      void deleteUploadThingFile(replaced.previousStorageKey);
+    }
+
+    return NextResponse.json({ file: replaced.file });
+  }
 
   if (!storageKey || !storageUrl || !Number.isFinite(sizeBytes) || sizeBytes < 0) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
@@ -64,9 +105,6 @@ export async function PATCH(
   if (!isTrustedStorageUrl(storageUrl)) {
     return NextResponse.json({ error: "Invalid file source" }, { status: 400 });
   }
-
-  const nextPage =
-    body.page === undefined ? undefined : normalizePageMetadataState(body.page);
 
   const replaced = await replaceFileAssetContent(workspaceUuid, fileUuid, user.id, {
     storageKey,

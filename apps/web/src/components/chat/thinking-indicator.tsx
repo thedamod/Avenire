@@ -21,6 +21,58 @@ const circleB =
 
 const fallbackMessages = ["Thinking", "Moonwalking", "Planning", "Refining"];
 
+function RotatingMessage({
+  longestMessage,
+  messages,
+}: {
+  longestMessage: string;
+  messages: string[];
+}) {
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    if (messages.length <= 1) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setIndex((current) => (current + 1) % messages.length);
+    }, 4000);
+
+    return () => window.clearInterval(interval);
+  }, [messages]);
+
+  return (
+    <span className="inline-grid overflow-hidden text-[13px] font-medium">
+      <span
+        aria-hidden="true"
+        className="shimmer-text invisible col-start-1 row-start-1"
+      >
+        {longestMessage}
+      </span>
+      <AnimatePresence initial={false} mode="popLayout">
+        <motion.span
+          animate={{
+            opacity: 1,
+            transition: { duration: 0.24, ease: [0.4, 0, 0.2, 1] },
+            y: 0,
+          }}
+          className="shimmer-text col-start-1 row-start-1"
+          exit={{
+            opacity: 0,
+            transition: { duration: 0.16, ease: [0.4, 0, 0.2, 1] },
+            y: "-80%",
+          }}
+          initial={{ opacity: 0, y: "80%" }}
+          key={messages[index]}
+        >
+          {messages[index]}
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
 export function ThinkingGlyph({ className }: { className?: string }) {
   return (
     <motion.svg
@@ -56,7 +108,6 @@ export const ThinkingIndicator = forwardRef<
   HTMLDivElement,
   HTMLAttributes<HTMLDivElement> & { messages?: string[] }
 >(function ThinkingIndicator({ className, messages, ...props }, ref) {
-  const [index, setIndex] = useState(0);
   const resolvedMessages = useMemo(() => {
     const nextMessages = (messages ?? [])
       .map((message) => message.trim())
@@ -69,28 +120,10 @@ export const ThinkingIndicator = forwardRef<
   const longestMessage = useMemo(
     () =>
       resolvedMessages.reduce((longest, word) =>
-        longest.length >= word.length ? longest : word
+      longest.length >= word.length ? longest : word
       ),
     [resolvedMessages]
   );
-
-  const resolvedMessagesKey = resolvedMessages.join("\u0000");
-
-  useEffect(() => {
-    setIndex(0);
-  }, [resolvedMessagesKey]);
-
-  useEffect(() => {
-    if (resolvedMessages.length <= 1) {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      setIndex((current) => (current + 1) % resolvedMessages.length);
-    }, 4000);
-
-    return () => window.clearInterval(interval);
-  }, [resolvedMessages.length]);
 
   return (
     <div
@@ -98,36 +131,12 @@ export const ThinkingIndicator = forwardRef<
       className={cn("flex items-center gap-2 px-3 py-2", className)}
       ref={ref}
       role="status"
-    >
-      <ThinkingGlyph className="size-5" />
-
-      <span className="inline-grid overflow-hidden text-[13px] font-medium">
-        <span
-          aria-hidden="true"
-          className="shimmer-text invisible col-start-1 row-start-1"
-        >
-          {longestMessage}
-        </span>
-        <AnimatePresence initial={false} mode="popLayout">
-          <motion.span
-            animate={{
-              opacity: 1,
-              transition: { duration: 0.24, ease: [0.4, 0, 0.2, 1] },
-              y: 0,
-            }}
-            className="shimmer-text col-start-1 row-start-1"
-            exit={{
-              opacity: 0,
-              transition: { duration: 0.16, ease: [0.4, 0, 0.2, 1] },
-              y: "-80%",
-            }}
-            initial={{ opacity: 0, y: "80%" }}
-            key={resolvedMessages[index]}
-          >
-            {resolvedMessages[index]}
-          </motion.span>
-        </AnimatePresence>
-      </span>
+      >
+        <ThinkingGlyph className="size-5" />
+      <RotatingMessage
+        longestMessage={longestMessage}
+        messages={resolvedMessages}
+      />
     </div>
   );
 });

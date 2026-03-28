@@ -1,50 +1,20 @@
 "use client";
 
-import { signOut, useSession } from "@avenire/auth/client";
+import { signOut } from "@avenire/auth/client";
 import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@avenire/ui/components/avatar";
+  Avatar, AvatarFallback, AvatarImage, } from "@avenire/ui/components/avatar";
 import { Button } from "@avenire/ui/components/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@avenire/ui/components/dialog";
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, } from "@avenire/ui/components/dialog";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@avenire/ui/components/dropdown-menu";
+  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger, } from "@avenire/ui/components/dropdown-menu";
 import { Input } from "@avenire/ui/components/input";
 import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "@avenire/ui/components/sidebar";
+  SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar, } from "@avenire/ui/components/sidebar";
 import {
-  Building2,
-  Check,
-  ChevronsUpDown,
-  LogOut,
-  Mail,
-  Plus,
-  UserPlus,
-} from "lucide-react";
+  Building as Building2, Check, CaretUpDown as ChevronsUpDown, SignOut as LogOut, Envelope as Mail, Plus, UserPlus } from "@phosphor-icons/react"
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { SensitiveText } from "@/components/shared/sensitive-text";
 import { useHaptics } from "@/hooks/use-haptics";
 import { usePrivacyMode } from "@/hooks/use-privacy-mode";
@@ -100,18 +70,11 @@ export function NavUser({
   onAcceptInvitation?: (invitationId: string) => Promise<void> | void;
   onDeclineInvitation?: (invitationId: string) => Promise<void> | void;
 }) {
-  const { data: session } = useSession();
   const router = useRouter();
-  const resolvedUser = user ?? (session?.user
-    ? {
-        avatar: session.user.image ?? undefined,
-        email: session.user.email,
-        name: session.user.name ?? "User",
-      }
-    : {
-        email: "signed-out@local",
-        name: "Account",
-      });
+  const resolvedUser = user ?? {
+    email: "signed-out@local",
+    name: "Account",
+  };
   const { closeMobileSidebar, isMobile } = useSidebar();
   const triggerHaptic = useHaptics();
   const fallbackAvatar = useMemo(
@@ -120,9 +83,6 @@ export function NavUser({
   );
   const privacyMode = usePrivacyMode();
   const initials = getInitials(resolvedUser.name || resolvedUser.email || "User");
-  const [avatarSrc, setAvatarSrc] = useState(
-    resolvedUser.avatar || fallbackAvatar
-  );
   const [avatarErrored, setAvatarErrored] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [workspaceName, setWorkspaceName] = useState("");
@@ -150,11 +110,9 @@ export function NavUser({
     }
   };
 
-  useEffect(() => {
-    if (!avatarErrored) {
-      setAvatarSrc(resolvedUser.avatar || fallbackAvatar);
-    }
-  }, [avatarErrored, fallbackAvatar, resolvedUser.avatar]);
+  const avatarSrc = avatarErrored
+    ? fallbackAvatar
+    : (resolvedUser.avatar ?? fallbackAvatar);
 
   const activeWorkspace = useMemo(
     () =>
@@ -184,7 +142,6 @@ export function NavUser({
                     alt={resolvedUser.name}
                     onError={() => {
                       setAvatarErrored(true);
-                      setAvatarSrc(fallbackAvatar);
                     }}
                     src={avatarSrc}
                   />

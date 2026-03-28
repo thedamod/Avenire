@@ -1,7 +1,11 @@
 import type { Route } from "next";
 import Link from "next/link";
+import { buildPageMetadata } from "@/lib/page-metadata";
 
 export const dynamic = "force-dynamic";
+export const metadata = buildPageMetadata({
+  title: "Desktop Sign-In Callback",
+});
 
 interface DesktopCallbackPageProps {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -30,7 +34,7 @@ export default async function DesktopCallbackPage({
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center gap-6 px-6 py-14">
-      <h1 className="text-3xl font-semibold">Desktop Sign-In Callback</h1>
+      <h1 className="font-semibold text-3xl">Desktop Sign-In Callback</h1>
       <p className="text-muted-foreground">
         The desktop runtime reached this callback route. Code exchange wiring is
         not complete yet, but deep-link routing is active.

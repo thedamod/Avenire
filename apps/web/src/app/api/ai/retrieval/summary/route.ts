@@ -7,7 +7,11 @@ import {
 } from "@avenire/ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getFileAssetById, getNoteContent } from "@/lib/file-data";
+import {
+  getFileAssetById,
+  getNoteContent,
+  isMarkdownFileRecord,
+} from "@/lib/file-data";
 import { normalizeMediaType } from "@/lib/media-type";
 import { createApiLogger } from "@/lib/observability";
 import { ensureWorkspaceAccessForUser, getSessionUser } from "@/lib/workspace";
@@ -229,12 +233,25 @@ export async function POST(request: Request) {
     const attachedFiles = (
       await Promise.all(
         fileRecords.map(async (file) => {
-          if (file.isNote) {
+          if (isMarkdownFileRecord(file)) {
             const note = await getNoteContent(file.id);
-            if (note?.content == null) {
+            const content =
+              note?.content ??
+              (await fetch(file.storageUrl, {
+                cache: "no-store",
+                signal: AbortSignal.timeout(fetchTimeoutMs),
+              })
+                .then(async (response) => {
+                  if (!response.ok) {
+                    return null;
+                  }
+                  return response.text();
+                })
+                .catch(() => null));
+            if (content == null) {
               return null;
             }
-            const bytes = Buffer.from(note.content, "utf8");
+            const bytes = Buffer.from(content, "utf8");
             return {
               type: "file" as const,
               mediaType: "text/markdown",

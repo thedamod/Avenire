@@ -2,29 +2,13 @@
 
 import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
-import { Menubar as MenubarPrimitive } from "@base-ui/react/menubar"
-
 import { cn } from "../lib/utils"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuPortal,
-  DropdownMenuRadioGroup,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { CheckIcon } from "lucide-react"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuPortal, DropdownMenuRadioGroup, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger, } from "@/components/ui/dropdown-menu"
+import { CheckIcon } from "@phosphor-icons/react"
 
-function Menubar({ className, ...props }: MenubarPrimitive.Props) {
+function Menubar({ className, ...props }: MenuPrimitive.Props) {
   return (
-    <MenubarPrimitive
+    <MenuPrimitive
       data-slot="menubar"
       className={cn("bg-background h-9 rounded-lg border p-1 flex items-center", className)}
       {...props}

@@ -1,6 +1,13 @@
-import { WaitlistForm } from "@avenire/auth/components/waitlist"
-import { Card, CardContent } from "@avenire/ui/components/card"
-import { ShaderWave } from "@avenire/ui/components/shader"
+import { WaitlistForm } from "@avenire/auth/components/waitlist";
+import { Card, CardContent } from "@avenire/ui/components/card";
+import { ShaderWave } from "@avenire/ui/components/shader";
+import Link from "next/link";
+import { buildPageMetadata } from "@/lib/page-metadata";
+
+export const metadata = buildPageMetadata({
+  title: "Join the waitlist",
+  description: "Get early access to Avenire.",
+});
 
 export default function WaitlistPage() {
   return (
@@ -17,11 +24,13 @@ export default function WaitlistPage() {
               </div>
             </CardContent>
           </Card>
-          <div className="text-balance text-center text-xs text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:text-primary">
-            By joining, you agree to our <a href="#">Terms of Service</a> and <a href="#">Privacy Policy</a>.
+          <div className="text-balance text-center text-muted-foreground text-xs [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:text-primary">
+            By joining, you agree to our{" "}
+            <Link href="/about">Terms of Service</Link> and{" "}
+            <Link href="/privacy">Privacy Policy</Link>.
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

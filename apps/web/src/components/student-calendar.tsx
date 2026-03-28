@@ -3,14 +3,9 @@
 import { Badge } from "@avenire/ui/components/badge";
 import { Button } from "@avenire/ui/components/button";
 import { cn } from "@avenire/ui/lib/utils";
+import { Spinner } from "@avenire/ui/components/spinner";
 import {
-  BookOpen,
-  CalendarDays,
-  CalendarRange,
-  ChevronLeft,
-  ChevronRight,
-  ListTodo,
-} from "lucide-react";
+  BookOpen, CalendarDots as CalendarDays, Calendar as CalendarRange, CaretLeft as ChevronLeft, CaretRight as ChevronRight, ListChecks as ListTodo } from "@phosphor-icons/react"
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -75,6 +70,18 @@ const addUtcDays = (date: Date, days: number) =>
 
 const dateKeyUtc = (date: Date) =>
   startOfUtcDay(date).toISOString().slice(0, 10);
+
+async function fetchUpcomingTasks() {
+  const response = await fetch("/api/tasks?includeCompleted=false&limit=8", {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Unable to load upcoming tasks.");
+  }
+
+  const payload = (await response.json()) as { tasks?: UpcomingTask[] };
+  return payload.tasks ?? [];
+}
 
 const getDaysInMonth = (year: number, month: number) =>
   new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
@@ -524,36 +531,50 @@ export function StudentCalendar() {
   const [dir, setDir] = useState<1 | -1>(1);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cacheRef = useRef<Map<string, RevisionData>>(new Map());
+  const tasksLoadedRef = useRef(false);
+  const tasksRequestRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
-    const loadTasks = async () => {
-      setTasksLoading(true);
-      setTasksError(null);
-      try {
-        const response = await fetch(
-          "/api/tasks?includeCompleted=false&limit=8",
-          {
-            cache: "no-store",
-          }
-        );
-        if (!response.ok) {
-          throw new Error("Unable to load upcoming tasks.");
-        }
-        const payload = (await response.json()) as { tasks?: UpcomingTask[] };
-        setUpcomingTasks(payload.tasks ?? []);
-      } catch (err) {
-        setTasksError(
-          err instanceof Error ? err.message : "Unable to load upcoming tasks."
-        );
-      } finally {
-        setTasksLoading(false);
+    const loadTasks = (background = false) => {
+      if (tasksRequestRef.current) {
+        return tasksRequestRef.current;
       }
+
+      const showLoading = !background && !tasksLoadedRef.current;
+      if (showLoading) {
+        setTasksLoading(true);
+        setTasksError(null);
+      }
+
+      tasksRequestRef.current = (async () => {
+        try {
+          const nextTasks = await fetchUpcomingTasks();
+          tasksLoadedRef.current = true;
+          setUpcomingTasks(nextTasks);
+          setTasksError(null);
+        } catch (err) {
+          if (showLoading || !tasksLoadedRef.current) {
+            setTasksError(
+              err instanceof Error
+                ? err.message
+                : "Unable to load upcoming tasks."
+            );
+          }
+        } finally {
+          if (showLoading) {
+            setTasksLoading(false);
+          }
+          tasksRequestRef.current = null;
+        }
+      })();
+
+      return tasksRequestRef.current;
     };
 
     loadTasks().catch(() => undefined);
 
     const refresh = () => {
-      loadTasks().catch(() => undefined);
+      loadTasks(true).catch(() => undefined);
     };
 
     window.addEventListener("dashboard.tasks.refresh", refresh);
@@ -709,7 +730,8 @@ export function StudentCalendar() {
   let taskFeedContent: React.ReactNode;
   if (tasksLoading) {
     taskFeedContent = (
-      <div className="w-full rounded-lg border border-border/70 border-dashed px-3 py-4 text-xs text-muted-foreground">
+      <div className="inline-flex w-full items-center gap-2 rounded-lg border border-border/70 border-dashed px-3 py-4 text-xs text-muted-foreground">
+        <Spinner className="size-3.5" />
         Loading upcoming tasks...
       </div>
     );
@@ -900,7 +922,8 @@ export function StudentCalendar() {
       <div className="space-y-4">
         <div className="min-w-0 space-y-3">
           {loading ? (
-            <div className="text-muted-foreground text-xs">
+            <div className="inline-flex items-center gap-2 text-muted-foreground text-xs">
+              <Spinner className="size-3.5" />
               Loading upcoming reviews...
             </div>
           ) : null}

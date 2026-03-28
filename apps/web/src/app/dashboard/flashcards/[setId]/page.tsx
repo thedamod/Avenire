@@ -6,7 +6,12 @@ import {
   getFlashcardSetForUser,
   listDueFlashcardsForUser,
 } from "@/lib/flashcards";
+import { buildPageMetadata } from "@/lib/page-metadata";
 import { requireWorkspaceRouteContext } from "@/lib/workspace-route-context";
+
+export const metadata = buildPageMetadata({
+  title: "Mindset",
+});
 
 function parseDrillFilters(
   rawDrill: string | string[] | undefined
@@ -84,6 +89,7 @@ export default async function DashboardFlashcardSetPage({
       initialQueue={queue}
       initialSet={set}
       initialStudyOpen={autoStudy}
+      key={set.id}
     />
   );
 }

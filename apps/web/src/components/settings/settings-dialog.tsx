@@ -11,9 +11,28 @@ import { SettingsPanel } from "@/components/settings/settings-panel";
 export function SettingsDialog({
   open,
   onOpenChange,
+  initialTab,
+  initialWorkspaces,
+  initialWorkspaceId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialTab?:
+    | "account"
+    | "preferences"
+    | "workspace"
+    | "data"
+    | "billing"
+    | "security"
+    | "shortcuts";
+  initialWorkspaces?: Array<{
+    logo: string | null;
+    workspaceId: string;
+    organizationId: string;
+    rootFolderId: string;
+    name: string;
+  }>;
+  initialWorkspaceId?: string;
 }) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -21,7 +40,12 @@ export function SettingsDialog({
         <DialogHeader className="sr-only">
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
-        <SettingsPanel initialWorkspaces={[]} tabMode="local" />
+        <SettingsPanel
+          initialTab={initialTab}
+          initialWorkspaceId={initialWorkspaceId}
+          initialWorkspaces={initialWorkspaces}
+          tabMode="local"
+        />
       </DialogContent>
     </Dialog>
   );

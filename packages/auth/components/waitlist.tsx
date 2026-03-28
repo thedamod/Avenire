@@ -7,7 +7,7 @@ import { Button } from "@avenire/ui/components/button"
 import { Input } from "@avenire/ui/components/input"
 import { Label } from "@avenire/ui/components/label"
 import { toast } from "sonner"
-import { Mail } from "lucide-react"
+import { Envelope as Mail } from "@phosphor-icons/react"
 import { z } from "zod"
 
 const waitlistSchema = z.object({

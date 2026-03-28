@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useCallback, useReducer, useRef } from "react";
+import { AnimatePresence, LazyMotion, domAnimation, m } from "framer-motion";
 import { Calligraph } from "calligraph";
 import Image from "next/image";
 import type { Route } from "next";
@@ -573,12 +573,47 @@ function estimateStreamDuration(messages: ChatMessage[], speed = 12) {
 }
 
 /* ── Typewriter / Streamer ── */
+interface StreamerState {
+  currentText: string;
+  visibleCount: number;
+}
+
+type StreamerAction =
+  | { type: "append-char"; nextText: string }
+  | { type: "advance-message" }
+  | { type: "reset" };
+
+function streamerReducer(
+  state: StreamerState,
+  action: StreamerAction
+): StreamerState {
+  switch (action.type) {
+    case "append-char":
+      return { ...state, currentText: action.nextText };
+    case "advance-message":
+      return { currentText: "", visibleCount: state.visibleCount + 1 };
+    case "reset":
+      return { currentText: "", visibleCount: 0 };
+    default:
+      return state;
+  }
+}
+
 function useStreamer(messages: ChatMessage[], speed = 12, enabled = true) {
-  const [visibleCount, setVisibleCount] = useState(0);
-  const [currentText, setCurrentText] = useState("");
+  const [{ currentText, visibleCount }, dispatch] = useReducer(
+    streamerReducer,
+    {
+      currentText: "",
+      visibleCount: 0,
+    }
+  );
   const activeVisibleCount = enabled ? visibleCount : messages.length;
   const activeCurrentText = enabled ? currentText : "";
   const isDone = activeVisibleCount >= messages.length;
+
+  useEffect(() => {
+    dispatch({ type: "reset" });
+  }, [enabled, messages]);
 
   useEffect(() => {
     if (!enabled) {
@@ -589,14 +624,23 @@ function useStreamer(messages: ChatMessage[], speed = 12, enabled = true) {
     }
     const msg = messages[visibleCount];
     if (msg.role === "user") {
-      const t = setTimeout(() => { setVisibleCount(v => v + 1); setCurrentText(""); }, 400);
+      const t = setTimeout(() => {
+        dispatch({ type: "advance-message" });
+      }, 400);
       return () => clearTimeout(t);
     }
     if (currentText.length < msg.text.length) {
-      const t = setTimeout(() => setCurrentText(msg.text.slice(0, currentText.length + 1)), speed);
+      const t = setTimeout(() => {
+        dispatch({
+          type: "append-char",
+          nextText: msg.text.slice(0, currentText.length + 1),
+        });
+      }, speed);
       return () => clearTimeout(t);
     } else {
-      const t = setTimeout(() => { setVisibleCount(v => v + 1); setCurrentText(""); }, 300);
+      const t = setTimeout(() => {
+        dispatch({ type: "advance-message" });
+      }, 300);
       return () => clearTimeout(t);
     }
   }, [enabled, visibleCount, currentText, messages, speed]);
@@ -680,7 +724,7 @@ function splitLatexChunks(text: string): LatexChunk[] {
 
 function renderPlainText(text: string, keyPrefix: string) {
   return text.split("\n").map((line, i, arr) => (
-    <span key={`${keyPrefix}-${i}`}>
+    <span key={`${keyPrefix}-${line}-${i}`}>
       {line}
       {i < arr.length - 1 && <br />}
     </span>
@@ -734,13 +778,14 @@ function ChatFlashcard({ card, katexReady }: { card: FlashcardArtifact; katexRea
   const [flipped, setFlipped] = useState(false);
 
   return (
-    <motion.div
+    <m.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       className="w-full max-w-[280px]"
       style={{ perspective: "900px" }}
     >
-      <motion.div
+      <m.button
+        type="button"
         className="relative w-full aspect-[4/3] cursor-pointer"
         animate={{ rotateY: flipped ? 180 : 0 }}
         transition={{ duration: 0.65, type: "spring", stiffness: 105, damping: 16 }}
@@ -771,8 +816,8 @@ function ChatFlashcard({ card, katexReady }: { card: FlashcardArtifact; katexRea
           </div>
           <span className="text-[8px] text-muted-foreground/70">Click to flip back</span>
         </div>
-      </motion.div>
-    </motion.div>
+      </m.button>
+    </m.div>
   );
 }
 
@@ -950,39 +995,44 @@ function DemoWindow({
 
         {/* Messages */}
         <div ref={chatRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2 min-h-0">
-          {completed.map((m, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.12 }}>
-              <Msg msg={m} katexReady={katexReady} />
-            </motion.div>
+          {completed.map((message) => (
+            <m.div
+              key={`${message.role}-${message.tag ?? "message"}-${message.text || message.flashcard?.front || "empty"}`}
+              initial={{ opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.12 }}
+            >
+              <Msg msg={message} katexReady={katexReady} />
+            </m.div>
           ))}
           {partial && (
-            <motion.div key="partial" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <m.div key="partial" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
               <Msg msg={partial} isStreaming katexReady={katexReady} />
-            </motion.div>
+            </m.div>
           )}
 
           {/* Thinking steps + file ref (after first AI message) */}
           {completed.length >= 2 && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+            <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }} className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
               <span>Thought {session.thinkingTime}</span>
-              {session.thinkingSteps.map((s, i) => (
-                <span key={i} className="text-muted-foreground/60">· {s}</span>
+              {session.thinkingSteps.map((step) => (
+                <span key={step} className="text-muted-foreground/60">· {step}</span>
               ))}
-            </motion.div>
+            </m.div>
           )}
           {completed.length >= 2 && session.fileRef && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}
+            <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}
               className="flex items-center gap-1.5 bg-muted/30 border border-border rounded px-2.5 py-1.5 w-fit"
             >
               <span className="text-primary">{FileIcon}</span>
               <span className="text-[10px] text-primary font-medium">{session.fileRef.name}</span>
               <span className="text-[10px] text-muted-foreground">{session.fileRef.changes}</span>
-            </motion.div>
+            </m.div>
           )}
 
           {/* Questions */}
           {isDone && question && (
-            <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+            <m.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
               className="space-y-2 pt-1"
             >
               <div className="flex items-center gap-2">
@@ -995,7 +1045,9 @@ function DemoWindow({
               <p className="text-[11px] font-semibold text-foreground/90">{question.title}</p>
               <div className="space-y-1">
                 {question.options.map((opt) => (
-                  <div key={opt.id}
+                  <button
+                    key={opt.id}
+                    type="button"
                     onClick={() => handleOptionClick(opt.id)}
                     className={`flex items-center gap-2 px-3 py-2 rounded-md border text-[11px] cursor-pointer transition-all ${opt.selected
                       ? "border-primary/30 bg-primary/5 text-foreground"
@@ -1004,23 +1056,23 @@ function DemoWindow({
                   >
                     <span className="font-mono text-primary/70 text-[10px]">{opt.id}</span>
                     {opt.label}
-                  </div>
+                  </button>
                 ))}
               </div>
-            </motion.div>
+            </m.div>
           )}
 
           {/* Follow-up buttons */}
           {isDone && !question && followUps.length > 0 && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="pt-1 space-y-1">
-              {followUps.map((fu, i) => (
-                <button key={i} onClick={() => handleFollowUpClick(fu)}
+            <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="pt-1 space-y-1">
+              {followUps.map((fu) => (
+                <button key={fu.label} onClick={() => handleFollowUpClick(fu)}
                   className="block w-full text-left text-[11px] text-muted-foreground hover:text-foreground px-3 py-2 rounded-md border border-border hover:border-primary/20 hover:bg-primary/5 transition-all"
                 >
                   {fu.label}
                 </button>
               ))}
-            </motion.div>
+            </m.div>
           )}
         </div>
 
@@ -1052,8 +1104,8 @@ function DemoWindow({
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           <h3 className="text-sm font-bold text-foreground">{docView.title}</h3>
 
-          {docView.sections.map((sec, i) => (
-            <div key={i}>
+          {docView.sections.map((sec) => (
+            <div key={sec.heading}>
               <h4 className="text-[10px] font-semibold text-foreground/70 mb-1">{sec.heading}</h4>
               <div className="text-[10px] text-muted-foreground leading-relaxed whitespace-pre-wrap">
                 <LatexText text={sec.text} katexReady={katexReady} />
@@ -1109,7 +1161,7 @@ function DemoWindow({
                   <div className="space-y-1">
                     {docView.artifacts.quiz.options.map((opt, i) => (
                       <div
-                        key={i}
+                        key={opt}
                         className={`rounded px-2 py-1 text-[10px] border ${i === docView.artifacts?.quiz?.correctIndex
                           ? "border-primary/30 bg-primary/10 text-foreground"
                           : "border-border text-muted-foreground"
@@ -1145,8 +1197,8 @@ function DemoWindow({
             <div>
               <h4 className="text-[10px] font-semibold text-foreground/70 mb-2">{docView.tasks.length} Tasks</h4>
               <div className="space-y-2">
-                {docView.tasks.map((task, i) => (
-                  <div key={i} className="flex items-start gap-2">
+                {docView.tasks.map((task) => (
+                  <div key={task} className="flex items-start gap-2">
                     <div className="w-3.5 h-3.5 rounded-full border border-border mt-0.5 flex-shrink-0" />
                     <span className="text-[10px] text-muted-foreground leading-relaxed">{task}</span>
                   </div>
@@ -1204,11 +1256,12 @@ export function Hero() {
   }, []);
 
   return (
-    <section className="pt-28 pb-20">
+    <LazyMotion features={domAnimation}>
+      <section className="pt-28 pb-20">
       <div className="max-w-7xl mx-auto px-4">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.3fr] xl:grid-cols-[1fr_1.4fr] gap-6 lg:gap-10 items-center min-h-[480px]">
           {/* Left: Copy */}
-          <motion.div
+          <m.div
             initial={{ opacity: 0, x: -16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5 }}
@@ -1231,10 +1284,10 @@ export function Hero() {
                 {isSignedIn ? "Go to app" : "Join waitlist"}
               </Link>
             </div>
-          </motion.div>
+          </m.div>
 
           {/* Right: Cursor-style Demo Window */}
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.15 }}
@@ -1297,7 +1350,7 @@ export function Hero() {
 
                 {/* Main demo content */}
                 <AnimatePresence mode="wait">
-                  <motion.div
+                  <m.div
                     key={activeId}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -1306,15 +1359,15 @@ export function Hero() {
                     className="flex-1 flex min-w-0"
                   >
                     <DemoWindow session={active} onStreamComplete={handleStreamComplete} />
-                  </motion.div>
+                  </m.div>
                 </AnimatePresence>
               </div>
             </div>
-          </motion.div>
+          </m.div>
         </div>
 
         {/* Tagline */}
-        <motion.p
+        <m.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.7 }}
@@ -1323,8 +1376,9 @@ export function Hero() {
           Built for <span className="text-primary font-bold">thinkers</span>,{" "}
           <span className="text-primary font-bold">builders</span>, and{" "}
           <span className="text-primary font-bold">curious minds</span>.
-        </motion.p>
+        </m.p>
       </div>
-    </section>
+      </section>
+    </LazyMotion>
   );
 }

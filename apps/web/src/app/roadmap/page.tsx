@@ -2,7 +2,7 @@ import { getRoadmapGroups } from "@/lib/roadmap";
 import type { RoadmapGroup, RoadmapItem } from "@/lib/roadmap";
 import { Navbar } from "@/components/landing/Navbar";
 import { Footer } from "@/components/landing/Footer";
-import { CheckCircle2, Circle, Loader2, ExternalLink } from "lucide-react";
+import { CheckCircle as CheckCircle2, Circle, SpinnerGap as Loader2, ArrowSquareOut as ExternalLink } from "@phosphor-icons/react/ssr"
 
 export const metadata = {
   title: "Roadmap — Avenire",

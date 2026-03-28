@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@avenire/ui/components/dialog";
 import { ScrollArea } from "@avenire/ui/components/scroll-area";
+import { Spinner } from "@avenire/ui/components/spinner";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 interface TrashItem {
@@ -115,7 +116,8 @@ export function TrashDialog({
   let content: ReactNode;
   if (loading) {
     content = (
-      <p className="p-4 text-muted-foreground text-sm">
+      <p className="inline-flex items-center gap-2 p-4 text-muted-foreground text-sm">
+        <Spinner className="size-4" />
         Loading trash...
       </p>
     );

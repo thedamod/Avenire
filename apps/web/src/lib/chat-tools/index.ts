@@ -22,6 +22,7 @@ import {
   createWorkspaceNoteFile,
   getFileAssetById,
   getNoteContent,
+  isMarkdownFileRecord,
   isSharedFilesVirtualFolderId,
   listWorkspaceFiles,
   listWorkspaceFolders,
@@ -595,12 +596,17 @@ async function fetchWorkspaceFileText(
     throw new Error("Only markdown and text files can be read as notes.");
   }
 
-  if (file.isNote) {
+  if (isMarkdownFileRecord(file)) {
     const note = await getNoteContent(file.id);
-    if (note?.content == null) {
-      throw new Error("Failed to fetch note content.");
-    }
-    const text = note.content;
+    const text =
+      note?.content ??
+      (await fetch(file.storageUrl, { cache: "no-store" })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Failed to fetch file content (${response.status}).`);
+          }
+          return response.text();
+        }));
     if (Buffer.byteLength(text, "utf8") > NOTE_TEXT_BYTE_LIMIT) {
       throw new Error("The note is too large to load into chat context.");
     }
@@ -1970,7 +1976,7 @@ The agent decides which operations to perform based on the task.`,
     }),
     log_misconception: tool({
       description:
-        "Record a misconception the user explicitly reports or the conversation establishes with high confidence. Use when the user is repeatedly confused about a concept, keeps applying the wrong model, or the response should retain that learning context.",
+        "Record a misconception only when the user explicitly reports a durable misunderstanding or the conversation clearly establishes a wrong mental model. Do not use it for normal questions, feature checks, or one-off clarifications.",
       inputSchema: chatToolSchemas.log_misconception.input,
       outputSchema: chatToolSchemas.log_misconception.output,
       execute: async (input) => {

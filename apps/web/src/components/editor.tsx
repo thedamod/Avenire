@@ -1,6 +1,22 @@
 "use client";
 
 import { Button } from "@avenire/ui/components/button";
+import { Input } from "@avenire/ui/components/input";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@avenire/ui/components/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@avenire/ui/components/select";
+import { Spinner } from "@avenire/ui/components/spinner";
+import { Textarea } from "@avenire/ui/components/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,53 +75,68 @@ import StarterKit from "@tiptap/starter-kit";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import { common, createLowlight } from "lowlight";
 import {
-  BetweenHorizontalEnd,
-  BetweenHorizontalStart,
-  BetweenVerticalEnd,
-  BetweenVerticalStart,
-  Bold,
+  ArrowsOutLineHorizontal as BetweenHorizontalEnd,
+  ArrowsOutLineHorizontal as BetweenHorizontalStart,
+  ArrowsOutLineVertical as BetweenVerticalEnd,
+  ArrowsOutLineVertical as BetweenVerticalStart,
+  TextB as Bold,
   Check,
-  ChevronDown,
+  CaretDown as ChevronDown,
   Code,
-  Columns3,
+  Columns as Columns3,
   Copy,
-  Heading1,
-  Heading2,
-  Heading3,
+  ArrowUpRight,
+  TextHOne as Heading1,
+  TextHTwo as Heading2,
+  TextHThree as Heading3,
   Highlighter,
   ImageIcon,
-  Italic,
-  Link2,
+  TextItalic as Italic,
+  LinkSimple as Link2,
   List,
-  ListOrdered,
-  ListTodo,
-  type LucideIcon,
-  Merge,
+  ListNumbers as ListOrdered,
+  ListChecks as ListTodo,
+  GitMerge as Merge,
   Minus,
   Palette,
-  Pilcrow,
-  Quote,
-  Rows3,
+  Paragraph as Pilcrow,
+  Quotes as Quote,
+  Rows as Rows3,
   Sigma,
-  Split,
-  Strikethrough,
-  Table2,
-  Trash2,
-  Workflow,
-} from "lucide-react";
+  Rows as Split,
+  TextStrikethrough as Strikethrough,
+  Table as Table2,
+  Trash as Trash2,
+  FlowArrow as Workflow,
+} from "@phosphor-icons/react";
 import {
+  type ComponentType,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  type SVGProps,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
+import { Markdown as MarkdownRenderer } from "@/components/chat/markdown";
 import "../editor.css";
+import {
+  isMarkdownNoteTemplateTargetEmpty,
+  renderMarkdownNoteTemplate,
+} from "@/lib/markdown-note-template";
+import {
+  getDefaultNoteTemplates,
+  getRecentNoteTemplateStorageKey,
+  getNoteTemplateStorageKey,
+  type NoteTemplate,
+} from "@/lib/note-templates";
 import { resolveWorkspaceFileRoute } from "@/lib/workspace-file-navigation";
+import { useUploadThing } from "@/lib/uploadthing";
 import { commandPaletteActions } from "@/stores/commandPaletteStore";
 const lowlight = createLowlight(common);
 const MENU_OFFSET = 10;
@@ -141,6 +172,96 @@ const BG_COLORS = [
   { name: "Red", value: "#FBE4E4" },
 ] as const;
 
+type ImagePickerTab = "upload" | "link";
+
+function getImagePickerTab(src: string) {
+  return src.trim() ? "link" : "upload";
+}
+
+const MARKDOWN_PASTE_HEURISTICS = [
+  /^#{1,6}\s+\S/m,
+  /^>\s+\S/m,
+  /^[-*+]\s+\S/m,
+  /^\d+\.\s+\S/m,
+  /^---\s*$/m,
+  /```[\s\S]*```/m,
+  /\[[^\]]+\]\([^)]+\)/,
+  /!\[[^\]]*\]\([^)]+\)/,
+  /\|.+\|\n\|(?:\s*:?-+:?\s*\|)+/m,
+  /(^|\s)(?:\*\*|__)[^\s].*(?:\*\*|__)($|\s)/m,
+  /(^|\s)(?:\*|_)[^\s].*(?:\*|_)($|\s)/m,
+] as const;
+
+function looksLikeMarkdown(text: string) {
+  const normalized = text.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return MARKDOWN_PASTE_HEURISTICS.some((pattern) => pattern.test(normalized));
+}
+
+function insertMarkdownContent(editor: Editor, markdown: string) {
+  if (!editor.markdown) {
+    editor.commands.setContent(markdown);
+    return;
+  }
+
+  const json = editor.markdown.parse(markdown);
+  editor.commands.setContent(json);
+}
+
+const PasteMarkdownExtension = Extension.create({
+  name: "pasteMarkdown",
+
+  addProseMirrorPlugins() {
+    const { editor } = this;
+
+    return [
+      new Plugin({
+        props: {
+          handlePaste(view, event) {
+            const text = event.clipboardData?.getData("text/plain")?.trim();
+
+            if (!text || !looksLikeMarkdown(text)) {
+              return false;
+            }
+
+            if (!editor.markdown) {
+              return false;
+            }
+
+            event.preventDefault();
+            const json = editor.markdown.parse(text);
+
+            editor.commands.insertContent(json);
+            return true;
+          },
+        },
+      }),
+    ];
+  },
+});
+
+async function loadWikiPreviewMarkdown(input: {
+  pageId: string;
+  signal: AbortSignal;
+}) {
+  const response = await fetch(`/api/notes/${input.pageId}/sync`, {
+    cache: "no-store",
+    signal: input.signal,
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json().catch(() => ({}))) as {
+    markdown?: string;
+  };
+  return payload.markdown ?? "";
+}
+
 type SlashMatch = {
   query: string;
   from: number;
@@ -162,6 +283,17 @@ type MermaidPopoverState = {
   draft: string;
 };
 
+type WikiPreviewState = {
+  anchorEl: HTMLAnchorElement;
+  content: string | null;
+  left: number;
+  loading: boolean;
+  page: WikiPage;
+  placement: "top" | "bottom";
+  top: number;
+  rect: DOMRect;
+};
+
 type WikiPage = {
   id: string;
   title: string;
@@ -175,7 +307,7 @@ type SlashCommand = {
   id: string;
   label: string;
   description: string;
-  icon: LucideIcon;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   keywords: string[];
   clearTrigger?: boolean;
   run: (context: { match: SlashMatch | null }) => void | Promise<void>;
@@ -184,20 +316,89 @@ type SlashCommand = {
 type TableAction = {
   id: string;
   label: string;
-  icon: LucideIcon;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   disabled: boolean;
   run: () => void;
 };
 
 interface AvenireEditorProps {
+  createdBy?: string;
   defaultValue: string;
+  noteTitle: string;
   onChange: (markdown: string) => void;
+  onTemplateApplied?: (template: NoteTemplate, rendered: string) => void;
   onOpenWikiLink?: (page: WikiPage) => void;
   saveMessage?: string;
   saveState?: "idle" | "saving" | "saved" | "error";
   scrollContainerRef: RefObject<HTMLDivElement | null>;
   wikiPages: WikiPage[];
   workspaceUuid: string;
+}
+
+function loadWorkspaceNoteTemplates(workspaceUuid: string) {
+  try {
+    const raw = window.localStorage.getItem(
+      getNoteTemplateStorageKey(workspaceUuid)
+    );
+    const parsed = JSON.parse(raw ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) {
+      return getDefaultNoteTemplates();
+    }
+    const templates = parsed
+      .map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return null;
+        }
+        const candidate = entry as Partial<NoteTemplate>;
+        const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+        const name =
+          typeof candidate.name === "string" ? candidate.name.trim() : "";
+        const content =
+          typeof candidate.content === "string" ? candidate.content : "";
+        const bannerUrl =
+          typeof candidate.bannerUrl === "string" &&
+          candidate.bannerUrl.trim().length > 0
+            ? candidate.bannerUrl.trim()
+            : null;
+        return id && name && content ? { id, name, content, bannerUrl } : null;
+      })
+      .filter((entry): entry is NoteTemplate => Boolean(entry));
+
+    return templates.length > 0 ? templates : getDefaultNoteTemplates();
+  } catch {
+    return getDefaultNoteTemplates();
+  }
+}
+
+function loadRecentTemplateIds(workspaceUuid: string) {
+  try {
+    const raw = window.localStorage.getItem(
+      getRecentNoteTemplateStorageKey(workspaceUuid)
+    );
+    const parsed = JSON.parse(raw ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry): entry is string => typeof entry === "string")
+      .slice(0, 6);
+  } catch {
+    return [];
+  }
+}
+
+function persistRecentTemplate(workspaceUuid: string, templateId: string) {
+  try {
+    const existing = loadRecentTemplateIds(workspaceUuid).filter(
+      (entry) => entry !== templateId
+    );
+    window.localStorage.setItem(
+      getRecentNoteTemplateStorageKey(workspaceUuid),
+      JSON.stringify([templateId, ...existing].slice(0, 6))
+    );
+  } catch {
+    return;
+  }
 }
 
 const InlineMathExtension = InlineMath.extend({
@@ -528,6 +729,36 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function getWikiPreviewPlacement(
+  anchorRect: DOMRect,
+  cardRect: DOMRect | null
+) {
+  const width = cardRect?.width ?? 320;
+  const height = cardRect?.height ?? 240;
+  const belowTop = anchorRect.bottom + MENU_OFFSET;
+  const aboveTop = anchorRect.top - MENU_OFFSET - height;
+  const fitsBelow = belowTop + height <= window.innerHeight - VIEWPORT_PADDING;
+  const fitsAbove = aboveTop >= VIEWPORT_PADDING;
+  const placement: "top" | "bottom" =
+    fitsBelow || !fitsAbove ? "bottom" : "top";
+  const top = placement === "bottom" ? belowTop : aboveTop;
+  const left = clamp(
+    anchorRect.left,
+    VIEWPORT_PADDING,
+    Math.max(VIEWPORT_PADDING, window.innerWidth - width - VIEWPORT_PADDING)
+  );
+
+  return {
+    left,
+    placement,
+    top: clamp(
+      top,
+      VIEWPORT_PADDING,
+      Math.max(VIEWPORT_PADDING, window.innerHeight - height - VIEWPORT_PADDING)
+    ),
+  };
+}
+
 function getSlashMatch(editor: Editor): SlashMatch | null {
   const { selection } = editor.state;
 
@@ -614,9 +845,11 @@ function slugifyWikiTitle(value: string) {
 function getWikiHref(title: string, pages: WikiPage[]) {
   const normalized = title.trim().toLowerCase();
   const page = pages.find((entry) => entry.title.toLowerCase() === normalized);
-  const slug = page?.id ?? slugifyWikiTitle(title);
+  if (page?.id) {
+    return `workspace-file://${page.id}`;
+  }
 
-  return `wiki:${slug}`;
+  return `wiki:${slugifyWikiTitle(title)}`;
 }
 
 function getWorkspaceFileIdFromHref(href: string | null) {
@@ -652,6 +885,19 @@ function normalizeWikiSyntax(markdown: string, pages: WikiPage[]) {
 
     return `[${title}](${getWikiHref(title, pages)})`;
   });
+}
+
+function stripMarkdownFrontmatter(content: string) {
+  if (!content.startsWith("---")) {
+    return content;
+  }
+
+  const match = content.match(/^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?/);
+  if (!match) {
+    return content;
+  }
+
+  return content.slice(match[0].length).replace(/^\s+/, "");
 }
 
 function clearSlashText(editor: Editor, match: SlashMatch | null) {
@@ -879,10 +1125,14 @@ function SelectionBubbleMenu({
       resizeDelay={0}
       shouldShow={({ editor, state }) =>
         Boolean(editor) &&
+        state.selection instanceof TextSelection &&
         !state.selection.empty &&
+        state.doc.textBetween(state.selection.from, state.selection.to).trim()
+          .length > 0 &&
         !editor.isActive("table") &&
         !editor.isActive("inlineMath") &&
         !editor.isActive("blockMath") &&
+        !editor.isActive("image") &&
         !editor.isActive("mermaidDiagram")
       }
       updateDelay={0}
@@ -1063,24 +1313,13 @@ function SelectionBubbleMenu({
   );
 }
 
-function CodeBlockBubbleControls({
+function CodeBlockOverlayControls({
   editor,
-  scrollContainerRef,
   onCopy,
 }: {
   editor: Editor;
-  scrollContainerRef: RefObject<HTMLDivElement | null>;
-  onCopy: () => void;
+  onCopy: (pos: number) => void;
 }) {
-  const languageState = useEditorState({
-    editor,
-    selector: ({ editor }) => ({
-      language: editor
-        ? ((editor.getAttributes("codeBlock").language as string | null) ??
-          "plaintext")
-        : "plaintext",
-    }),
-  });
   const languages = useMemo(
     () => [
       "plaintext",
@@ -1088,57 +1327,107 @@ function CodeBlockBubbleControls({
     ],
     []
   );
+  const [blocks, setBlocks] = useState<
+    Array<{
+      language: string;
+      pos: number;
+      rect: DOMRect;
+    }>
+  >([]);
+
+  useEffect(() => {
+    const updateBlocks = () => {
+      const next: Array<{ language: string; pos: number; rect: DOMRect }> = [];
+
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "codeBlock") {
+          return;
+        }
+
+        const dom = editor.view.nodeDOM(pos);
+        if (!(dom instanceof HTMLElement)) {
+          return;
+        }
+
+        const rect = dom.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          return;
+        }
+
+        next.push({
+          language:
+            ((node.attrs.language as string | null | undefined) ??
+              "plaintext") ||
+            "plaintext",
+          pos,
+          rect,
+        });
+      });
+
+      setBlocks(next);
+    };
+
+    updateBlocks();
+    editor.on("transaction", updateBlocks);
+    window.addEventListener("resize", updateBlocks);
+    window.addEventListener("scroll", updateBlocks, true);
+
+    return () => {
+      editor.off("transaction", updateBlocks);
+      window.removeEventListener("resize", updateBlocks);
+      window.removeEventListener("scroll", updateBlocks, true);
+    };
+  }, [editor]);
 
   return (
-    <BubbleMenu
-      appendTo={() => document.body}
-      className="z-[82]"
-      editor={editor}
-      options={{
-        strategy: "fixed",
-        placement: "top-end",
-        offset: 6,
-        flip: { padding: VIEWPORT_PADDING },
-        shift: { padding: VIEWPORT_PADDING },
-        scrollTarget: getScrollTarget(scrollContainerRef),
-      }}
-      pluginKey="codeBlockBubbleMenu"
-      resizeDelay={0}
-      shouldShow={({ editor }) =>
-        Boolean(editor) && editor.isActive("codeBlock")
-      }
-      updateDelay={0}
-    >
-      <div className="flex items-center gap-1 rounded-md border border-border bg-popover p-1 shadow-md">
-        <label className="relative inline-flex items-center">
-          <select
-            className="h-7 min-w-28 appearance-none rounded-sm border border-border bg-background px-2 pr-6 text-foreground text-xs outline-none"
-            onChange={(event) => {
-              const value = event.target.value;
-              editor
-                .chain()
-                .focus()
-                .updateAttributes("codeBlock", {
-                  language: value === "plaintext" ? null : value,
-                })
-                .run();
-            }}
-            value={languageState.language || "plaintext"}
-          >
-            {languages.map((language) => (
-              <option key={language} value={language}>
-                {language}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-1.5 h-3 w-3 text-muted-foreground" />
-        </label>
-        <Button onClick={onCopy} size="sm" type="button" variant="outline">
-          <Copy className="h-3.5 w-3.5" />
-          Copy
-        </Button>
-      </div>
-    </BubbleMenu>
+    <>
+      {blocks.map((block) => (
+        <div
+          className="fixed z-[82]"
+          key={block.pos}
+          style={{
+            left: Math.max(VIEWPORT_PADDING, block.rect.right - 176),
+            top: block.rect.top + 8,
+          }}
+        >
+          <div className="flex items-center gap-1 rounded-md border border-border bg-popover/96 p-1 shadow-md backdrop-blur">
+            <Select
+              onValueChange={(value) => {
+                editor
+                  .chain()
+                  .focus()
+                  .setTextSelection(block.pos + 1)
+                  .updateAttributes("codeBlock", {
+                    language: value === "plaintext" ? null : value,
+                  })
+                  .run();
+              }}
+              value={block.language}
+            >
+              <SelectTrigger className="h-7 min-w-28 border-border bg-background px-2 text-xs">
+                <SelectValue placeholder="plaintext" />
+              </SelectTrigger>
+              <SelectContent>
+                {languages.map((language) => (
+                  <SelectItem key={language} value={language}>
+                    {language}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={() => onCopy(block.pos)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Copy
+            </Button>
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -1274,10 +1563,12 @@ function WikiMenu({
 }
 
 function HighlightedTextarea({
+  compact = false,
   value,
   onChange,
   onKeyDown,
 }: {
+  compact?: boolean;
   value: string;
   onChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -1299,16 +1590,27 @@ function HighlightedTextarea({
   }, []);
 
   return (
-    <div className="latex-highlighter relative overflow-hidden rounded-xl border border-border bg-card">
+    <div
+      className={cn(
+        "latex-highlighter relative overflow-hidden rounded-xl border border-border bg-card",
+        compact && "rounded-lg"
+      )}
+    >
       <pre
         aria-hidden
-        className="pointer-events-none min-h-32 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[13px] leading-6"
+        className={cn(
+          "pointer-events-none overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[13px] leading-6",
+          compact ? "min-h-10 whitespace-nowrap" : "min-h-32"
+        )}
         ref={preRef}
       >
         {highlightLatex(value)}
       </pre>
       <textarea
-        className="absolute inset-0 min-h-32 resize-none overflow-auto bg-transparent px-3 py-2 font-mono text-[13px] text-transparent leading-6 caret-foreground outline-none selection:bg-accent/80 selection:text-transparent"
+        className={cn(
+          "absolute inset-0 resize-none overflow-auto bg-transparent px-3 py-2 font-mono text-[13px] text-transparent leading-6 caret-foreground outline-none selection:bg-accent/80 selection:text-transparent",
+          compact ? "min-h-10 whitespace-nowrap" : "min-h-32"
+        )}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={onKeyDown}
         onScroll={syncScroll}
@@ -1419,11 +1721,21 @@ function MathPopover({
 
   return (
     <div
-      className="fixed z-[90] w-[min(24rem,calc(100vw-1.25rem))] rounded-lg border border-border bg-popover p-2.5 shadow-black/10 shadow-lg"
+      className={cn(
+        "fixed z-[90] rounded-lg border border-border bg-popover shadow-black/10 shadow-lg",
+        value.kind === "inlineMath"
+          ? "w-[min(26rem,calc(100vw-1rem))] p-2"
+          : "w-[min(22rem,calc(100vw-1.25rem))] p-2.5"
+      )}
       ref={popoverRef}
       style={style ?? undefined}
     >
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3",
+          value.kind === "inlineMath" ? "mb-1.5" : "mb-2"
+        )}
+      >
         <div>
           <p className="font-medium text-popover-foreground text-sm">
             {value.kind === "blockMath" ? "Block equation" : "Inline math"}
@@ -1434,40 +1746,73 @@ function MathPopover({
         </div>
       </div>
 
-      <HighlightedTextarea
-        onChange={onChange}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            onSave();
-            return;
-          }
+      {value.kind === "inlineMath" ? (
+        <Input
+          autoFocus
+          className="h-9 font-mono text-sm"
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              onSave();
+              return;
+            }
 
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onCancel();
-            return;
-          }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onSave();
+              return;
+            }
 
-          if (event.key === "Tab") {
-            event.preventDefault();
-            const textarea = event.currentTarget;
-            const start = textarea.selectionStart;
-            const end = textarea.selectionEnd;
-            const nextValue = `${value.draft.slice(0, start)}  ${value.draft.slice(end)}`;
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+          spellCheck={false}
+          value={value.draft}
+        />
+      ) : (
+        <HighlightedTextarea
+          onChange={onChange}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              event.preventDefault();
+              onSave();
+              return;
+            }
 
-            onChange(nextValue);
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+              return;
+            }
 
-            requestAnimationFrame(() => {
-              textarea.selectionStart = start + 2;
-              textarea.selectionEnd = start + 2;
-            });
-          }
-        }}
-        value={value.draft}
-      />
+            if (event.key === "Tab") {
+              event.preventDefault();
+              const textarea = event.currentTarget;
+              const start = textarea.selectionStart;
+              const end = textarea.selectionEnd;
+              const nextValue = `${value.draft.slice(0, start)}  ${value.draft.slice(end)}`;
 
-      <div className="mt-2 flex items-center justify-between gap-2">
+              onChange(nextValue);
+
+              requestAnimationFrame(() => {
+                textarea.selectionStart = start + 2;
+                textarea.selectionEnd = start + 2;
+              });
+            }
+          }}
+          value={value.draft}
+        />
+      )}
+
+      <div
+        className={cn(
+          "flex items-center justify-between gap-2",
+          value.kind === "inlineMath" ? "mt-1.5" : "mt-2"
+        )}
+      >
         <Button
           onClick={onDelete}
           onMouseDown={(event) => event.preventDefault()}
@@ -1594,8 +1939,8 @@ function MermaidPopover({
           ```mermaid
         </div>
       </div>
-      <textarea
-        className="min-h-32 w-full resize-y rounded-xl border border-border bg-card px-3 py-2 font-mono text-[13px] text-foreground leading-6 outline-none"
+      <Textarea
+        className="min-h-32 w-full resize-y rounded-xl font-mono text-[13px] leading-6"
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -1606,7 +1951,6 @@ function MermaidPopover({
             onCancel();
           }
         }}
-        rows={10}
         spellCheck={false}
         value={value.draft}
       />
@@ -1645,15 +1989,20 @@ function MermaidPopover({
   );
 }
 
-type ImagePopoverState = {
+interface ImagePopoverState {
   pos: number;
   src: string;
-};
+  tab: ImagePickerTab;
+}
 
 function ImagePopover({
   editor,
   value,
   onChange,
+  onTabChange,
+  onUpload,
+  uploadBusy,
+  uploadError,
   onSave,
   onCancel,
   scrollContainerRef,
@@ -1661,11 +2010,16 @@ function ImagePopover({
   editor: Editor;
   value: ImagePopoverState | null;
   onChange: (next: string) => void;
+  onTabChange: (next: ImagePickerTab) => void;
+  onUpload: (file: File) => Promise<void>;
+  uploadBusy: boolean;
+  uploadError: string | null;
   onSave: () => void;
   onCancel: () => void;
   scrollContainerRef: RefObject<HTMLDivElement | null>;
 }) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [style, setStyle] = useState<Record<string, number> | null>(null);
 
   useEffect(() => {
@@ -1733,64 +2087,183 @@ function ImagePopover({
   }
 
   return (
-    <div
-      className="fixed z-[90] w-[min(28rem,calc(100vw-1.25rem))] rounded-lg border border-border/60 bg-popover p-0 shadow-black/10 shadow-lg"
-      ref={popoverRef}
-      style={style ?? undefined}
+    <Tabs
+      className="w-full gap-0"
+      onValueChange={(next) => onTabChange(next as ImagePickerTab)}
+      value={value.tab}
     >
-      <div className="border-border/60 border-b px-3 py-2">
-        <div className="flex items-center gap-3 text-xs">
-          <span className="font-medium text-muted-foreground">Gallery</span>
-          <span className="font-medium text-muted-foreground">Upload</span>
-          <span className="border-b border-border pb-1 font-medium text-popover-foreground">
-            Link
-          </span>
-          <span className="font-medium text-muted-foreground">Unsplash</span>
+      <div
+        className="fixed z-[90] w-[min(36rem,calc(100vw-1.25rem))] rounded-lg border border-border/60 bg-popover p-0 shadow-black/10 shadow-lg"
+        ref={popoverRef}
+        style={style ?? undefined}
+      >
+        <div className="flex items-center justify-between border-border/60 border-b px-3 py-2">
+          <TabsList variant="line" className="h-8 gap-1 p-0">
+            <TabsTrigger className="rounded-none px-2.5 text-xs" value="upload">
+              Upload
+            </TabsTrigger>
+            <TabsTrigger className="rounded-none px-2.5 text-xs" value="link">
+              Link
+            </TabsTrigger>
+          </TabsList>
         </div>
+        <TabsContent className="space-y-3 p-3" value="upload">
+          <input
+            className="hidden"
+            accept="image/*"
+            onChange={async (event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (!file) {
+                return;
+              }
+              await onUpload(file);
+            }}
+            ref={uploadInputRef}
+            type="file"
+          />
+          <div className="flex min-h-36 items-center justify-center rounded-md border border-dashed border-border/70 bg-muted/20 px-4 text-center">
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Upload from your device and insert the hosted image URL.
+              </p>
+              <Button
+                className="h-8 rounded-md px-3 text-xs"
+                disabled={uploadBusy}
+                onClick={() => uploadInputRef.current?.click()}
+                onMouseDown={(event) => event.preventDefault()}
+                size="sm"
+                type="button"
+                variant="secondary"
+              >
+                {uploadBusy ? (
+                  <>
+                    <Spinner className="mr-2 size-3.5" />
+                    Uploading...
+                  </>
+                ) : (
+                  "Choose image"
+                )}
+              </Button>
+              {uploadError ? (
+                <p className="text-xs text-destructive">{uploadError}</p>
+              ) : null}
+            </div>
+          </div>
+        </TabsContent>
+        <TabsContent className="space-y-3 p-3" value="link">
+          <Input
+            className="h-8 text-xs"
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                onSave();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                onCancel();
+              }
+            }}
+            placeholder="https://example.com/image.png"
+            value={value.src}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              onClick={onCancel}
+              onMouseDown={(e) => e.preventDefault()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onSave}
+              onMouseDown={(e) => e.preventDefault()}
+              size="sm"
+              type="button"
+            >
+              Insert
+            </Button>
+          </div>
+        </TabsContent>
       </div>
-      <div className="space-y-3 p-3">
-        <input
-          className="h-8 w-full rounded-md border border-border/60 bg-card px-2.5 text-foreground text-xs outline-none transition focus:border-foreground/30"
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-              e.preventDefault();
-              onSave();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              onCancel();
-            }
-          }}
-          placeholder="https://example.com/image.png"
-          value={value.src}
-        />
-        <div className="flex justify-end gap-2">
+    </Tabs>
+  );
+}
+
+function EmptyNoteTemplateActions({
+  createdBy,
+  editor,
+  noteTemplates,
+  noteTitle,
+  onTemplateApplied,
+  onTemplateUsed,
+  recentTemplateIds,
+  workspaceUuid,
+}: {
+  createdBy?: string;
+  editor: Editor;
+  noteTemplates: NoteTemplate[];
+  noteTitle: string;
+  onTemplateApplied?: (template: NoteTemplate, rendered: string) => void;
+  onTemplateUsed: (templateId: string) => void;
+  recentTemplateIds: string[];
+  workspaceUuid: string;
+}) {
+  const templateChoices = useMemo(() => {
+    const byId = new Map(
+      noteTemplates.map((template) => [template.id, template])
+    );
+    const recent = recentTemplateIds
+      .map((id) => byId.get(id) ?? null)
+      .filter((template): template is NoteTemplate => Boolean(template));
+    const fallback = noteTemplates.filter(
+      (template) => !recent.some((entry) => entry.id === template.id)
+    );
+    return [...recent, ...fallback].slice(0, 3);
+  }, [noteTemplates, recentTemplateIds]);
+
+  if (templateChoices.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none sticky bottom-24 z-20 mt-10 flex justify-center px-4">
+      <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2">
+        {templateChoices.map((template) => (
           <Button
-            onClick={onCancel}
-            onMouseDown={(e) => e.preventDefault()}
+            className="rounded-full shadow-sm"
+            key={template.id}
+            onClick={() => {
+              const rendered = renderMarkdownNoteTemplate(template.content, {
+                createdBy,
+                title: noteTitle,
+              });
+              insertMarkdownContent(editor, rendered);
+              editor.commands.focus("end");
+              onTemplateApplied?.(template, rendered);
+              persistRecentTemplate(workspaceUuid, template.id);
+              onTemplateUsed(template.id);
+            }}
             size="sm"
             type="button"
-            variant="outline"
+            variant="secondary"
           >
-            Cancel
+            {template.name}
           </Button>
-          <Button
-            onClick={onSave}
-            onMouseDown={(e) => e.preventDefault()}
-            size="sm"
-            type="button"
-          >
-            Insert
-          </Button>
-        </div>
+        ))}
       </div>
     </div>
   );
 }
 
 function AvenireEditor({
+  createdBy,
   defaultValue,
+  noteTitle,
   onChange,
+  onTemplateApplied,
   scrollContainerRef,
   wikiPages,
   onOpenWikiLink,
@@ -1824,6 +2297,8 @@ function AvenireEditor({
   const [imagePopover, setImagePopover] = useState<ImagePopoverState | null>(
     null
   );
+  const [imageUploadBusy, setImageUploadBusy] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState<AiAction | null>(null);
   const [aiReview, setAiReview] = useState<{
     from: number;
@@ -1831,17 +2306,20 @@ function AvenireEditor({
     original: string;
   } | null>(null);
   const [inlineNotice, setInlineNotice] = useState<string | null>(null);
-  const [wikiPreview, setWikiPreview] = useState<{
-    x: number;
-    y: number;
-    page: WikiPage;
-  } | null>(null);
+  const [wikiPreview, setWikiPreview] = useState<WikiPreviewState | null>(null);
   const [tableContextMenu, setTableContextMenu] = useState<{
     open: boolean;
     x: number;
     y: number;
   }>({ open: false, x: 0, y: 0 });
+  const [noteTemplates, setNoteTemplates] = useState<NoteTemplate[]>(() =>
+    getDefaultNoteTemplates()
+  );
+  const [recentTemplateIds, setRecentTemplateIds] = useState<string[]>([]);
   const tableContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const wikiPreviewCardRef = useRef<HTMLDivElement | null>(null);
+  const wikiPreviewAbortRef = useRef<AbortController | null>(null);
+  const { startUpload: startImageUpload } = useUploadThing("imageUploader");
 
   const resolveWikiPageFromHref = (href: string | null) => {
     if (!href) {
@@ -1849,9 +2327,11 @@ function AvenireEditor({
     }
     const pageId = href.startsWith("wiki:")
       ? href.slice(5).toLowerCase()
-      : href.startsWith("/wiki/")
-        ? href.slice(6).toLowerCase()
-        : "";
+      : href.startsWith("workspace-file://")
+        ? href.slice("workspace-file://".length).toLowerCase()
+        : href.startsWith("/wiki/")
+          ? href.slice(6).toLowerCase()
+          : "";
 
     if (!pageId) {
       return null;
@@ -1873,9 +2353,28 @@ function AvenireEditor({
     });
   };
 
+  const openWikiPage = useCallback(
+    (page: WikiPage) => {
+      if (onOpenWikiLink) {
+        onOpenWikiLink(page);
+        return;
+      }
+
+      void resolveWorkspaceFileRoute(workspaceUuid, page.id).then((route) => {
+        if (route) {
+          router.push(route);
+        }
+      });
+    },
+    [onOpenWikiLink, router, workspaceUuid]
+  );
+
+  allWikiPagesRef.current = wikiPages;
+
   useEffect(() => {
-    allWikiPagesRef.current = wikiPages;
-  }, [wikiPages]);
+    setNoteTemplates(loadWorkspaceNoteTemplates(workspaceUuid));
+    setRecentTemplateIds(loadRecentTemplateIds(workspaceUuid));
+  }, [workspaceUuid]);
 
   useEffect(() => {
     if (!inlineNotice) {
@@ -1888,6 +2387,7 @@ function AvenireEditor({
       window.clearTimeout(timer);
     };
   }, [inlineNotice]);
+
   const normalizedDefaultValue = useMemo(
     () => normalizeWikiSyntax(defaultValue, wikiPages),
     [defaultValue, wikiPages]
@@ -1947,6 +2447,7 @@ function AvenireEditor({
         autolink: true,
         defaultProtocol: "https",
       }),
+      PasteMarkdownExtension,
       BlockMathExtension.configure({
         onClick: (node, pos) => {
           setMathPopover({
@@ -2000,8 +2501,28 @@ function AvenireEditor({
         class:
           "tiptap scribe-surface min-h-[100dvh] px-4 py-8 outline-none sm:px-10 sm:py-10",
       },
-      handleClick(_view, _pos, event) {
+      handleClick(view, _pos, event) {
         const target = getEventTargetElement(event.target);
+        const image = target?.closest("img");
+        if (image) {
+          const pos = view.posAtDOM(image, 0);
+          const node = view.state.doc.nodeAt(pos);
+          if (node?.type.name === "image") {
+            event.preventDefault();
+            view.dispatch(
+              view.state.tr.setSelection(
+                NodeSelection.create(view.state.doc, pos)
+              )
+            );
+            setImagePopover({
+              pos,
+              src: String(node.attrs.src ?? ""),
+              tab: getImagePickerTab(String(node.attrs.src ?? "")),
+            });
+            return true;
+          }
+        }
+
         const anchor = target?.closest(
           "a[href^='workspace-file://'], a[href^='wiki:'], a[href^='/wiki/']"
         ) as HTMLAnchorElement | null;
@@ -2023,15 +2544,12 @@ function AvenireEditor({
           return true;
         }
 
-        if (!onOpenWikiLink) {
-          return false;
-        }
         const page = resolveWikiPageFromHref(anchor.getAttribute("href"));
         if (!page) {
           return false;
         }
         event.preventDefault();
-        onOpenWikiLink(page);
+        openWikiPage(page);
         return true;
       },
       handleDrop(view, event) {
@@ -2135,6 +2653,233 @@ function AvenireEditor({
       };
     },
   });
+  const editorUiState = useEditorState({
+    editor,
+    selector: ({ editor }) => {
+      if (!editor) {
+        return {
+          imageSelection: null,
+          showEmptyTemplateActions: false,
+        };
+      }
+
+      const selection = editor.state.selection;
+      const imageSelection =
+        selection instanceof NodeSelection &&
+        selection.node.type.name === "image"
+          ? {
+              pos: selection.from,
+              src: String(selection.node.attrs.src ?? ""),
+            }
+          : null;
+
+      return {
+        imageSelection,
+        showEmptyTemplateActions: isMarkdownNoteTemplateTargetEmpty(
+          editor.getMarkdown(),
+          noteTitle
+        ),
+      };
+    },
+  });
+
+  useEffect(() => {
+    const imageSelection = editorUiState.imageSelection;
+    if (!imageSelection) {
+      setImagePopover((current) => (current ? null : current));
+      return;
+    }
+
+    setImagePopover((current) => {
+      if (
+        current?.pos === imageSelection.pos &&
+        current?.src === imageSelection.src
+      ) {
+        return current;
+      }
+      return {
+        ...imageSelection,
+        tab: getImagePickerTab(imageSelection.src),
+      };
+    });
+  }, [editorUiState.imageSelection]);
+
+  useEffect(() => {
+    if (imagePopover) {
+      setImageUploadError(null);
+      return;
+    }
+    setImageUploadError(null);
+    setImageUploadBusy(false);
+  }, [imagePopover]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const dom = editor.view.dom;
+    const scrollTarget = getScrollTarget(scrollContainerRef);
+    let activeAnchor: HTMLAnchorElement | null = null;
+
+    const clearPreview = () => {
+      activeAnchor = null;
+      wikiPreviewAbortRef.current?.abort();
+      wikiPreviewAbortRef.current = null;
+      setWikiPreview(null);
+    };
+
+    const repositionPreview = () => {
+      if (!activeAnchor) {
+        return;
+      }
+
+      const anchorRect = activeAnchor.getBoundingClientRect();
+      const cardRect =
+        wikiPreviewCardRef.current?.getBoundingClientRect() ?? null;
+      const nextPlacement = getWikiPreviewPlacement(anchorRect, cardRect);
+
+      setWikiPreview((current) => {
+        if (!current || current.anchorEl !== activeAnchor) {
+          return current;
+        }
+
+        const samePosition =
+          Math.abs(current.rect.left - anchorRect.left) < 1 &&
+          Math.abs(current.rect.top - anchorRect.top) < 1 &&
+          Math.abs(current.rect.width - anchorRect.width) < 1 &&
+          Math.abs(current.rect.height - anchorRect.height) < 1 &&
+          current.placement === nextPlacement.placement;
+
+        if (samePosition) {
+          return current;
+        }
+
+        return {
+          ...current,
+          left: nextPlacement.left,
+          placement: nextPlacement.placement,
+          top: nextPlacement.top,
+          rect: anchorRect,
+        };
+      });
+    };
+
+    const attachPreview = (anchor: HTMLAnchorElement, page: WikiPage) => {
+      activeAnchor = anchor;
+      wikiPreviewAbortRef.current?.abort();
+      const controller = new AbortController();
+      wikiPreviewAbortRef.current = controller;
+
+      const immediateContent = stripMarkdownFrontmatter(page.content).trim();
+      const anchorRect = anchor.getBoundingClientRect();
+      const placement = getWikiPreviewPlacement(anchorRect, null);
+      setWikiPreview({
+        anchorEl: anchor,
+        content: immediateContent || null,
+        left: placement.left,
+        loading: !immediateContent,
+        page,
+        placement: placement.placement,
+        top: placement.top,
+        rect: anchorRect,
+      });
+      window.requestAnimationFrame(repositionPreview);
+
+      if (immediateContent) {
+        return;
+      }
+
+      void loadWikiPreviewMarkdown({
+        pageId: page.id,
+        signal: controller.signal,
+      })
+        .then((markdown) => {
+          if (markdown === null) {
+            throw new Error("Unable to load preview.");
+          }
+          const content = stripMarkdownFrontmatter(markdown);
+          setWikiPreview((current) => {
+            if (!current || current.anchorEl !== anchor) {
+              return current;
+            }
+            return {
+              ...current,
+              content: content.trim() ? content : null,
+              loading: false,
+            };
+          });
+          window.requestAnimationFrame(repositionPreview);
+        })
+        .catch((error) => {
+          if ((error as { name?: string } | null)?.name === "AbortError") {
+            return;
+          }
+          setWikiPreview((current) => {
+            if (!current || current.anchorEl !== anchor) {
+              return current;
+            }
+            return {
+              ...current,
+              loading: false,
+            };
+          });
+          window.requestAnimationFrame(repositionPreview);
+        });
+    };
+
+    const handlePointerOver = (event: PointerEvent) => {
+      const target = getEventTargetElement(event.target);
+      const anchor = target?.closest(
+        "a[href^='workspace-file://'], a[href^='wiki:'], a[href^='/wiki/']"
+      ) as HTMLAnchorElement | null;
+
+      if (!anchor) {
+        return;
+      }
+
+      const page = resolveWikiPageFromHref(anchor.getAttribute("href"));
+      if (!page) {
+        clearPreview();
+        return;
+      }
+
+      if (activeAnchor === anchor && wikiPreview?.page.id === page.id) {
+        return;
+      }
+
+      attachPreview(anchor, page);
+      repositionPreview();
+    };
+
+    const handlePointerLeave = (event: PointerEvent) => {
+      const nextTarget = getEventTargetElement(event.relatedTarget);
+      if (
+        nextTarget &&
+        (dom.contains(nextTarget) ||
+          wikiPreviewCardRef.current?.contains(nextTarget))
+      ) {
+        return;
+      }
+      clearPreview();
+    };
+
+    dom.addEventListener("pointerover", handlePointerOver);
+    dom.addEventListener("pointerleave", handlePointerLeave);
+    scrollTarget.addEventListener("scroll", repositionPreview, {
+      passive: true,
+    });
+    window.addEventListener("resize", repositionPreview);
+
+    return () => {
+      dom.removeEventListener("pointerover", handlePointerOver);
+      dom.removeEventListener("pointerleave", handlePointerLeave);
+      scrollTarget.removeEventListener("scroll", repositionPreview);
+      window.removeEventListener("resize", repositionPreview);
+      wikiPreviewAbortRef.current?.abort();
+      wikiPreviewAbortRef.current = null;
+    };
+  }, [editor, scrollContainerRef, wikiPreview?.page.id]);
 
   const slashCommands = useMemo<SlashCommand[]>(() => {
     if (!editor) {
@@ -2346,6 +3091,7 @@ function AvenireEditor({
           setImagePopover({
             pos,
             src: previous,
+            tab: getImagePickerTab(previous),
           });
         },
       },
@@ -2489,19 +3235,10 @@ function AvenireEditor({
       ? clamp(wikiNav.index, 0, Math.max(filteredWikiPages.length - 1, 0))
       : 0;
 
-  useEffect(() => {
-    slashCommandsRef.current = filteredSlashCommands;
-  }, [filteredSlashCommands]);
-  useEffect(() => {
-    wikiPagesRef.current = filteredWikiPages;
-  }, [filteredWikiPages]);
-
-  useEffect(() => {
-    activeSlashIndexRef.current = activeSlashIndex;
-  }, [activeSlashIndex]);
-  useEffect(() => {
-    activeWikiIndexRef.current = activeWikiIndex;
-  }, [activeWikiIndex]);
+  slashCommandsRef.current = filteredSlashCommands;
+  wikiPagesRef.current = filteredWikiPages;
+  activeSlashIndexRef.current = activeSlashIndex;
+  activeWikiIndexRef.current = activeWikiIndex;
 
   useEffect(() => {
     if (!editor) {
@@ -2772,9 +3509,6 @@ function AvenireEditor({
         view.dispatch(
           state.tr.setMeta("formattingBubbleMenu", "updatePosition")
         );
-        view.dispatch(
-          state.tr.setMeta("codeBlockBubbleMenu", "updatePosition")
-        );
       });
     };
 
@@ -2848,55 +3582,6 @@ function AvenireEditor({
       document.removeEventListener("keydown", handleEscape);
     };
   }, [editor]);
-
-  useEffect(() => {
-    if (!editor) {
-      return;
-    }
-
-    const dom = editor.view.dom;
-
-    const handleMouseMove = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      const anchor = target?.closest(
-        "a[href^='wiki:'], a[href^='/wiki/']"
-      ) as HTMLAnchorElement | null;
-
-      if (!anchor) {
-        setWikiPreview(null);
-        return;
-      }
-
-      const href = anchor.getAttribute("href");
-      if (!href) {
-        setWikiPreview(null);
-        return;
-      }
-
-      const page = resolveWikiPageFromHref(href);
-
-      if (!page) {
-        setWikiPreview(null);
-        return;
-      }
-
-      setWikiPreview({
-        x: event.clientX + 12,
-        y: event.clientY + 12,
-        page,
-      });
-    };
-
-    const clearPreview = () => setWikiPreview(null);
-
-    dom.addEventListener("mousemove", handleMouseMove);
-    dom.addEventListener("mouseleave", clearPreview);
-
-    return () => {
-      dom.removeEventListener("mousemove", handleMouseMove);
-      dom.removeEventListener("mouseleave", clearPreview);
-    };
-  }, [editor, wikiPages]);
 
   const tableActions = useMemo<TableAction[]>(() => {
     if (!(editor && tableState)) {
@@ -3074,28 +3759,45 @@ function AvenireEditor({
           ) : null}
         </FloatingMenu>
 
-        <CodeBlockBubbleControls
+        <CodeBlockOverlayControls
           editor={editor}
-          onCopy={() => {
-            const activeCodeBlock = getActiveCodeBlockNode(editor);
+          onCopy={(pos) => {
+            const activeCodeBlock = editor.state.doc.nodeAt(pos);
 
-            if (!activeCodeBlock) {
-              setInlineNotice("Place cursor in a code block first.");
+            if (activeCodeBlock?.type.name !== "codeBlock") {
+              setInlineNotice("Could not find that code block.");
               return;
             }
 
             void navigator.clipboard
-              .writeText(activeCodeBlock.node.textContent)
+              .writeText(activeCodeBlock.textContent)
               .then(() => setInlineNotice("Code copied."))
               .catch(() => setInlineNotice("Could not copy code."));
           }}
-          scrollContainerRef={scrollContainerRef}
         />
 
         <EditorContent
           className="[&_.ProseMirror-focused]:outline-none"
           editor={editor}
         />
+
+        {editorUiState.showEmptyTemplateActions ? (
+          <EmptyNoteTemplateActions
+            createdBy={createdBy}
+            editor={editor}
+            noteTemplates={noteTemplates}
+            noteTitle={noteTitle}
+            onTemplateApplied={onTemplateApplied}
+            onTemplateUsed={(templateId) =>
+              setRecentTemplateIds((current) => [
+                templateId,
+                ...current.filter((entry) => entry !== templateId),
+              ])
+            }
+            recentTemplateIds={recentTemplateIds}
+            workspaceUuid={workspaceUuid}
+          />
+        ) : null}
 
         <MathPopover
           editor={editor}
@@ -3239,6 +3941,50 @@ function AvenireEditor({
               current ? { ...current, src: next } : null
             );
           }}
+          onTabChange={(tab) => {
+            setImagePopover((current) =>
+              current ? { ...current, tab } : current
+            );
+          }}
+          onUpload={async (file) => {
+            setImageUploadBusy(true);
+            setImageUploadError(null);
+
+            try {
+              const uploaded = ((await startImageUpload([file])) ?? [])[0] as
+                | {
+                    ufsUrl?: string;
+                    url?: string;
+                  }
+                | undefined;
+              const uploadedUrl =
+                (typeof uploaded?.ufsUrl === "string" && uploaded.ufsUrl) ||
+                (typeof uploaded?.url === "string" && uploaded.url) ||
+                null;
+
+              if (!uploadedUrl) {
+                throw new Error("Upload returned no file metadata");
+              }
+
+              setImagePopover((current) =>
+                current
+                  ? { ...current, src: uploadedUrl, tab: "upload" }
+                  : current
+              );
+              editor.chain().focus().setImage({ src: uploadedUrl }).run();
+              setImagePopover(null);
+            } catch (error) {
+              setImageUploadError(
+                error instanceof Error
+                  ? error.message
+                  : "Unable to upload image."
+              );
+            } finally {
+              setImageUploadBusy(false);
+            }
+          }}
+          uploadBusy={imageUploadBusy}
+          uploadError={imageUploadError}
           onSave={() => {
             if (!imagePopover) {
               return;
@@ -3286,15 +4032,56 @@ function AvenireEditor({
 
         {wikiPreview ? (
           <div
-            className="fixed z-[90] w-72 rounded-md border border-border bg-popover p-2 shadow-lg"
-            style={{ left: wikiPreview.x, top: wikiPreview.y }}
+            className="fixed z-[90] w-80 overflow-hidden rounded-xl border border-border/70 bg-popover shadow-[0_24px_80px_rgba(0,0,0,0.22)]"
+            ref={wikiPreviewCardRef}
+            style={{ left: wikiPreview.left, top: wikiPreview.top }}
           >
-            <p className="font-medium text-popover-foreground text-xs">
-              {wikiPreview.page.title}
-            </p>
-            <p className="mt-1 text-muted-foreground text-xs">
-              {wikiPreview.page.excerpt}
-            </p>
+            <div className="flex items-center justify-between gap-2 border-border/60 border-b bg-muted/40 px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Note preview
+                </p>
+                <p className="truncate text-sm font-medium text-popover-foreground">
+                  {wikiPreview.page.title}
+                </p>
+              </div>
+              <Button
+                className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openWikiPage(wikiPreview.page);
+                }}
+                onMouseDown={(event) => event.preventDefault()}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Open
+                <ArrowUpRight className="size-3.5" />
+              </Button>
+            </div>
+            <div className="max-h-72 overflow-y-auto px-3 py-3">
+              {wikiPreview.loading && !wikiPreview.content ? (
+                <p className="inline-flex items-center gap-2 text-muted-foreground text-xs">
+                  <Spinner className="size-3.5" />
+                  Loading preview...
+                </p>
+              ) : wikiPreview.content ? (
+                <MarkdownRenderer
+                  className="max-w-none"
+                  content={wikiPreview.content}
+                  id={`wiki-preview-${wikiPreview.page.id}`}
+                  parseIncompleteMarkdown
+                  textSize="small"
+                  workspaceUuid={workspaceUuid}
+                />
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  No preview content available.
+                </p>
+              )}
+            </div>
           </div>
         ) : null}
 
